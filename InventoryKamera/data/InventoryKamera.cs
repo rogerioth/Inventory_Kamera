@@ -110,10 +110,20 @@ namespace InventoryKamera
 
 
 			// Assign Traveler's custom name
-			GenshinProcesor.AssignTravelerName(Properties.Settings.Default.TravelerName);
-            
 			// Assign Wanderer's custom name
-			GenshinProcesor.UpdateCharacterName("wanderer", Properties.Settings.Default.WandererName);
+			// A missing character entry (e.g. outdated characters.json) must not abort the
+			// scan before it even starts.
+			try
+			{
+				GenshinProcesor.AssignTravelerName(Properties.Settings.Default.TravelerName);
+				GenshinProcesor.UpdateCharacterName("wanderer", Properties.Settings.Default.WandererName);
+			}
+			catch (ThreadAbortException) { throw; }
+			catch (Exception ex)
+			{
+				Logger.Warn(ex, "Failed to assign custom character names. Continuing scan...");
+				UserInterface.AddError($"Failed to assign custom character names: {ex.Message}");
+			}
 
 
 			if (Properties.Settings.Default.ScanWeapons)
@@ -258,8 +268,12 @@ namespace InventoryKamera
 
 				if (workerQueue.TryDequeue(out OCRImageCollection imageCollection))
 				{
-					switch (imageCollection.Type)
+					// A single unrecognized or malformed item must never kill this worker
+					// thread; log it and keep processing the rest of the queue.
+					try
 					{
+						switch (imageCollection.Type)
+						{
 						case "weapon":
 							if (weaponScraper.IsEnhancementMaterial(imageCollection.Bitmaps.First()))
 							{
@@ -403,6 +417,12 @@ namespace InventoryKamera
 						default:
 							MainForm.UnexpectedError("Unknown Image type for Image Processor");
 							break;
+					}
+					}
+					catch (Exception ex)
+					{
+						Logger.Warn(ex, "Failed to process {0} #{1}. Skipping item...", imageCollection.Type, imageCollection.Id);
+						try { imageCollection.Bitmaps?.ForEach(b => b?.Dispose()); } catch { }
 					}
 				}
 				else

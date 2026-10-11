@@ -931,25 +931,33 @@ namespace InventoryKamera
 
         internal static bool CharacterMatchesElement(string name, string element)
         {
-            return !string.IsNullOrWhiteSpace(name.ToLower()) && GetCharactersElements(name.ToLower()).Contains(element.ToLower());
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(element)) return false;
+
+            List<string> elements = GetCharactersElements(name.ToLower());
+
+            return elements != null && elements.Contains(element.ToLower());
         }
 
         internal static List<string> GetCharactersElements(string name)
 		{
-            if (string.IsNullOrWhiteSpace(name.ToLower()))
+            if (string.IsNullOrWhiteSpace(name))
             {
                 return new List<string>();
             }
             else
             {
-                if (Characters.TryGetValue(name.ToLower(), out var data))
+                // Characters missing from characters.json (e.g. newly released or
+                // otherwise unknown characters) have no element data. Return an
+                // empty list instead of null so callers never get a NullReferenceException.
+                if (Characters.TryGetValue(name.ToLower(), out var data) && data != null)
                 {
-                    return data["Element"].ToObject<List<string>>();
+                    if (data.TryGetValue("Element", out var elementToken) && elementToken != null)
+                    {
+                        return elementToken.ToObject<List<string>>() ?? new List<string>();
+                    }
                 }
-                else
-                {
-                    return null;
-                }
+
+                return new List<string>();
             }
         }
     }

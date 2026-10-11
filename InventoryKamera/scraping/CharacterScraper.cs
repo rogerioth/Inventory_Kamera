@@ -6,6 +6,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace InventoryKamera
 {
@@ -23,7 +24,21 @@ namespace InventoryKamera
 
 			while (true)
 			{
-				var character = ScanCharacter(first);
+				Character character;
+				try
+				{
+					character = ScanCharacter(first);
+				}
+				catch (ThreadAbortException) { throw; }
+				catch (Exception ex)
+				{
+					// An unreadable or unknown character must never abort the whole scan.
+					// Log it and continue with an invalid character so the loop advances
+					// to the next one.
+					Logger.Warn(ex, "Unexpected error while scanning a character. Skipping character...");
+					UserInterface.AddError($"Failed to scan a character: {ex.Message}");
+					character = new Character();
+				}
 				if (Characters.Count > 0 && character.NameGOOD == Characters.ElementAt(0).NameGOOD) break;
 				if (character.IsValid())
 				{
@@ -139,11 +154,35 @@ namespace InventoryKamera
 				// Scale down talents due to constellations
 				if (character.Constellation >= 3)
 				{
-					if (GenshinProcesor.Characters.ContainsKey(name.ToLower()))
+					if (GenshinProcesor.Characters.TryGetValue(name.ToLower(), out var characterData) &&
+						characterData != null &&
+						characterData.TryGetValue("ConstellationOrder", out var constellationOrder) &&
+						constellationOrder != null)
 					{
-						string talentLeveledAtConst3 = character.NameGOOD.Contains("Traveler")
-                            ? (string)GenshinProcesor.Characters[name.ToLower()]["ConstellationOrder"][character.Element.ToLower()][0]
-                            : (string)GenshinProcesor.Characters[name.ToLower()]["ConstellationOrder"][0];
+						string talentLeveledAtConst3;
+
+						if (character.NameGOOD.Contains("Traveler"))
+						{
+							// The Traveler's constellation order is stored per element. Elements
+							// missing from the data (e.g. a new Traveler element on outdated tables)
+							// must not crash the scan.
+							var elementOrder = character.Element is null ? null : constellationOrder[character.Element.ToLower()];
+							if (elementOrder is null || elementOrder.First is null)
+							{
+								Logger.Warn("{0} ({1}) is missing constellation order data. Keeping scanned talent levels.", character.NameGOOD, character.Element);
+								return character;
+							}
+							talentLeveledAtConst3 = (string)elementOrder[0];
+						}
+						else
+						{
+							if (constellationOrder.First is null)
+							{
+								Logger.Warn("{0} is missing constellation order data. Keeping scanned talent levels.", character.NameGOOD);
+								return character;
+							}
+							talentLeveledAtConst3 = (string)constellationOrder[0];
+						}
 
                         // Scale down talents
                         if (character.Constellation >= 5)
@@ -164,7 +203,10 @@ namespace InventoryKamera
 						}
 					}
 					else
+					{
+						Logger.Warn("{0} is missing from the character data. Keeping scanned talent levels.", character.NameGOOD);
 						return character;
+					}
 				}
 
 
@@ -221,11 +263,24 @@ namespace InventoryKamera
 		{
 			int attempts = 0;
 			int maxAttempts = 75;
+
+			// Some characters on the character screen are not in the character data at all
+			// (e.g. newly released characters, new Traveler elements on outdated tables, or
+			// game test avatars). Once OCR consistently reads the same unresolvable
+			// name/element pair, retrying is pointless, so bail out early and let the scan
+			// skip the character instead of exhausting the full attempt budget.
+			string unknownName = null;
+			string unknownElement = null;
+			int unknownAttempts = 0;
+			const int maxUnknownAttempts = 5;
+
 			Rectangle region = new RECT(
 				Left:   (int)( 85  / 1280.0 * Navigation.GetWidth() ),
 				Top:    (int)( 10  / 720.0 * Navigation.GetHeight() ),
 				Right:  (int)( 305 / 1280.0 * Navigation.GetWidth() ),
 				Bottom: (int)( 55  / 720.0 * Navigation.GetHeight() ));
+
+			bool giveUp = false;
 
 			do
 			{
@@ -256,11 +311,51 @@ namespace InventoryKamera
 
 						// Find character based on string after /
 						// Long name characters might search by their last name only but it'll still work.
-						name = GenshinProcesor.FindClosestCharacterName(Regex.Replace(split[1], @"[\W]", string.Empty));
+						string ocrName = Regex.Replace(split[1], @"[\W]", string.Empty);
+						name = GenshinProcesor.FindClosestCharacterName(ocrName);
 
-						if (!GenshinProcesor.CharacterMatchesElement(name, element)) { name = ""; element = ""; }
-                    }
+						if (!GenshinProcesor.CharacterMatchesElement(name, element))
+						{
+							// A name that is not in the character data, or a known character
+							// whose read element is missing from its data, will never resolve
+							// no matter how many times it is read.
+							bool unknownCharacter = !string.IsNullOrWhiteSpace(ocrName) && !GenshinProcesor.IsValidCharacter(name);
+							bool unknownPair = !unknownCharacter && GenshinProcesor.IsValidCharacter(name) && GenshinProcesor.IsValidElement(element);
+
+							if (unknownCharacter || unknownPair)
+							{
+								if (ocrName == unknownName && element == unknownElement)
+									unknownAttempts++;
+								else
+								{
+									unknownName = ocrName;
+									unknownElement = element;
+									unknownAttempts = 1;
+								}
+
+								if (unknownAttempts >= maxUnknownAttempts)
+								{
+									Logger.Warn("Read character '{0}' with element '{1}' but could not match it to the character data. Skipping character...", ocrName, element);
+									bm.Save($"./logging/characters/unknown_{ocrName}.png");
+									giveUp = true;
+								}
+							}
+							else
+							{
+								unknownName = null;
+								unknownElement = null;
+								unknownAttempts = 0;
+							}
+
+							// Clear the read on every failed match so a partially parsed
+							// name/element pair is never used
+							name = giveUp ? null : "";
+							element = giveUp ? null : "";
+						}
+					}
 					n.Dispose();
+
+					if (giveUp) return;
 
 					if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(element))
 					{
@@ -450,11 +545,16 @@ namespace InventoryKamera
 
 			if (Navigation.GetAspectRatio() == new Size(8, 5)) yRef = 800.0;
 
+			// Ported from taiwenlee/Inventory_Kamera (MIT): 84874142
+			// Non-16:9 aspect ratios previously produced a zero-sized region,
+			// which made the talent level impossible to read.
 			Rectangle region =  new Rectangle(
-				x:		(int)((Navigation.IsNormal ? 0.0003 : 0) * Navigation.GetWidth() ),
-				y:		(int)((Navigation.IsNormal ? 0.1278 : 0) * Navigation.GetHeight() ),
-				width:	(int)((Navigation.IsNormal ? 0.2913 : 0) * Navigation.GetWidth() ),
-				height:	(int)((Navigation.IsNormal ? 0.0711 : 0) * Navigation.GetHeight() ));
+				x:		(int)((Navigation.IsNormal ? 0.0003 : 0.0003) * Navigation.GetWidth() ),
+				y:		(int)((Navigation.IsNormal ? 0.1278 : 0.1078) * Navigation.GetHeight() ),
+				width:	(int)((Navigation.IsNormal ? 0.2913 : 0.2913) * Navigation.GetWidth() ),
+				height:	(int)((Navigation.IsNormal ? 0.0711 : 0.0711) * Navigation.GetHeight() ));
+
+			const int maxTalentAttempts = 50;
 
 			for (int i = 0; i < 3; i++)
 			{
@@ -479,7 +579,8 @@ namespace InventoryKamera
 						break;
                 }
 
-                while (talents[talent] < 1 || talents[talent] > 15)
+				int talentAttempts = 0;
+                while ((talents[talent] < 1 || talents[talent] > 15) && talentAttempts < maxTalentAttempts)
 				{
 					Bitmap talentLevel = Navigation.CaptureRegion(region);
 
@@ -502,6 +603,17 @@ namespace InventoryKamera
 
 					n.Dispose();
 					talentLevel.Dispose();
+
+					talentAttempts++;
+				}
+
+				if (talents[talent] < 1 || talents[talent] > 15)
+				{
+					// The talent level could not be read (e.g. navigation issues or characters
+					// without a usable talent page). Leave the talent invalid so this character
+					// is skipped, instead of looping forever and stalling the whole scan.
+					Logger.Warn("Could not scan {0}'s {1} talent level after {2} attempts. Character will be skipped.", character.NameGOOD, talent, maxTalentAttempts);
+					break;
 				}
 			}
 

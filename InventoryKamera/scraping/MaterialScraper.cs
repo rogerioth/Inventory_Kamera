@@ -104,22 +104,32 @@ namespace InventoryKamera
 					{
 						if (!string.IsNullOrEmpty(material.name))
 						{
-							// Scan Material Quantity
-							material.count = ScanMaterialCount(rectangle, out Bitmap quantity);
-							if (material.count == 0)
+							if (!GenshinProcesor.IsValidMaterial(material.name))
 							{
-								UserInterface.AddError($"Failed to parse quantity for {material.name}");
-								SaveInventoryBitmap(quantity, $"{material.name}_Quantity.png");
+								// Unknown material (e.g. a newly added item that is missing from
+								// the material data). Warn and skip instead of aborting or
+								// exporting an unrecognized name.
+								Logger.Warn("Read material '{0}' but could not match it to the material data. Skipping material...", material.name);
 							}
-							if (Properties.Settings.Default.LogScreenshots || material.count == 0)
-                            {
-								SaveInventoryBitmap(quantity, $"{material.name}_Quantity.png");
-                            }
-							inventory.Materials.Add(material);
-							UserInterface.ResetCharacterDisplay();
-							UserInterface.SetMaterial(nameplate, quantity, material.name, material.count);
+							else
+							{
+								// Scan Material Quantity
+								material.count = ScanMaterialCount(rectangle, out Bitmap quantity);
+								if (material.count == 0)
+								{
+									UserInterface.AddError($"Failed to parse quantity for {material.name}");
+									SaveInventoryBitmap(quantity, $"{material.name}_Quantity.png");
+								}
+								if (Properties.Settings.Default.LogScreenshots || material.count == 0)
+	                            {
+									SaveInventoryBitmap(quantity, $"{material.name}_Quantity.png");
+	                            }
+								inventory.Materials.Add(material);
+								UserInterface.ResetCharacterDisplay();
+								UserInterface.SetMaterial(nameplate, quantity, material.name, material.count);
 
-							previousMaterial.name = material.name;
+								previousMaterial.name = material.name;
+							}
 						}
 					}
 					nameplate.Dispose();
@@ -193,6 +203,16 @@ namespace InventoryKamera
 				{
 					if (!string.IsNullOrEmpty(material.name))
 					{
+						if (!GenshinProcesor.IsValidMaterial(material.name))
+						{
+							// Unknown material (e.g. a newly added item that is missing from
+							// the material data). Warn and skip instead of aborting or
+							// exporting an unrecognized name.
+							Logger.Warn("Read material '{0}' but could not match it to the material data. Skipping material...", material.name);
+							nameplate.Dispose();
+							continue;
+						}
+
 						// Scan Material Number
 						material.count = ScanMaterialCount(rectangle, out Bitmap quantity);
 						if (material.count == 0)

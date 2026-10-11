@@ -53,11 +53,22 @@ namespace InventoryKamera
         public Dictionary<string, Artifact> Artifacts { get; internal set; }
 
         [JsonIgnore]
-        public WeaponType WeaponType { 
-            
-            get => GenshinProcesor.Characters[_nameKey.ToLower()]["WeaponType"].ToObject<WeaponType>();
-            
-            internal set { WeaponType = value; } 
+        public WeaponType WeaponType
+        {
+            // Validate the lookup: a character missing from the character data (or with
+            // no WeaponType) must not throw a NullReferenceException during export.
+            get
+            {
+                if (_nameKey != null &&
+                    GenshinProcesor.Characters.TryGetValue(_nameKey.ToLower(), out var data) &&
+                    data?["WeaponType"] != null)
+                {
+                    return data["WeaponType"].ToObject<WeaponType>();
+                }
+                return WeaponType.Sword;
+            }
+
+            internal set { _weaponType = value; }
         }
 
         public Character()
