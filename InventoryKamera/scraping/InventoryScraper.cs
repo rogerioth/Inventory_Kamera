@@ -4,8 +4,10 @@ using NLog;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace InventoryKamera
 {
@@ -576,7 +578,30 @@ namespace InventoryKamera
                 path += "Materials/";
             else path += inventoryPage.ToString() + "/";
 
-            image.Save(path + filename);
+            // Diagnostic saves must never abort a scan (GDI+ generic errors,
+            // missing directories, disconnected or full drives). Make sure the
+            // directory exists, retry once on failure, and warn instead of
+            // throwing.
+            string file = path + filename;
+            try
+            {
+                Directory.CreateDirectory(path);
+                try
+                {
+                    image.Save(file);
+                }
+                catch (Exception)
+                {
+                    // Single retry for transient GDI+/IO failures (e.g. the
+                    // logging directory was just reset by another thread).
+                    Thread.Sleep(100);
+                    image.Save(file);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn(ex, "Could not save diagnostic screenshot {0}. Continuing scan...", file);
+            }
         }
 
     }

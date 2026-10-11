@@ -75,10 +75,18 @@ namespace InventoryKamera
 			}
 			catch { }
 
-			Directory.CreateDirectory("./logging/weapons");
-			Directory.CreateDirectory("./logging/artifacts");
-			Directory.CreateDirectory("./logging/characters");
-			Directory.CreateDirectory("./logging/materials");
+			try
+			{
+				Directory.CreateDirectory("./logging/weapons");
+				Directory.CreateDirectory("./logging/artifacts");
+				Directory.CreateDirectory("./logging/characters");
+				Directory.CreateDirectory("./logging/materials");
+			}
+			catch (Exception ex)
+			{
+				Logger.Error(ex, "Could not reset the logging directory");
+				throw new IOException($"Could not create the logging directory '.\\logging'. Please make sure the application directory is writable and the drive is available ({ex.Message})");
+			}
 
 			Logger.Info("Logging directory reset");
 		}
@@ -310,29 +318,46 @@ namespace InventoryKamera
 								if (!weapon.HasValidEquippedCharacter()) error += "Inavlid equipped character\n";
 								UserInterface.AddError(error + weapon.ToString());
 								Directory.CreateDirectory(weaponPath);
-								using (var writer = File.CreateText(weaponPath + "log.txt"))
+								try
 								{
-									writer.WriteLine($"Version: {Assembly.GetExecutingAssembly().GetName().Version.ToString(3)}");
-									writer.WriteLine($"Resolution: {Navigation.GetWidth()}x{Navigation.GetHeight()}");
-									writer.WriteLine($"Error log:\n\t{error.Replace("\n", "\n\t")}");
+									using (var writer = File.CreateText(weaponPath + "log.txt"))
+									{
+										writer.WriteLine($"Version: {Assembly.GetExecutingAssembly().GetName().Version.ToString(3)}");
+										writer.WriteLine($"Resolution: {Navigation.GetWidth()}x{Navigation.GetHeight()}");
+										writer.WriteLine($"Error log:\n\t{error.Replace("\n", "\n\t")}");
+									}
+								}
+								catch (Exception ex)
+								{
+									Logger.Warn(ex, "Could not write diagnostic log for weapon #{0}. Continuing...", weapon.Id);
 								}
 							}
 
                             if (!weapon.IsValid() || Properties.Settings.Default.LogScreenshots)
                             {
-                                Directory.CreateDirectory(weaponPath + "name");
-                                imageCollection.Bitmaps[0].Save(weaponPath + "name/name.png");
-                                Directory.CreateDirectory(weaponPath + "rarity");
-                                imageCollection.Bitmaps[0].Save(weaponPath + "rarity/rarity.png");
-                                Directory.CreateDirectory(weaponPath + "level");
-                                imageCollection.Bitmaps[1].Save(weaponPath + "level/level.png");
-                                Directory.CreateDirectory(weaponPath + "refinement");
-                                imageCollection.Bitmaps[2].Save(weaponPath + "refinement/refinement.png");
-                                Directory.CreateDirectory(weaponPath + "equipped");
-                                imageCollection.Bitmaps[4].Save(weaponPath + "equipped/equipped.png");
+                                // Diagnostic saves must never kill the worker or
+                                // skip the remaining captures (GDI+ generic errors,
+                                // missing directories, disconnected drives).
+                                try
+                                {
+                                    Directory.CreateDirectory(weaponPath + "name");
+                                    imageCollection.Bitmaps[0].Save(weaponPath + "name/name.png");
+                                    Directory.CreateDirectory(weaponPath + "rarity");
+                                    imageCollection.Bitmaps[0].Save(weaponPath + "rarity/rarity.png");
+                                    Directory.CreateDirectory(weaponPath + "level");
+                                    imageCollection.Bitmaps[1].Save(weaponPath + "level/level.png");
+                                    Directory.CreateDirectory(weaponPath + "refinement");
+                                    imageCollection.Bitmaps[2].Save(weaponPath + "refinement/refinement.png");
+                                    Directory.CreateDirectory(weaponPath + "equipped");
+                                    imageCollection.Bitmaps[4].Save(weaponPath + "equipped/equipped.png");
 
-                                imageCollection.Bitmaps.Last().Save(weaponPath + "card.png");
-								Task.Run(() => LogObject(weapon, weaponPath + "weapon.json"));
+                                    imageCollection.Bitmaps.Last().Save(weaponPath + "card.png");
+                                }
+                                catch (Exception ex)
+                                {
+                                    Logger.Warn(ex, "Could not save diagnostic screenshots for weapon #{0}. Continuing...", weapon.Id);
+                                }
+                                Task.Run(() => LogObject(weapon, weaponPath + "weapon.json"));
                             }
 
                             // Dispose of everything
@@ -376,37 +401,54 @@ namespace InventoryKamera
 								if (!artifact.HasValidEquippedCharacter()) error += "Invalid equipped character\n";
 								UserInterface.AddError(error + artifact.ToString());
 								Directory.CreateDirectory(artifactPath);
-								using (var writer = File.CreateText(artifactPath + "log.txt"))
+								try
 								{
-									writer.WriteLine($"Version: {Assembly.GetExecutingAssembly().GetName().Version.ToString(3)}");
-									writer.WriteLine($"Resolution: {Navigation.GetWidth()}x{Navigation.GetHeight()}");
-									writer.WriteLine($"Error Log:\n\t{error.Replace("\n", "\n\t")}");
+									using (var writer = File.CreateText(artifactPath + "log.txt"))
+									{
+										writer.WriteLine($"Version: {Assembly.GetExecutingAssembly().GetName().Version.ToString(3)}");
+										writer.WriteLine($"Resolution: {Navigation.GetWidth()}x{Navigation.GetHeight()}");
+										writer.WriteLine($"Error Log:\n\t{error.Replace("\n", "\n\t")}");
+									}
+								}
+								catch (Exception ex)
+								{
+									Logger.Warn(ex, "Could not write diagnostic log for artifact #{0}. Continuing...", artifact.Id);
 								}
 							}
 
                             if (!artifact.IsValid() || Properties.Settings.Default.LogScreenshots)
                             {
-                                Directory.CreateDirectory(artifactPath + "name");
-                                imageCollection.Bitmaps[0].Save(artifactPath + "name/name.png");
-                                Directory.CreateDirectory(artifactPath + "slot");
-								imageCollection.Bitmaps[1].Save(artifactPath + "slot/slot.png");
-                                Directory.CreateDirectory(artifactPath + "mainstat");
-                                imageCollection.Bitmaps[2].Save(artifactPath + "mainstat/mainstat.png");
-								Directory.CreateDirectory(artifactPath + "level");
-								imageCollection.Bitmaps[3].Save(artifactPath + "level/level.png");
-								Directory.CreateDirectory(artifactPath + "substats");
-								imageCollection.Bitmaps[4].Save(artifactPath + "substats/substats.png");
-								Directory.CreateDirectory(artifactPath + "equipped");
-								imageCollection.Bitmaps[5].Save(artifactPath + "equipped/equipped.png");
-								Directory.CreateDirectory(artifactPath + "locked");
-								imageCollection.Bitmaps[6].Save(artifactPath + "locked/locked.png");
-								// Sanctified banner capture (index 7), for diagnosing
-								// artifacts crafted with Sanctifying Elixir.
-								// (Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6)
-								Directory.CreateDirectory(artifactPath + "sanctify");
-								imageCollection.Bitmaps[7].Save(artifactPath + "sanctify/sanctify.png");
+                                // Diagnostic saves must never kill the worker or
+                                // skip the remaining captures (GDI+ generic errors,
+                                // missing directories, disconnected drives).
+                                try
+                                {
+                                    Directory.CreateDirectory(artifactPath + "name");
+                                    imageCollection.Bitmaps[0].Save(artifactPath + "name/name.png");
+                                    Directory.CreateDirectory(artifactPath + "slot");
+									imageCollection.Bitmaps[1].Save(artifactPath + "slot/slot.png");
+                                    Directory.CreateDirectory(artifactPath + "mainstat");
+                                    imageCollection.Bitmaps[2].Save(artifactPath + "mainstat/mainstat.png");
+									Directory.CreateDirectory(artifactPath + "level");
+									imageCollection.Bitmaps[3].Save(artifactPath + "level/level.png");
+									Directory.CreateDirectory(artifactPath + "substats");
+									imageCollection.Bitmaps[4].Save(artifactPath + "substats/substats.png");
+									Directory.CreateDirectory(artifactPath + "equipped");
+									imageCollection.Bitmaps[5].Save(artifactPath + "equipped/equipped.png");
+									Directory.CreateDirectory(artifactPath + "locked");
+									imageCollection.Bitmaps[6].Save(artifactPath + "locked/locked.png");
+									// Sanctified banner capture (index 7), for diagnosing
+									// artifacts crafted with Sanctifying Elixir.
+									// (Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6)
+									Directory.CreateDirectory(artifactPath + "sanctify");
+									imageCollection.Bitmaps[7].Save(artifactPath + "sanctify/sanctify.png");
 
-								imageCollection.Bitmaps.Last().Save(artifactPath + "card.png");
+									imageCollection.Bitmaps.Last().Save(artifactPath + "card.png");
+								}
+								catch (Exception ex)
+								{
+									Logger.Warn(ex, "Could not save diagnostic screenshots for artifact #{0}. Continuing...", artifact.Id);
+								}
 
 								Task.Run(()=>LogObject(artifact, artifactPath + "artifact.json"));
 							}

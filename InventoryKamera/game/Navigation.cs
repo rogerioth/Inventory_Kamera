@@ -79,31 +79,59 @@ namespace InventoryKamera
 
 		#region Window Capturing
 
+		// A capture of a vanished or unavailable window (process closed, locked
+		// screen, zero-sized client area) must surface as a clear, catchable
+		// error instead of a raw GDI+/ArgumentException, so the scan can stop
+		// cleanly with an understandable message.
+		private static void ValidateWindowForCapture()
+		{
+			if (GetWidth() <= 0 || GetHeight() <= 0)
+				throw new NotImplementedException($"Genshin's window is no longer available (size {GetWidth()}x{GetHeight()}). Please make sure the game window is visible and try again.");
+		}
+
 		public static Bitmap CaptureWindow(PixelFormat format = PixelFormat.Format24bppRgb)
 		{
-			Bitmap bmp = new Bitmap(GetWidth(), GetHeight(), format);
-			using (Graphics gfxBmp = Graphics.FromImage(bmp))
+			ValidateWindowForCapture();
+			try
 			{
-				gfxBmp.CopyFromScreen(GetPosition().Left, GetPosition().Top, 0, 0, bmp.Size);
+				Bitmap bmp = new Bitmap(GetWidth(), GetHeight(), format);
+				using (Graphics gfxBmp = Graphics.FromImage(bmp))
+				{
+					gfxBmp.CopyFromScreen(GetPosition().Left, GetPosition().Top, 0, 0, bmp.Size);
 
-				var uidRegion = new RECT(
-					Left: (int)( 1070 / 1280.0 * bmp.Width ),
-					Top: (int)( 695 / 720.0 * bmp.Height ),
-					Right: bmp.Width,
-					Bottom: bmp.Height);
-				gfxBmp.FillRectangle(new SolidBrush(Color.Black), uidRegion);
+					var uidRegion = new RECT(
+						Left: (int)( 1070 / 1280.0 * bmp.Width ),
+						Top: (int)( 695 / 720.0 * bmp.Height ),
+						Right: bmp.Width,
+						Bottom: bmp.Height);
+					gfxBmp.FillRectangle(new SolidBrush(Color.Black), uidRegion);
+				}
+				return bmp;
 			}
-			return bmp;
+			catch (ThreadAbortException) { throw; }
+			catch (Exception ex)
+			{
+				throw new NotImplementedException($"Could not capture the Genshin window. Please make sure the game window is visible and not on a locked screen, then try again. ({ex.Message})", ex);
+			}
 		}
 
 		public static Bitmap CaptureRegion(RECT region, PixelFormat format = PixelFormat.Format24bppRgb)
 		{
-			Bitmap bmp = new Bitmap(region.Width, region.Height, format);
-			using (Graphics gfxBmp = Graphics.FromImage(bmp))
+			ValidateWindowForCapture();
+			try
 			{
-				gfxBmp.CopyFromScreen(GetPosition().Left + region.Left, GetPosition().Top + region.Top, 0, 0, bmp.Size);
+				Bitmap bmp = new Bitmap(region.Width, region.Height, format);
+				using (Graphics gfxBmp = Graphics.FromImage(bmp))
+				{
+					gfxBmp.CopyFromScreen(GetPosition().Left + region.Left, GetPosition().Top + region.Top, 0, 0, bmp.Size);
+				}
+				return bmp;
 			}
-			return bmp;
+			catch (ThreadAbortException) { throw; }
+			catch (Exception ex)
+			{
+				throw new NotImplementedException($"Could not capture a region of the Genshin window. Please make sure the game window is visible and not on a locked screen, then try again. ({ex.Message})", ex);
+			}
 		}
 
 		public static Bitmap CaptureRegion(int x, int y, int width, int height, PixelFormat format = PixelFormat.Format24bppRgb)

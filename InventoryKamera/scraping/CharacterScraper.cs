@@ -14,6 +14,22 @@ namespace InventoryKamera
 	{
 		private static NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
 
+		// Diagnostic saves must never abort a scan (GDI+ generic errors, missing
+		// directories, disconnected or full drives). Create the directory and
+		// warn instead of throwing.
+		private static void SaveDiagnosticBitmap(Bitmap bm, string file)
+		{
+			try
+			{
+				Directory.CreateDirectory(Path.GetDirectoryName(file));
+				bm.Save(file);
+			}
+			catch (Exception ex)
+			{
+				Logger.Warn(ex, "Could not save diagnostic screenshot {0}. Continuing scan...", file);
+			}
+		}
+
 		public static void ScanCharacters(ref List<Character> Characters)
 		{
 			int viewed = 0;
@@ -342,7 +358,7 @@ namespace InventoryKamera
 								if (unknownAttempts >= maxUnknownAttempts)
 								{
 									Logger.Warn("Read character '{0}' with element '{1}' but could not match it to the character data. Skipping character...", ocrName, element);
-									bm.Save($"./logging/characters/unknown_{ocrName}.png");
+									SaveDiagnosticBitmap(bm, $"./logging/characters/unknown_{ocrName}.png");
 									giveUp = true;
 								}
 							}
@@ -372,7 +388,7 @@ namespace InventoryKamera
 					else
                     {
                         Logger.Debug("Could not parse character name/element (Atempt {0}/{1}). Retrying...", attempts+1, maxAttempts);
-                        bm.Save($"./logging/characters/{bm.GetHashCode()}.png");
+                        SaveDiagnosticBitmap(bm, $"./logging/characters/{bm.GetHashCode()}.png");
                     }
 				}
 				attempts++;
@@ -510,8 +526,7 @@ namespace InventoryKamera
 				if (Properties.Settings.Default.LogScreenshots)
 				{
 					var screenshot = Navigation.CaptureWindow();
-					Directory.CreateDirectory($"./logging/characters/{character.NameGOOD}");
-					screenshot.Save($"./logging/characters/{character.NameGOOD}/constellation_{constellation + 1}.png");
+					SaveDiagnosticBitmap(screenshot, $"./logging/characters/{character.NameGOOD}/constellation_{constellation + 1}.png");
 				}
 
 				// Grab Color

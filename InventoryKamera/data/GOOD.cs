@@ -10,6 +10,8 @@ namespace InventoryKamera
 {
     public class GOOD
     {
+        private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
+
         [JsonProperty("format")]
         public string Format { get; private set; }
 
@@ -91,20 +93,31 @@ namespace InventoryKamera
 
         internal void WriteToJSON(string outputDirectory)
         {
-            // Creates directory if doesn't exist
-            Directory.CreateDirectory(outputDirectory);
-
-            // Create file with timestamp in name
-            string fileName = $"genshinData_GOOD_{DateTime.Now.ToString("yyyy_MM_dd_HH_mm")}.json";
-            string outputFile = Path.Combine(outputDirectory, fileName);
-
-            // Write file
-            WriteToJson(outputFile);
-
-
-            if (!File.Exists(outputFile)) // did not make file
+            // A failed export (disconnected drive, full disk, permissions) must
+            // not surface as an unhandled exception: report it clearly and let
+            // the user re-export from memory via the manual export button.
+            try
             {
-                UserInterface.AddError($"Failed to output at : {outputDirectory}");
+                // Creates directory if doesn't exist
+                Directory.CreateDirectory(outputDirectory);
+
+                // Create file with timestamp in name
+                string fileName = $"genshinData_GOOD_{DateTime.Now.ToString("yyyy_MM_dd_HH_mm")}.json";
+                string outputFile = Path.Combine(outputDirectory, fileName);
+
+                // Write file
+                WriteToJson(outputFile);
+
+
+                if (!File.Exists(outputFile)) // did not make file
+                {
+                    UserInterface.AddError($"Failed to output at : {outputDirectory}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "Failed to export scan data to {0}", outputDirectory);
+                UserInterface.AddError($"Failed to export scan data to '{outputDirectory}': {ex.Message}\nThe scanned data is not lost. Use the manual export button to try again, or choose a different output directory.");
             }
         }
 

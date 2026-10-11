@@ -119,6 +119,38 @@ namespace InventoryKamera
             }
         }
 
+        // The output (and logging) locations must be writable BEFORE the scan
+        // starts: a disconnected removable/network drive ("device is not
+        // ready"), read-only folder or invalid path would otherwise crash the
+        // scan after the data was gathered. Cheap probe: create the directory
+        // and write+delete a temporary file in it.
+        private bool ValidateOutputDirectory(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                Logger.Warn("Scan not started: no output directory set");
+                MessageBox.Show("Please set an output directory before scanning.", "Output Directory", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(path);
+
+                string probe = Path.Combine(path, $"kamera_write_probe_{Guid.NewGuid():N}.tmp");
+                File.WriteAllText(probe, string.Empty);
+                File.Delete(probe);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "Output directory '{0}' is not usable", path);
+                MessageBox.Show($"The output directory cannot be used:\n{path}\n\n{ex.Message}\n\nChoose a writable output directory before scanning.",
+                    "Output Directory Unavailable", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return false;
+            }
+        }
+
         private void MainForm_Load(object sender, EventArgs e)
         {
             if (Properties.Settings.Default.UpgradeNeeded)
@@ -208,11 +240,14 @@ namespace InventoryKamera
 
             UserInterface.ResetAll();
 
-            UserInterface.SetProgramStatus("Scanning");
             Logger.Info("Starting scan");
 
-            if (Directory.Exists(OutputPath_TextBox.Text) || Directory.CreateDirectory(OutputPath_TextBox.Text).Exists)
+            // Refuse to start when the output location cannot be written to;
+            // ValidateOutputDirectory surfaces the reason to the user.
+            if (ValidateOutputDirectory(OutputPath_TextBox.Text))
             {
+                UserInterface.SetProgramStatus("Scanning");
+
                 if (running)
                 {
                     Logger.Debug("Already running");
@@ -259,7 +294,10 @@ namespace InventoryKamera
                             throw new NotImplementedException($"{Navigation.GetSize().Width}x{Navigation.GetSize().Height} is an unsupported resolution.");
                         }
 
-                        if (Navigation.GetSize() != Navigation.CaptureWindow().Size) throw new FormatException("Window size and screenshot size mismatch. Please make sure the game is not in a fullscreen mode.");
+                        using (Bitmap screenshot = Navigation.CaptureWindow())
+                        {
+                            if (Navigation.GetSize() != screenshot.Size) throw new FormatException("Window size and screenshot size mismatch. Please make sure the game is not in a fullscreen mode.");
+                        }
 
                         data = new InventoryKamera();
 
@@ -319,10 +357,7 @@ namespace InventoryKamera
             }
             else
             {
-                if (string.IsNullOrWhiteSpace(OutputPath_TextBox.Text))
-                    UserInterface.AddError("Please set an output directory");
-                else
-                    UserInterface.AddError($"{OutputPath_TextBox.Text} is not a valid directory");
+                Logger.Warn("Scan not started: output directory is not usable");
             }
         }
 
