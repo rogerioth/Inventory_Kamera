@@ -419,7 +419,10 @@ namespace InventoryKamera
                     List<Rectangle> rectangles;
                     int cols, rows, itemCount, counter = 0;
                     double weight = 0;
-                    int itemPerPage = inventoryPage == InventoryPage.Artifacts ? 32 : 40;
+                    // On 16:10 the artifact page fits a fifth row of items
+                    // (40 per page instead of 32).
+                    // (Ported from taiwenlee/Inventory_Kamera (MIT): f3ee8527)
+                    int itemPerPage = (inventoryPage != InventoryPage.Artifacts || !Navigation.IsNormal) ? 40 : 32;
                     do
                     {
                         (rectangles, cols, rows) = ProcessScreenshot(processedScreenshot, weight);
@@ -537,9 +540,8 @@ namespace InventoryKamera
         internal static Bitmap GetLockedBitmap(Bitmap card, bool isSanctified = false)
         {
 			// Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6, fea6e1bb.
-			// The 16:10 shift (0.0471) is left for a follow-up branch.
 			double baseY = Navigation.IsNormal ? 0.353 : 0.309;
-			double sanctifiedShift = Navigation.IsNormal ? 0.0520 : 0.0;
+			double sanctifiedShift = Navigation.IsNormal ? 0.0520 : 0.0471;
 			double yShift = isSanctified ? sanctifiedShift : 0.0;
 
             return GenshinProcesor.CopyBitmap(card,

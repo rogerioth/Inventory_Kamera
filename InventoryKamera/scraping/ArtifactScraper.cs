@@ -155,8 +155,12 @@ namespace InventoryKamera
 						Navigation.sim.Mouse.VerticalScroll(-1);
 						Navigation.Wait(1);
 					}
-                    // Scroll back one to keep it from getting too crazy
-                    if (page % 12 == 0)
+                    // Scroll back one to keep it from getting too crazy.
+                    // On 16:10 the artifact grid pages differently, so roll back
+                    // more often to keep the scroll position from drifting.
+                    // (Ported from taiwenlee/Inventory_Kamera (MIT): a5d1c776)
+                    var rollbackPeriod = Navigation.IsNormal ? 12 : 3;
+                    if (page % rollbackPeriod == 0)
                     {
 						Logger.Debug("Scrolled back one");
 						Navigation.sim.Mouse.VerticalScroll(1);
@@ -274,16 +278,14 @@ namespace InventoryKamera
         private Bitmap GetSubstatsBitmap(Bitmap card, bool isSanctified = false)
         {
 			// Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6, fea6e1bb.
-			// The 16:10 shift (0.0471) is left for a follow-up branch.
 			double baseY = Navigation.IsNormal ? 0.4216 : 0.3682;
-			double sanctifiedShift = Navigation.IsNormal ? 0.0520 : 0.0;
+			double sanctifiedShift = Navigation.IsNormal ? 0.0520 : 0.0471;
 			double yShift = isSanctified ? sanctifiedShift : 0.0;
 
 			// The region is widened and extended downward so the "unactivated"
 			// substat row introduced in Genshin 6.0 is captured by the OCR.
 			// (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d)
-			// The 16:10 height (0.1573) is left for a follow-up branch.
-            return GenshinProcesor.CopyBitmap(card,new Rectangle(
+			return GenshinProcesor.CopyBitmap(card,new Rectangle(
 				x:(int)(card.Width * 0.0605),
 				y:(int)(card.Height * (baseY + yShift)),
 				width:(int)(card.Width * 0.8297),
@@ -302,9 +304,8 @@ namespace InventoryKamera
         private Bitmap GetLevelBitmap(Bitmap card, bool isSanctified = false)
         {
 			// Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6, fea6e1bb.
-			// The 16:10 shift (0.0465) is left for a follow-up branch.
 			double baseY = Navigation.IsNormal ? 0.3634 : 0.3197;
-			double sanctifiedShift = Navigation.IsNormal ? 0.0520 : 0.0;
+			double sanctifiedShift = Navigation.IsNormal ? 0.0520 : 0.0465;
 			double yShift = isSanctified ? sanctifiedShift : 0.0;
 
 			return GenshinProcesor.CopyBitmap(card, new Rectangle(
@@ -316,15 +317,12 @@ namespace InventoryKamera
 
         private Bitmap GetSanctifyBitmap(Bitmap card)
         {
-			// Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6.
-			// The 16:10 coordinates (y 0.2941, height 0.0470, fea6e1bb) are left for a
-			// follow-up branch; on 16:10 the banner will not be detected and sanctified
-			// artifacts are skipped like any other unreadable card.
+			// Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6, fea6e1bb.
 			return GenshinProcesor.CopyBitmap(card, new Rectangle(
 				x: (int)(card.Width * 0.0),
-				y: (int)(card.Height * 0.3333),
+				y: (int)(card.Height * (Navigation.IsNormal ? 0.3333 : 0.2941)),
 				width: (int)(card.Width * 0.0606),
-				height: (int)(card.Height * 0.0526)));
+				height: (int)(card.Height * (Navigation.IsNormal ? 0.0526 : 0.0470))));
         }
 
         private Bitmap GetGearSlotBitmap(Bitmap card)
