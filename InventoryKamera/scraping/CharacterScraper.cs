@@ -160,6 +160,7 @@ namespace InventoryKamera
 						constellationOrder != null)
 					{
 						string talentLeveledAtConst3;
+						string talentLeveledAtConst5;
 
 						if (character.NameGOOD.Contains("Traveler"))
 						{
@@ -173,6 +174,7 @@ namespace InventoryKamera
 								return character;
 							}
 							talentLeveledAtConst3 = (string)elementOrder[0];
+							talentLeveledAtConst5 = elementOrder.Count() > 1 ? (string)elementOrder[1] : null;
 						}
 						else
 						{
@@ -182,24 +184,28 @@ namespace InventoryKamera
 								return character;
 							}
 							talentLeveledAtConst3 = (string)constellationOrder[0];
+							talentLeveledAtConst5 = constellationOrder.Count() > 1 ? (string)constellationOrder[1] : null;
 						}
 
-                        // Scale down talents
-                        if (character.Constellation >= 5)
+						// Scale down talents. Ported from taiwenlee/Inventory_Kamera (MIT): 191fa8f2
+						// C3 and C5 each raise one talent by 3 levels, and the character data records
+						// which talent each targets. That can be the normal attack ("auto") for
+						// characters such as Freminet, Sethos, Arlecchino or Neuvillette.
+						if (character.Constellation >= 3)
 						{
-							Logger.Info("{0} constellation 5+, adjusting scanned skill and burst levels", character.NameGOOD);
-							character.Talents["skill"] -= 3;
-							character.Talents["burst"] -= 3;
+							Logger.Info("{0} constellation 3+, adjusting scanned {1} level", character.NameGOOD, talentLeveledAtConst3);
+							character.Talents[talentLeveledAtConst3] -= 3;
 						}
-						else if (talentLeveledAtConst3 == "skill")
+
+						if (character.Constellation >= 5)
 						{
-							Logger.Info("{0} constellation 3+, adjusting scanned skill level", character.NameGOOD);
-							character.Talents["skill"] -= 3;
-						}
-						else
-						{
-							Logger.Info("{0} constellation 3+, adjusting scanned burst level", character.NameGOOD);
-							character.Talents["burst"] -= 3;
+							if (talentLeveledAtConst5 is null)
+							{
+								Logger.Warn("{0} is missing constellation 5 order data. Keeping scanned talent levels.", character.NameGOOD);
+								return character;
+							}
+							Logger.Info("{0} constellation 5+, adjusting scanned {1} level", character.NameGOOD, talentLeveledAtConst5);
+							character.Talents[talentLeveledAtConst5] -= 3;
 						}
 					}
 					else

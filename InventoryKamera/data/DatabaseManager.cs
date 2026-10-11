@@ -375,7 +375,9 @@ namespace InventoryKamera
                         int characterID = (int)character["id"];
 
                         string const3Description = "";
+                        string const5Description = "";
                         string skill = "";
+                        string auto = "Normal Attack";
 
                         var value = new JObject();
 
@@ -439,19 +441,40 @@ namespace InventoryKamera
 
                                 var constellationOrder = new JArray();
 
-                                // The skill/burst name is always mentioned in the constellation's description so we'll check for it
+                                // The skill/burst name is always mentioned in the constellation's description
+                                // so we'll check for it. C3 and C5 can also level the normal attack for
+                                // characters such as Freminet, Sethos, Arlecchino or Neuvillette.
+                                // Ported from taiwenlee/Inventory_Kamera (MIT): 191fa8f2
                                 const3Description = talents.Where(entry => entry["icon"]?.ToString().Contains(name) == true).ElementAt(2)["descTextMapHash"].ToString();
                                 const3Description = Mappings[const3Description].ToString();
 
-                                if (const3Description.Contains(skill))
+                                if (const3Description.Contains(auto))
+                                {
+                                    constellationOrder.Add("auto");
+                                }
+                                else if (const3Description.Contains(skill))
                                 {
                                     constellationOrder.Add("skill");
-                                    constellationOrder.Add("burst");
                                 }
                                 else
                                 {
                                     constellationOrder.Add("burst");
+                                }
+
+                                const5Description = talents.Where(entry => entry["icon"]?.ToString().Contains(name) == true).ElementAt(4)["descTextMapHash"].ToString();
+                                const5Description = Mappings[const5Description].ToString();
+
+                                if (const5Description.Contains(auto))
+                                {
+                                    constellationOrder.Add("auto");
+                                }
+                                else if (const5Description.Contains(skill))
+                                {
                                     constellationOrder.Add("skill");
+                                }
+                                else
+                                {
+                                    constellationOrder.Add("burst");
                                 }
 
                                 value.Add("ConstellationOrder", constellationOrder);
