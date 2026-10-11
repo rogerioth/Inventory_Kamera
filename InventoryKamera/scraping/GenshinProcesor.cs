@@ -211,6 +211,13 @@ namespace InventoryKamera
 			}
 			finally
 			{
+				// tessedit_char_whitelist is stored on the pooled engine itself, not
+				// on the page: a numbers-only read that leaves it set would make
+				// every later borrower of this engine OCR digits only (flaky, wrong
+				// reads on completely unrelated names). Clear it before the engine
+				// goes back into the pool.
+				if (numbersOnly) e.SetVariable("tessedit_char_whitelist", string.Empty);
+
 				// Always return the engine to the pool: an OCR failure on a malformed
 				// capture (e.g. a sanctified artifact card) must not leak it, otherwise
 				// the pool eventually starves and every worker freezes waiting for an

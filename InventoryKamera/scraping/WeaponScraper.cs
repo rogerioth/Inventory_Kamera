@@ -217,14 +217,22 @@ namespace InventoryKamera
                     height: (int)(card.Height * (Navigation.IsNormal ? 0.035 : 0.033))));
         }
 
-        Bitmap GetRefinementBitmap(Bitmap card)
+        Bitmap GetRefinementBitmap(Bitmap card, double expand = 0.0)
         {
-            return GenshinProcesor.CopyBitmap(card,
-                new Rectangle(
-                    x: (int)(card.Width * (Navigation.IsNormal ? 0.058 : 0.057)),
-                    y: (int)(card.Height * (Navigation.IsNormal ? 0.417 : 0.364)),
-                    width: (int)(card.Width * (Navigation.IsNormal ? 0.074 : 0.075)),
-                    height: (int)(card.Height * (Navigation.IsNormal ? 0.038 : 0.034))));
+            // Baseline crop region of the refinement rank box (calibrated
+            // fractions - do not change them). The optional `expand` grows the
+            // region by a fraction of its own width/height on every side and is
+            // used ONLY by the retry strategies in ScanRefinement: the rank box
+            // border sits right against the digit, so a slightly wider crop
+            // gives OCR padding without moving the baseline geometry.
+            Rectangle region = new Rectangle(
+                x: (int)(card.Width * (Navigation.IsNormal ? 0.058 : 0.057)),
+                y: (int)(card.Height * (Navigation.IsNormal ? 0.417 : 0.364)),
+                width: (int)(card.Width * (Navigation.IsNormal ? 0.074 : 0.075)),
+                height: (int)(card.Height * (Navigation.IsNormal ? 0.038 : 0.034)));
+            if (expand > 0.0)
+                region.Inflate((int)(region.Width * expand), (int)(region.Height * expand));
+            return GenshinProcesor.CopyBitmap(card, region);
         }
 
         public async Task<Weapon> CatalogueFromBitmapsAsync(List<Bitmap> bm, int id)
@@ -240,7 +248,7 @@ namespace InventoryKamera
 
 			if (bm.Count >= 4)
 			{
-				int w_name = 0; int w_level = 1; int w_refinement = 2; int w_lock = 3; int w_equippedCharacter = 4;
+				int w_name = 0; int w_level = 1; int w_refinement = 2; int w_lock = 3; int w_equippedCharacter = 4; int w_card = 5;
 
 				// Check for Rarity
 				rarity = GetQuality(bm[w_name]);
@@ -262,7 +270,7 @@ namespace InventoryKamera
 					name = ScanWeaponName(ScanItemName(bm[w_name]));
 				});
 				var taskLevel = Task.Run(() => level = ScanLevel(bm[w_level], ref ascended));
-				var taskRefinement = Task.Run(() => refinementLevel = ScanRefinement(bm[w_refinement]));
+				var taskRefinement = Task.Run(() => refinementLevel = ScanRefinement(bm[w_refinement], bm.Count > w_card ? bm[w_card] : null));
 				var taskEquipped = Task.Run(() => equippedCharacter = ScanEquippedCharacter(bm[w_equippedCharacter]));
 
 				tasks.Add(taskName);
@@ -275,6 +283,22 @@ namespace InventoryKamera
 				}
 
 				await Task.WhenAll(tasks.ToArray());
+
+				// Refinement fallback: never drop a weapon with a valid name/level
+				// just because OCR could not read the rank box. Dropped weapons
+				// are the actual harm in upstream issues #482/#515/#535, and a
+				// possibly-wrong refinement rank 1 on a handful of weapons is
+				// strictly better than omitting the weapon from the export. So
+				// default to rank 1 (the most common value), save the offending
+				// crop, and warn so it can be reviewed. 1-2 star weapons have no
+				// refinement UI at all; the Weapon constructor already assigns
+				// them rank 1, so they skip this path.
+				if (rarity > 2 && (refinementLevel < 1 || 5 < refinementLevel))
+				{
+					string screenshot = SaveRefinementFailureScreenshot(bm[w_refinement], id);
+					Logger.Warn("Weapon #{0}: refinement OCR failed after all strategies, defaulting to refinement rank 1. Screenshot: {1}", id, screenshot);
+					refinementLevel = 1;
+				}
 			}
 			return new Weapon(name, level, ascended, refinementLevel, locked, equippedCharacter, id, rarity);
 		}
@@ -326,27 +350,88 @@ namespace InventoryKamera
 			return -1;
 		}
 
-		public int ScanRefinement(Bitmap image)
+		// Refinement rank OCR is the flakiest read of the weapon scan (upstream
+		// issues #482/#515/#535): the rank box is tiny, its border sits right
+		// against the digit, and the box turns gold at max rank, so a single pass
+		// can return "" or an out-of-range number. Run a short, BOUNDED list of
+		// strategies in order and stop at the first in-range (1-5) result; never
+		// loop on failure (the old unbounded scale ladder wasted time and the
+		// "" -> retry pattern could stall a worker). If every strategy fails,
+		// return -1 and let CatalogueFromBitmapsAsync keep the weapon with
+		// refinement rank 1 instead of dropping it.
+		//   1. Baseline crop as-is, default OCR settings (previous behavior,
+		//      succeeds for the vast majority of weapons).
+		//   2. Baseline crop re-read with a digits-only whitelist: the box holds
+		//      a single digit, so restricting the charset rescues noisy reads.
+		//   3. Baseline crop at 2x scale with the digits-only whitelist: small
+		//      windowed resolutions (e.g. 1600x900) leave too few pixels for the
+		//      LSTM otherwise.
+		//   4. Slightly wider crop (25% inflation, see GetRefinementBitmap) at
+		//      2x scale with the digits-only whitelist: escapes the tight box
+		//      border; the surrounding pixels do not change color at max rank.
+		public int ScanRefinement(Bitmap image, Bitmap card = null)
 		{
-			for (double factor = 1; factor <= 2; factor += 0.1)
-			{
-				using (Bitmap up = GenshinProcesor.ScaleImage(image, factor))
-				{
-					Bitmap n = GenshinProcesor.ConvertToGrayscale(up);
-					GenshinProcesor.SetInvert(ref n);
+			int result = OcrRefinement(image, scale: 1.0, numbersOnly: false);
+			if (result > 0) return result;
 
-					string text = GenshinProcesor.AnalyzeText(n).Trim();
-					n.Dispose();
+			result = OcrRefinement(image, scale: 1.0, numbersOnly: true);
+			if (result > 0) return result;
+
+			result = OcrRefinement(image, scale: 2.0, numbersOnly: true);
+			if (result > 0) return result;
+
+			if (card != null)
+			{
+				using (Bitmap wider = GetRefinementBitmap(card, expand: 0.25))
+					result = OcrRefinement(wider, scale: 2.0, numbersOnly: true);
+				if (result > 0) return result;
+			}
+
+			return -1;
+		}
+
+		// One bounded OCR pass over the refinement crop. Returns the parsed rank
+		// (1-5) or -1 if the read was empty/unusable.
+		private static int OcrRefinement(Bitmap image, double scale, bool numbersOnly)
+		{
+			using (Bitmap scaled = GenshinProcesor.ScaleImage(image, scale))
+			{
+				Bitmap processed = GenshinProcesor.ConvertToGrayscale(scaled);
+				GenshinProcesor.SetInvert(ref processed);
+				using (processed)
+				{
+					string text = GenshinProcesor.AnalyzeText(processed, numbersOnly: numbersOnly).Trim();
 					text = Regex.Replace(text, @"[^\d]", string.Empty);
 
-					// Parse Int
 					if (int.TryParse(text, out int refinementLevel) && 1 <= refinementLevel && refinementLevel <= 5)
 					{
 						return refinementLevel;
 					}
+
+					Logger.Debug("Refinement OCR attempt (scale {0}, digits-only {1}) did not return a rank, read: '{2}'", scale, numbersOnly, text);
 				}
 			}
 			return -1;
+		}
+
+		// Saves the refinement crop that failed OCR so the read can be reviewed
+		// offline; mirrors the ./logging/weapons/weapon{id}/refinement/ layout
+		// that the invalid-weapon path in data/InventoryKamera.cs writes.
+		private static string SaveRefinementFailureScreenshot(Bitmap refinement, int id)
+		{
+			try
+			{
+				string path = $"./logging/weapons/weapon{id}/refinement";
+				System.IO.Directory.CreateDirectory(path);
+				string file = path + "/refinement_fallback.png";
+				refinement.Save(file);
+				return file;
+			}
+			catch (Exception ex)
+			{
+				Logger.Warn(ex, "Could not save refinement failure screenshot for weapon #{0}", id);
+				return "<not saved>";
+			}
 		}
 
 		public string ScanEquippedCharacter(Bitmap bm)
