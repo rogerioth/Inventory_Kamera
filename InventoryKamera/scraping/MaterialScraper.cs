@@ -58,6 +58,7 @@ namespace InventoryKamera
 		{
 			if (!inventory.Materials.Contains(new Material("Mora", 0)))
 			{
+				Logger.Info("    Scanning Mora balance...");
 				inventory.Materials.Add(new Material("Mora", ScanMora()));
 			}
 
@@ -81,7 +82,7 @@ namespace InventoryKamera
 				// need to be scrolled but it's fine.
 				var r = rectangles.Take(rectangles.Count() - cols).ToList();
 
-				Logger.Debug("Scanning material page {0}", page);
+				Logger.Info("    Scanning {0} inventory page {1}...", inventoryPage, page);
 				Logger.Debug("Located {0} possible item locations on page.", rectangles.Count);
 
 				foreach (var rectangle in r)
@@ -107,17 +108,18 @@ namespace InventoryKamera
 							if (!GenshinProcesor.IsValidMaterial(material.name))
 							{
 								// Unknown material (e.g. a newly added item that is missing from
-								// the material data). Warn and skip instead of aborting or
+								// the material data). Report and skip instead of aborting or
 								// exporting an unrecognized name.
-								Logger.Warn("Read material '{0}' but could not match it to the material data. Skipping material...", material.name);
+								Logger.Error("        [FAILURE] Material '{0}' could not be matched to the material data. Skipping material.", material.name);
 							}
 							else
 							{
 								// Scan Material Quantity
+								Logger.Info("        Scanning {0}'s quantity...", material.name);
 								material.count = ScanMaterialCount(rectangle, out Bitmap quantity);
 								if (material.count == 0)
 								{
-									UserInterface.AddError($"Failed to parse quantity for {material.name}");
+									UserInterface.AddError($"            [FAILURE] Could not read {material.name}'s quantity. Recorded quantity: 0.");
 									SaveInventoryBitmap(quantity, $"{material.name}_Quantity.png");
 								}
 								if (Properties.Settings.Default.LogScreenshots || material.count == 0)
@@ -125,6 +127,7 @@ namespace InventoryKamera
 									SaveInventoryBitmap(quantity, $"{material.name}_Quantity.png");
 	                            }
 								inventory.Materials.Add(material);
+								if (material.count > 0) Logger.Info("            {0}: quantity {1}", material.name, material.count);
 								UserInterface.ResetCharacterDisplay();
 								UserInterface.SetMaterial(nameplate, quantity, material.name, material.count);
 
@@ -175,6 +178,7 @@ namespace InventoryKamera
 			}
 
 		LastPage:
+			Logger.Info("    Scanning the final {0} inventory page...", inventoryPage);
 			// scroll down as much as possible
 			for (int i = 0; i < 20; i++)
 			{
@@ -206,18 +210,19 @@ namespace InventoryKamera
 						if (!GenshinProcesor.IsValidMaterial(material.name))
 						{
 							// Unknown material (e.g. a newly added item that is missing from
-							// the material data). Warn and skip instead of aborting or
+							// the material data). Report and skip instead of aborting or
 							// exporting an unrecognized name.
-							Logger.Warn("Read material '{0}' but could not match it to the material data. Skipping material...", material.name);
+							Logger.Error("        [FAILURE] Material '{0}' could not be matched to the material data. Skipping material.", material.name);
 							nameplate.Dispose();
 							continue;
 						}
 
 						// Scan Material Number
+						Logger.Info("        Scanning {0}'s quantity...", material.name);
 						material.count = ScanMaterialCount(rectangle, out Bitmap quantity);
 						if (material.count == 0)
 						{
-							UserInterface.AddError($"Failed to parse quantity for {material.name}");
+							UserInterface.AddError($"            [FAILURE] Could not read {material.name}'s quantity. Recorded quantity: 0.");
 							SaveInventoryBitmap(quantity, $"{material.name}_Quantity.png");
 						}
 						else if (Properties.Settings.Default.LogScreenshots)
@@ -225,6 +230,7 @@ namespace InventoryKamera
 							SaveInventoryBitmap(quantity, $"{material.name}_Quantity.png");
 						}
 						inventory.Materials.Add(material);
+						if (material.count > 0) Logger.Info("            {0}: quantity {1}", material.name, material.count);
 						UserInterface.ResetCharacterDisplay();
 						UserInterface.SetMaterial(nameplate, quantity, material.name, material.count);
 						passby = false; // New material found so break on next old material
@@ -262,13 +268,14 @@ namespace InventoryKamera
 				{
 					UserInterface.ResetCharacterDisplay();
 					UserInterface.SetMora(screenshot, count);
+					Logger.Info("        Mora: {0}", count);
                     if (Properties.Settings.Default.LogScreenshots) 
 						SaveInventoryBitmap(screenshot, "mora.png");
 				}
 				else
 				{
 					UserInterface.SetNavigation_Image(screenshot);
-					UserInterface.AddError("Unable to parse mora count");
+					UserInterface.AddError("        [FAILURE] Could not read the Mora balance. Recorded quantity: 0.");
 					SaveInventoryBitmap(screenshot, "mora.png");
 				}
 				return count;

@@ -44,7 +44,7 @@ namespace InventoryKamera
 
 			StopScanning = false;
 
-			Logger.Info("Found {0} for artifact count.", artifactCount);
+			Logger.Info("    Found {0} artifacts in the inventory", artifactCount);
 
 			//if (SortByLevel)
 			//{
@@ -92,7 +92,7 @@ namespace InventoryKamera
 			// Go through artifact list
 			while (cardsQueued < artifactCount)
 			{
-				Logger.Debug("Scanning artifact page {0}", page);
+				Logger.Info("    Capturing artifact inventory page {0}...", page);
 				Logger.Debug("Located {0} possible item locations on page.", rectangles.Count);
 
 				int cardsRemaining = artifactCount - cardsQueued;
@@ -114,7 +114,7 @@ namespace InventoryKamera
 					{
 						if (attempts >= MaxCardReadAttempts)
 						{
-							Logger.Warn("Skipping artifact #{0}: card could not be read after {1} attempts. Continuing with the next artifact.", cardsQueued, attempts);
+							Logger.Error("    [FAILURE] Artifact #{0}: card could not be read after {1} attempts. Skipping artifact.", cardsQueued, attempts);
 							break;
 						}
 						attempts++;
@@ -125,8 +125,8 @@ namespace InventoryKamera
 					cardsQueued++;
 					if (cardsQueued >= artifactCount || StopScanning)
 					{
-						if (StopScanning) Logger.Info("Stopping artifact scan based on filtering");
-						else Logger.Info("Stopping artifact scan based on scans queued ({0} of {1})", cardsQueued, artifactCount);
+						if (StopScanning) Logger.Info("    Artifact capture finished at the configured filters");
+						else Logger.Info("    Artifact capture finished: {0} of {1} cards queued", cardsQueued, artifactCount);
 						return;
 					}
 				}
@@ -336,6 +336,7 @@ namespace InventoryKamera
 
         public static async Task<Artifact> CatalogueFromBitmapsAsync(List<Bitmap> bm, int id)
 		{
+			Logger.Info("Starting scan of artifact #{0}\n    Scanning artifact #{0}'s set, slot, rarity and level...\n    Scanning artifact #{0}'s main stat and substats...\n    Scanning artifact #{0}'s lock and equipped character...", id);
 			// Init Variables
 			string gearSlot = null;
 			string mainStat = null;

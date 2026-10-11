@@ -161,6 +161,12 @@
     <Compile Include="ui\main\MainForm.Designer.cs">
       <DependentUpon>MainForm.cs</DependentUpon>
     </Compile>
+    <Compile Include="ui\main\MainForm.Layout.cs">
+      <DependentUpon>MainForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="ui\main\MainForm.Logs.cs">
+      <DependentUpon>MainForm.cs</DependentUpon>
+    </Compile>
     <Compile Include="data\InventoryKamera.cs" />
     <Compile Include="data\OCRImageCollection.cs" />
     <Compile Include="data\Inventory.cs" />
@@ -169,6 +175,7 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="data\Rect.cs" />
     <Compile Include="scraping\GenshinProcesor.cs" />
+    <Compile Include="ui\UiLogTarget.cs" />
     <Compile Include="ui\UserInterface.cs" />
     <Compile Include="game\Weapon.cs" />
     <Compile Include="scraping\WeaponScraper.cs" />

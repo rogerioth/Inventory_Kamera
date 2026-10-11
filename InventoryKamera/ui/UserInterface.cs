@@ -240,7 +240,6 @@ namespace InventoryKamera
 			{
 				programStatus_Label.Text = status;
 				programStatus_Label.ForeColor = ok ? Color.Green : Color.Red;
-				programStatus_Label.Font = new Font(programStatus_Label.Font.FontFamily, 15);
 				programStatus_Label.Refresh();
 			};
 
@@ -249,7 +248,8 @@ namespace InventoryKamera
 
 		public static void AddError(string error)
 		{
-			UpdateTextBox($"{error.Replace("\n", Environment.NewLine)}" + Environment.NewLine, error_TextBox);
+			// The expandable log panel consumes NLog entries in batches. Do not
+			// duplicate errors into the retired, hidden textbox on the UI thread.
 			Logger.Error(error);
 		}
 

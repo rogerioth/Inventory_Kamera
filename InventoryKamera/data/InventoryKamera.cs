@@ -100,7 +100,8 @@ namespace InventoryKamera
 
 		public void GatherData()
 		{
-
+			Logger.Info("Starting inventory scan");
+			Logger.Info("    Preparing diagnostic logs and OCR data...");
 			ResetLogging();
 
 			GenshinProcesor.ReloadData();
@@ -129,14 +130,14 @@ namespace InventoryKamera
 			catch (ThreadAbortException) { throw; }
 			catch (Exception ex)
 			{
-				Logger.Warn(ex, "Failed to assign custom character names. Continuing scan...");
-				UserInterface.AddError($"Failed to assign custom character names: {ex.Message}");
+				UserInterface.AddError($"    [FAILURE] Could not assign custom character names: {ex.Message}. Continuing scan.");
+				Logger.Debug(ex, "Custom character name assignment exception");
 			}
 
 
 			if (Properties.Settings.Default.ScanWeapons)
 			{
-				Logger.Info("Scanning weapons...");
+				Logger.Info("Starting weapon inventory scan");
 				// Get Weapons
 				Navigation.InventoryScreen();
 				Navigation.SelectWeaponInventory();
@@ -144,19 +145,20 @@ namespace InventoryKamera
 				{
                     weaponScraper.ScanWeapons();
 				}
-				catch (FormatException ex) { UserInterface.AddError(ex.Message); }
+				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Weapon inventory scan: " + ex.Message); }
 				catch (ThreadAbortException) { }
 				catch (Exception ex)
 				{
-					UserInterface.AddError(ex.Message + "\n" + ex.StackTrace);
+					UserInterface.AddError("    [FAILURE] Weapon inventory scan: " + ex.Message);
+					Logger.Debug(ex, "Weapon inventory scan exception");
 				}
 				Navigation.MainMenuScreen();
-				Logger.Info("Done scanning weapons");
+				Logger.Info("Finished capturing weapon inventory cards");
 			}
 
 			if (Properties.Settings.Default.ScanArtifacts)
 			{
-				Logger.Info("Scanning artifacts...");
+				Logger.Info("Starting artifact inventory scan");
 
 				// Get Artifacts
 				Navigation.InventoryScreen();
@@ -165,21 +167,22 @@ namespace InventoryKamera
 				{
 					artifactScraper.ScanArtifacts();
 				}
-				catch (FormatException ex) { UserInterface.AddError(ex.Message); }
+				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Artifact inventory scan: " + ex.Message); }
 				catch (ThreadAbortException) { }
 				catch (Exception ex)
 				{
-					UserInterface.AddError(ex.Message + "\n" + ex.StackTrace);
+					UserInterface.AddError("    [FAILURE] Artifact inventory scan: " + ex.Message);
+					Logger.Debug(ex, "Artifact inventory scan exception");
 				}
 				Navigation.MainMenuScreen();
-				Logger.Info("Done scanning artifacts");
+				Logger.Info("Finished capturing artifact inventory cards");
 			}
 
 			workerQueue.Enqueue(new OCRImageCollection(null, "END", 0));
 
 			if (Properties.Settings.Default.ScanCharacters)
 			{
-				Logger.Info("Scanning characters...");
+				Logger.Info("Starting character roster scan");
 				// Get characters
 				Navigation.CharacterScreen();
 				try
@@ -189,14 +192,17 @@ namespace InventoryKamera
 				catch (ThreadAbortException) { }
 				catch (Exception ex)
 				{
-					UserInterface.AddError(ex.Message + "\n" + ex.StackTrace);
+					UserInterface.AddError("    [FAILURE] Character roster scan: " + ex.Message);
+					Logger.Debug(ex, "Character roster scan exception");
 				}
 				Navigation.MainMenuScreen();
-				Logger.Info("Done scanning characters");
+				Logger.Info("Finished character roster scan: {0} characters recorded", Characters.Count);
 			}
 
 			// Wait for Image Processors to finish
+			Logger.Info("Waiting for remaining weapon and artifact scans...");
 			AwaitProcessors();
+			Logger.Info("    Equipment processing finished");
 
 			if (Properties.Settings.Default.ScanCharacters)
 			{
@@ -210,7 +216,7 @@ namespace InventoryKamera
 			// Scan Character Development Items
 			if (Properties.Settings.Default.ScanCharDevItems)
 			{
-				Logger.Info("Scanning character development materials...");
+				Logger.Info("Starting character development material scan");
 				// Get Materials
 				Navigation.InventoryScreen();
 				Navigation.SelectCharacterDevelopmentInventory();
@@ -220,20 +226,21 @@ namespace InventoryKamera
 					materialScraper.SetInventoryPage(InventoryPage.CharacterDevelopmentItems);
 					materialScraper.Scan_Materials(ref Inventory);
 				}
-				catch (FormatException ex) { UserInterface.AddError(ex.Message); }
+				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Character development material scan: " + ex.Message); }
 				catch (ThreadAbortException) { }
 				catch (Exception ex)
 				{
-					UserInterface.AddError(ex.Message + "\n" + ex.StackTrace);
+					UserInterface.AddError("    [FAILURE] Character development material scan: " + ex.Message);
+					Logger.Debug(ex, "Character development material scan exception");
 				}
 				Navigation.MainMenuScreen();
-				Logger.Info("Done scanning character development materials");
+				Logger.Info("Finished character development material scan");
 			}
 
 			// Scan Materials
 			if (Properties.Settings.Default.ScanMaterials)
 			{
-				Logger.Info("Scanning materials...");
+				Logger.Info("Starting material inventory scan");
 				// Get Materials
 				Navigation.InventoryScreen();
 				Navigation.SelectMaterialInventory();
@@ -243,15 +250,17 @@ namespace InventoryKamera
 					materialScraper.SetInventoryPage(InventoryPage.Materials);
 					materialScraper.Scan_Materials(ref Inventory);
 				}
-				catch (FormatException ex) { UserInterface.AddError(ex.Message); }
+				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Material inventory scan: " + ex.Message); }
 				catch (ThreadAbortException) { }
 				catch (Exception ex)
 				{
-					UserInterface.AddError(ex.Message + "\n" + ex.StackTrace);
+					UserInterface.AddError("    [FAILURE] Material inventory scan: " + ex.Message);
+					Logger.Debug(ex, "Material inventory scan exception");
 				}
 				Navigation.MainMenuScreen();
-				Logger.Info("Done scanning materials");
+				Logger.Info("Finished material inventory scan");
 			}
+			Logger.Info("Inventory scan finished");
 		}
 
 		private void AwaitProcessors()
@@ -306,17 +315,20 @@ namespace InventoryKamera
 								Inventory.Add(weapon);
 								if (!string.IsNullOrWhiteSpace(weapon.EquippedCharacter))
 									equippedWeapons.Add(weapon);
+								Logger.Info("    Completed weapon #{0}: {1}, level {2}, refinement {3}{4}",
+									weapon.Id, weapon.Name, weapon.Level, weapon.RefinementLevel,
+									string.IsNullOrWhiteSpace(weapon.EquippedCharacter) ? "" : ", equipped by " + weapon.EquippedCharacter);
 							}
 							else
 							{
-								UserInterface.AddError($"Unable to validate information for weapon ID#{weapon.Id}");
 								string error = "";
 								if (!weapon.HasValidWeaponName()) error += "Invalid weapon name\n"; 
 								if (!weapon.HasValidRarity()) error += "Invalid weapon rarity\n";
 								if (!weapon.HasValidLevel()) error += "Invalid weapon level\n";
 								if (!weapon.HasValidRefinementLevel()) error += "Invalid refinement level\n";
-								if (!weapon.HasValidEquippedCharacter()) error += "Inavlid equipped character\n";
-								UserInterface.AddError(error + weapon.ToString());
+								if (!weapon.HasValidEquippedCharacter()) error += "Invalid equipped character\n";
+								UserInterface.AddError($"    [FAILURE] Weapon #{weapon.Id} ({weapon.Name ?? "unknown"}) could not be validated and was skipped.\n        {error.TrimEnd().Replace("\n", "\n        ")}");
+								Logger.Debug("Invalid weapon #{0} details: {1}", weapon.Id, weapon);
 								Directory.CreateDirectory(weaponPath);
 								try
 								{
@@ -387,10 +399,12 @@ namespace InventoryKamera
 								Inventory.Add(artifact);
 								if (!string.IsNullOrWhiteSpace(artifact.EquippedCharacter))
 									equippedArtifacts.Add(artifact);
+								Logger.Info("    Completed artifact #{0}: {1} {2}, level {3}, main stat {4}{5}",
+									artifact.Id, artifact.SetName, artifact.GearSlot, artifact.Level, artifact.MainStat,
+									string.IsNullOrWhiteSpace(artifact.EquippedCharacter) ? "" : ", equipped by " + artifact.EquippedCharacter);
 							}
 							else
 							{
-								UserInterface.AddError($"Unable to validate information for artifact ID#{artifact.Id}");
 								string error = "";
 								if (!artifact.HasValidSlot()) error += "Invalid artifact gear slot\n";
 								if (!artifact.HasValidSetName()) error += "Invalid artifact set name\n";
@@ -399,7 +413,8 @@ namespace InventoryKamera
 								if (!artifact.HasValidMainStat()) error += "Invalid artifact main stat\n";
 								if (!artifact.HasValidSubStats()) error += "Invalid artifact sub stats\n";
 								if (!artifact.HasValidEquippedCharacter()) error += "Invalid equipped character\n";
-								UserInterface.AddError(error + artifact.ToString());
+								UserInterface.AddError($"    [FAILURE] Artifact #{artifact.Id} ({artifact.SetName ?? "unknown"}) could not be validated and was skipped.\n        {error.TrimEnd().Replace("\n", "\n        ")}");
+								Logger.Debug("Invalid artifact #{0} details: {1}", artifact.Id, artifact);
 								Directory.CreateDirectory(artifactPath);
 								try
 								{
@@ -468,7 +483,7 @@ namespace InventoryKamera
 					}
 					catch (Exception ex)
 					{
-						Logger.Warn(ex, "Failed to process {0} #{1}. Skipping item...", imageCollection.Type, imageCollection.Id);
+						Logger.Error(ex, "    [FAILURE] Could not process {0} #{1}. Skipping item: {2}", imageCollection.Type, imageCollection.Id, ex.GetBaseException().Message);
 						try { imageCollection.Bitmaps?.ForEach(b => b?.Dispose()); } catch { }
 					}
 				}
@@ -495,6 +510,7 @@ namespace InventoryKamera
 
         public void AssignArtifacts()
 		{
+			Logger.Info("Matching scanned artifacts to characters...");
 			foreach (Artifact artifact in equippedArtifacts)
 			{
 				foreach (Character character in Characters)
@@ -502,7 +518,7 @@ namespace InventoryKamera
 					if (artifact.EquippedCharacter == character.NameGOOD)
 					{
 						character.AssignArtifact(artifact); // Do we even need to do this?
-						Logger.Debug("Assigned {fearSlot} to {character}", artifact.GearSlot, character.NameGOOD);
+						Logger.Info("    Assigned {0}'s {1}: {2}, level {3}", character.NameGOOD, artifact.GearSlot, artifact.SetName, artifact.Level);
 						break;
 					}
 				}
@@ -511,21 +527,23 @@ namespace InventoryKamera
 
 		public void AssignWeapons()
 		{
+			Logger.Info("Matching scanned weapons to characters...");
 			foreach (Character character in Characters)
 			{
+				Logger.Info("    Assigning {0}'s weapon...", character.NameGOOD);
 				foreach (Weapon weapon in equippedWeapons)
 				{
 					if (weapon.EquippedCharacter == character.NameGOOD)
 					{
 						character.AssignWeapon(weapon);
-						Logger.Debug("Assigned {weapon} to {character}", weapon.Name, character.NameGOOD);
+						Logger.Info("        {0}'s weapon: {1}, level {2}, refinement {3}", character.NameGOOD, weapon.Name, weapon.Level, weapon.RefinementLevel);
 						break;
 					}
 				}
 				if (character.Weapon is null)
 				{
 					Inventory.Add(new Weapon(character.WeaponType, character.NameGOOD));
-					Logger.Info("Default weapon assigned to {character}", character.NameGOOD);
+					Logger.Info("        {0}: no scanned equipped weapon found; assigned the default weapon", character.NameGOOD);
 				}
 			}
 		}

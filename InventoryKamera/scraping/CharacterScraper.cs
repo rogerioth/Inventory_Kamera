@@ -51,8 +51,8 @@ namespace InventoryKamera
 					// An unreadable or unknown character must never abort the whole scan.
 					// Log it and continue with an invalid character so the loop advances
 					// to the next one.
-					Logger.Warn(ex, "Unexpected error while scanning a character. Skipping character...");
-					UserInterface.AddError($"Failed to scan a character: {ex.Message}");
+					UserInterface.AddError($"    [FAILURE] Character at position {viewed + 1}: {ex.Message}. Skipping character.");
+					Logger.Debug(ex, "Character scan exception at position {0}", viewed + 1);
 					character = new Character();
 				}
 				if (Characters.Count > 0 && character.NameGOOD == Characters.ElementAt(0).NameGOOD) break;
@@ -62,23 +62,26 @@ namespace InventoryKamera
 					{
 						Characters.Add(character);
 						UserInterface.IncrementCharacterCount();
-						Logger.Info("Scanned {0} successfully", character.NameGOOD);
+						Logger.Info("    Completed scan of character {0} successfully", character.NameGOOD);
 						if (Characters.Count == 1) first = character.NameGOOD;
 					}
 					else
                     {
-						Logger.Info("Prevented {0} duplicate scan", character.NameGOOD);
+						Logger.Info("    Skipping duplicate character {0}", character.NameGOOD);
                     }
 				}
                 else
 				{
 					string error = "";
-					if (!character.HasValidName()) error += "Invalid character name\n";
-					if (!character.HasValidLevel()) error += "Invalid level\n";
-					if (!character.HasValidElement()) error += "Invalid element\n";
-					if (!character.HasValidConstellation()) error += "Invalid constellation\n";
-					if (!character.HasValidTalents()) error += "Invalid talents\n";
-					Logger.Error("Failed to scan character\n" + error + character);
+					if (!character.HasValidName()) error += "        Invalid character name\n";
+					if (!character.HasValidLevel()) error += "        Invalid level\n";
+					if (!character.HasValidElement()) error += "        Invalid element\n";
+					if (!character.HasValidConstellation()) error += "        Invalid constellation\n";
+					if (!character.HasValidTalents()) error += "        Invalid talents\n";
+					Logger.Error("    [FAILURE] Character {0} could not be validated and was skipped.\n{1}",
+						string.IsNullOrWhiteSpace(character.NameGOOD) ? "at position " + (viewed + 1) : character.NameGOOD,
+						error.TrimEnd());
+					Logger.Debug("Invalid character details: {0}", character);
 				}
 
 				Navigation.SelectNextCharacter();
@@ -125,8 +128,7 @@ namespace InventoryKamera
 
 			if (string.IsNullOrWhiteSpace(name))
 			{
-				if (string.IsNullOrWhiteSpace(name)) UserInterface.AddError("Could not determine character's name");
-				if (string.IsNullOrWhiteSpace(element)) UserInterface.AddError("Could not determine character's element");
+				// ScanCharacters reports the invalid fields together in one failure.
 				return character;
 			}
 
@@ -136,35 +138,38 @@ namespace InventoryKamera
 			// Check if character was first scanned
 			if (character.NameGOOD != firstCharacter)
 			{
+				Logger.Info("Starting scan of character {0} ({1})", character.NameGOOD, character.Element);
 				bool ascended = false;
 				// Scan Level and ascension
+				Logger.Info("    Scanning {0}'s level and ascension...", character.NameGOOD);
 				int level = ScanLevel(ref ascended);
 				if (level == -1)
 				{
-					UserInterface.AddError($"Could not determine {character.NameGOOD}'s level. Setting to 1.");
+					UserInterface.AddError($"        [FAILURE] Could not determine {character.NameGOOD}'s level. Setting to 1.");
 					level = 1;
 					ascended = false;
 				}
 				character.Level = level;
 				character.Ascended = ascended;
 
-				Logger.Info("{0} Level: {1}", character.NameGOOD, character.Level);
-				Logger.Info("{0} Ascended: {1}", character.NameGOOD, character.Ascended);
+				Logger.Info("        {0}: level {1}, ascended {2}", character.NameGOOD, character.Level, character.Ascended);
 
 				// Scan Experience
 				//experience = ScanExperience();
 				//Navigation.SystemRandomWait(Navigation.Speed.Normal);
 
 				// Scan Constellation
+				Logger.Info("    Scanning {0}'s constellations...", character.NameGOOD);
 				Navigation.SelectCharacterConstellation();
 				character.Constellation = ScanConstellations(character);
-				Logger.Info("{0} Constellation: {1}", character.NameGOOD, character.Constellation);
+				Logger.Info("        {0}: constellation {1}", character.NameGOOD, character.Constellation);
 				Navigation.SystemWait(Navigation.Speed.Normal);
 
 				// Scan Talents
+				Logger.Info("    Scanning {0}'s talents...", character.NameGOOD);
 				Navigation.SelectCharacterTalents();
 				character.Talents = ScanTalents(character);
-				Logger.Info("{0} Talents: {1}", character.NameGOOD, "{" + string.Join(", ", character.Talents.Select(kv => kv.Key + "=" + kv.Value).ToArray()) + "}");
+				Logger.Info("        {0}'s talents: {1}", character.NameGOOD, string.Join(", ", character.Talents.Select(kv => kv.Key + "=" + kv.Value).ToArray()));
 				Navigation.SystemWait(Navigation.Speed.Normal);
 
 				// Scale down talents due to constellations
@@ -186,7 +191,7 @@ namespace InventoryKamera
 							var elementOrder = character.Element is null ? null : constellationOrder[character.Element.ToLower()];
 							if (elementOrder is null || elementOrder.First is null)
 							{
-								Logger.Warn("{0} ({1}) is missing constellation order data. Keeping scanned talent levels.", character.NameGOOD, character.Element);
+								Logger.Warn("        [WARNING] {0} ({1}) is missing constellation order data. Keeping scanned talent levels.", character.NameGOOD, character.Element);
 								return character;
 							}
 							talentLeveledAtConst3 = (string)elementOrder[0];
@@ -196,7 +201,7 @@ namespace InventoryKamera
 						{
 							if (constellationOrder.First is null)
 							{
-								Logger.Warn("{0} is missing constellation order data. Keeping scanned talent levels.", character.NameGOOD);
+								Logger.Warn("        [WARNING] {0} is missing constellation order data. Keeping scanned talent levels.", character.NameGOOD);
 								return character;
 							}
 							talentLeveledAtConst3 = (string)constellationOrder[0];
@@ -209,7 +214,7 @@ namespace InventoryKamera
 						// characters such as Freminet, Sethos, Arlecchino or Neuvillette.
 						if (character.Constellation >= 3)
 						{
-							Logger.Info("{0} constellation 3+, adjusting scanned {1} level", character.NameGOOD, talentLeveledAtConst3);
+							Logger.Info("        Adjusting {0}'s {1} talent by -3 levels for constellation 3", character.NameGOOD, talentLeveledAtConst3);
 							character.Talents[talentLeveledAtConst3] -= 3;
 						}
 
@@ -217,16 +222,16 @@ namespace InventoryKamera
 						{
 							if (talentLeveledAtConst5 is null)
 							{
-								Logger.Warn("{0} is missing constellation 5 order data. Keeping scanned talent levels.", character.NameGOOD);
+								Logger.Warn("        [WARNING] {0} is missing constellation 5 order data. Keeping scanned talent levels.", character.NameGOOD);
 								return character;
 							}
-							Logger.Info("{0} constellation 5+, adjusting scanned {1} level", character.NameGOOD, talentLeveledAtConst5);
+							Logger.Info("        Adjusting {0}'s {1} talent by -3 levels for constellation 5", character.NameGOOD, talentLeveledAtConst5);
 							character.Talents[talentLeveledAtConst5] -= 3;
 						}
 					}
 					else
 					{
-						Logger.Warn("{0} is missing from the character data. Keeping scanned talent levels.", character.NameGOOD);
+						Logger.Warn("        [WARNING] {0} is missing from the character data. Keeping scanned talent levels.", character.NameGOOD);
 						return character;
 					}
 				}
@@ -274,7 +279,7 @@ namespace InventoryKamera
 			}
 			else
 			{
-				UserInterface.AddError(text);
+				UserInterface.AddError("    [FAILURE] Could not read the Traveler's name from the character screen.");
 			}
 			n.Dispose();
 			nameBitmap.Dispose();
@@ -357,7 +362,7 @@ namespace InventoryKamera
 
 								if (unknownAttempts >= maxUnknownAttempts)
 								{
-									Logger.Warn("Read character '{0}' with element '{1}' but could not match it to the character data. Skipping character...", ocrName, element);
+									Logger.Error("    [FAILURE] Character '{0}' ({1}) could not be matched to the character data. Skipping character.", ocrName, element);
 									SaveDiagnosticBitmap(bm, $"./logging/characters/unknown_{ocrName}.png");
 									giveUp = true;
 								}
@@ -601,6 +606,7 @@ namespace InventoryKamera
                 }
 
 				int talentAttempts = 0;
+				Logger.Info("        Scanning {0}'s {1} talent level...", character.NameGOOD, talent);
                 while ((talents[talent] < 1 || talents[talent] > 15) && talentAttempts < maxTalentAttempts)
 				{
 					Bitmap talentLevel = Navigation.CaptureRegion(region);
@@ -633,7 +639,7 @@ namespace InventoryKamera
 					// The talent level could not be read (e.g. navigation issues or characters
 					// without a usable talent page). Leave the talent invalid so this character
 					// is skipped, instead of looping forever and stalling the whole scan.
-					Logger.Warn("Could not scan {0}'s {1} talent level after {2} attempts. Character will be skipped.", character.NameGOOD, talent, maxTalentAttempts);
+					Logger.Error("        [FAILURE] Could not scan {0}'s {1} talent level after {2} attempts. Character will be skipped.", character.NameGOOD, talent, maxTalentAttempts);
 					break;
 				}
 			}

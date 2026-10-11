@@ -73,9 +73,18 @@ namespace InventoryKamera
 				Layout = "${date:format=yyyy-MM-dd HH\\:mm\\:ss.fff}|${level:uppercase=true}|${logger:shortName=True}|${message:withexception=true}",
 			};
 
+			// Feeds the in-app log panel on the main window; same levels as the
+			// main log file so the panel mirrors what gets written to disk.
+			var uiLog = new global::InventoryKamera.ui.UiLogTarget
+			{
+				Name = "uilog",
+				Layout = "${date:format=HH\\:mm\\:ss}  ${level:uppercase=true:padding=-5}  ${message:withexception=true}",
+			};
+
 			config.AddRule(LogLevel.Debug, LogLevel.Fatal, logConsole);
 			config.AddRule(LogLevel.Debug, LogLevel.Fatal, debugFile);
 			config.AddRule(LogLevel.Info, LogLevel.Fatal, logFile);
+			config.AddRule(LogLevel.Info, LogLevel.Fatal, uiLog);
 
             LogManager.Configuration = config;
         }

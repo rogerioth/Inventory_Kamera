@@ -38,14 +38,14 @@ namespace InventoryKamera
 
             StopScanning = false;
 
-            Logger.Info("Found {0} for weapon count.", weaponCount);
+            Logger.Info("    Found {0} weapons in the inventory", weaponCount);
 
             SelectSortingMethod();
 
             // Go through weapon list
             while (cardsQueued < weaponCount)
             {
-                Logger.Debug("Scanning weapon page {0}", page);
+                Logger.Info("    Capturing weapon inventory page {0}...", page);
                 Logger.Debug("Located {0} possible item locations on page.", rectangles.Count);
 
                 int cardsRemaining = weaponCount - cardsQueued;
@@ -63,8 +63,8 @@ namespace InventoryKamera
                     cardsQueued++;
                     if (cardsQueued >= weaponCount || this.StopScanning)
                     {
-                        if (StopScanning) Logger.Info("Stopping weapon scan based on filtering");
-                        else Logger.Info("Stopping weapon scan based on scans queued ({0} of {1})", cardsQueued, weaponCount);
+                        if (StopScanning) Logger.Info("    Weapon capture finished at the configured filters");
+                        else Logger.Info("    Weapon capture finished: {0} of {1} cards queued", cardsQueued, weaponCount);
                         return;
                     }
                 }
@@ -237,6 +237,7 @@ namespace InventoryKamera
 
         public async Task<Weapon> CatalogueFromBitmapsAsync(List<Bitmap> bm, int id)
 		{
+			Logger.Info("Starting scan of weapon #{0}\n    Scanning weapon #{0}'s name and rarity...\n    Scanning weapon #{0}'s level, ascension and refinement...\n    Scanning weapon #{0}'s lock and equipped character...", id);
 			// Init Variables
 			string name = null;
 			int level = -1;
@@ -296,7 +297,7 @@ namespace InventoryKamera
 				if (rarity > 2 && (refinementLevel < 1 || 5 < refinementLevel))
 				{
 					string screenshot = SaveRefinementFailureScreenshot(bm[w_refinement], id);
-					Logger.Warn("Weapon #{0}: refinement OCR failed after all strategies, defaulting to refinement rank 1. Screenshot: {1}", id, screenshot);
+					Logger.Warn("    [WARNING] Weapon #{0} ({1}): refinement could not be read. Using refinement rank 1. Screenshot: {2}", id, name, screenshot);
 					refinementLevel = 1;
 				}
 			}

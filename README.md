@@ -12,6 +12,14 @@ The exported file works out of the box with popular tools such as
 > which is no longer maintained. Game data is sourced from
 > [Dimbreath's AnimeGameData2](https://gitlab.com/Dimbreath/animegamedata2).
 
+## Runtime preview
+
+![Inventory Kamera running alongside Genshin Impact after a weapon scan, with resizable controls, item previews, and expanded scan logs](docs/images/inventory-kamera-runtime.jpg)
+
+The scanner keeps its settings, progress, previews, and output controls together
+in a resizable window. **Show Logs** expands the scan log below the controls;
+errors open it automatically and select the Errors filter.
+
 ## Download
 
 Grab the latest release from the

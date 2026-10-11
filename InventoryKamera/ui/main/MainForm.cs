@@ -58,6 +58,7 @@ namespace InventoryKamera
             }
 
             InitializeComponent();
+            InitializeResponsiveLayout();
 
             Language_ComboBox.SelectedItem = "ENG";
 
@@ -109,7 +110,7 @@ namespace InventoryKamera
             Logger.Info("Hotkey pressed");
             e.Handled = true;
             // Check if scanner is running
-            if (scannerThread.IsAlive)
+            if (scannerThread != null && scannerThread.IsAlive)
             {
                 // Stop navigating weapons/artifacts
                 scannerThread.Abort();
@@ -145,7 +146,7 @@ namespace InventoryKamera
 
         public static void UnexpectedError(string error)
         {
-            if (scannerThread.IsAlive)
+            if (scannerThread != null && scannerThread.IsAlive)
             {
                 UserInterface.AddError(error);
             }
@@ -204,7 +205,7 @@ namespace InventoryKamera
 
             Delay = ScannerDelay_TrackBar.Value;
 
-            ProgramStatus_Label.Text = "";
+            ProgramStatus_Label.Text = "Ready";
             if (string.IsNullOrWhiteSpace(OutputPath_TextBox.Text))
             {
                 OutputPath_TextBox.Text = Directory.GetCurrentDirectory() + @"\GenshinData";
@@ -277,9 +278,13 @@ namespace InventoryKamera
 
         private void StartButton_Clicked(object sender, EventArgs e)
         {
+            if (running)
+                return;
+
             GC.Collect();
 
             UserInterface.ResetAll();
+            ResetScanLogs();
 
             Logger.Info("Starting scan");
 
@@ -386,14 +391,15 @@ namespace InventoryKamera
                     }
                     catch (NotImplementedException ex)
                     {
-                        UserInterface.AddError(ex.ToString());
+                        UserInterface.AddError("    [FAILURE] Scan aborted: " + ex);
+                        UserInterface.SetProgramStatus("Scan aborted", ok: false);
                     }
                     catch (Exception ex)
                     {
                         // Workers can get stuck if the thread is aborted or an exception is raised
                         data?.StopImageProcessorWorkers();
                         while (ex.InnerException != null) ex = ex.InnerException;
-                        UserInterface.AddError(ex.ToString());
+                        UserInterface.AddError("    [FAILURE] Scan aborted: " + ex);
                         UserInterface.SetProgramStatus("Scan aborted", ok: false);
                     }
                     finally
@@ -403,6 +409,7 @@ namespace InventoryKamera
                         ManualExportButton.Invoke((MethodInvoker)delegate
                         {
                             ManualExportButton.Enabled = data.HasData;
+                            StartScan_Button.Enabled = true;
                         });
                         MainForm_Activate();
                     }
@@ -410,6 +417,7 @@ namespace InventoryKamera
                 {
                     IsBackground = true
                 };
+                StartScan_Button.Enabled = false;
                 scannerThread.Start();
             }
             else

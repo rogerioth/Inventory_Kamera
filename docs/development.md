@@ -46,6 +46,17 @@ NLog is configured in `Program.ConfigureLogging()`:
 - `logging/InventoryKamera.debug.log` — everything
 - `logging/archives/` — rotated archives (4 kept)
 
+The main window's **Show Logs** checkbox opens a resizable log panel below the
+scanner. Filter by Info, Warnings, or Errors, turn auto-scroll on or off, copy
+the visible messages, or clear the display. Any Error or Fatal message opens
+the panel and selects Errors automatically. Clearing the display or starting
+a new scan leaves the file logs intact. The panel keeps the most recent 2,000
+entries (up to 500,000 characters); the files retain the full diagnostics.
+
+Scan messages group character and inventory tasks with indented steps and
+`[FAILURE]` details. Equipment OCR workers include item IDs because their
+messages can arrive concurrently.
+
 During scans, every misread item is dumped with its screenshots into
 `logging/<weapons|artifacts|characters|materials>/`. These folders are the first place to look when
 debugging recognition problems, and the most useful thing to attach to a bug report. Check the
