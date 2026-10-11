@@ -177,7 +177,9 @@ namespace InventoryKamera
 
             if (!string.IsNullOrWhiteSpace(name))
             {
-                if (GenshinProcesor.Characters.ContainsKey(name.ConvertToGood().ToLower()))
+                // Match the folding used when the name is stored, so names like
+                // "Éula" are flagged as colliding with the real character.
+                if (GenshinProcesor.Characters.ContainsKey(name.FoldToOcrName()))
                 {
                     textbox.BackColor = Color.Yellow;
                 }

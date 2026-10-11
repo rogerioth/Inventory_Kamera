@@ -12,6 +12,7 @@ using System.Drawing.Imaging;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using Tesseract;
@@ -112,17 +113,49 @@ namespace InventoryKamera
 
 		}
 
+		/// <summary>
+		/// A custom name that equals a real character's key or another character's
+		/// already-stored custom name would make OCR text such as "Equipped: Eula"
+		/// ambiguous, so it must never be stored (issues #327/#433).
+		/// </summary>
+		private static bool IsReservedCharacterName(string target, string name)
+		{
+			if (Characters.ContainsKey(name)) return true;
+
+			foreach (var character in Characters)
+			{
+				if (character.Key == target) continue;
+				if (character.Value.TryGetValue("CustomName", out var customName) && (string)customName == name) return true;
+			}
+			return false;
+		}
+
 		internal static void UpdateCharacterName(string target, string name)
         {
+			// Custom names are folded into the same lowercase ASCII space the OCR
+			// reads, so a name like "Alægon" (issue #505) is stored and matched as
+			// the "alaegon"-style text Tesseract actually produces.
 			target = target.ConvertToGood().ToLower();
-			name = name.ConvertToGood().ToLower();
+			name = name.FoldToOcrName();
 
 			if (target == name) return;
 
-			if (Characters.TryGetValue(name, out _))
+			if (string.IsNullOrWhiteSpace(name))
 			{
-				Logger.Error("{0} already exists as a character in the game. " +
-					"This may wind up confusing Kamera when connecting items for {1}.", name, target);
+				// Folding stripped everything (e.g. a name written in an
+				// unsupported, non-Latin alphabet): OCR could never match it.
+				Logger.Warn("Custom name for {0} folds to an empty name and will be ignored.", target);
+				return;
+			}
+
+			// Data integrity first (issues #327/#433): a colliding custom name is
+			// ignored instead of stored. The real character keeps priority, so a
+			// real Eula on screen is still scanned as Eula; the renamed
+			// traveler/wanderer simply is not recognized by that name.
+			if (IsReservedCharacterName(target, name))
+			{
+				Logger.Warn("Custom name {0} for {1} collides with an existing character name and will be ignored.", name, target);
+				return;
 			}
 
             if (Characters.TryGetValue(target, out _))
@@ -344,12 +377,31 @@ namespace InventoryKamera
 
 		internal static string FindClosestCharacterName(string name, int minConfidence = 90)
 		{
+			// Fold the scanned text into the same ASCII space the custom names are
+			// stored in, so OCR reads like "Alaegon" can match a stored "alægon"
+			// renamed character (issue #505).
+			name = name.FoldToOcrName();
+
 			var temp = new Dictionary<string, JObject>();
+
+			// Real character keys go in first: they always take priority over
+			// custom-name aliases, so a real character on screen is scanned as
+			// itself even when the traveler/wanderer was renamed to the same name
+			// (issues #327/#433).
+			foreach (var character in Characters)
+				temp.Add(character.Key, character.Value);
+
+			// Custom names are extra aliases added collision-proof: an alias that
+			// is already present (a real key or another alias) is skipped instead
+			// of throwing ArgumentException and breaking the scan (#433).
 			foreach (var character in Characters)
 			{
-				if (character.Value.TryGetValue("CustomName", out var CustomName)) temp.Add(((string)CustomName), character.Value);
-				else temp.Add(character.Key, character.Value);
+				if (!character.Value.TryGetValue("CustomName", out var customName)) continue;
+				string alias = ((string)customName)?.FoldToOcrName();
+				if (string.IsNullOrWhiteSpace(alias) || temp.ContainsKey(alias)) continue;
+				temp.Add(alias, character.Value);
 			}
+
 			var n = FindClosestInDict(source: name, targets: temp, minConfidence: minConfidence);
 
             return n;
@@ -944,6 +996,52 @@ namespace InventoryKamera
             text = text.ToLower();
             var pascal = CultureInfo.GetCultureInfo("en-US").TextInfo.ToTitleCase(text);
             return Regex.Replace(pascal, @"[\W]", string.Empty);
+        }
+
+        // Ligatures and letters that Unicode normalization never breaks down into
+        // plain ASCII (æ, ø, ð, þ, ...) but that the game's OCR reads back as
+        // their ASCII lookalikes.
+        private static readonly Dictionary<char, string> AsciiFoldMap = new Dictionary<char, string>
+        {
+            ['æ'] = "ae", ['Æ'] = "Ae",
+            ['œ'] = "oe", ['Œ'] = "Oe",
+            ['ø'] = "o",  ['Ø'] = "O",
+            ['ð'] = "d",  ['Ð'] = "D",
+            ['þ'] = "th", ['Þ'] = "Th",
+            ['ß'] = "ss",
+            ['đ'] = "d",  ['Đ'] = "D",
+            ['ł'] = "l",  ['Ł'] = "L",
+            ['ı'] = "i",
+        };
+
+        /// <summary>
+        /// Folds a character name into the lowercase ASCII space the OCR produces:
+        /// compatibility decomposition (FormKC), canonical decomposition to split
+        /// accented letters (FormD, since FormKC recomposes "é" back into one
+        /// character), ligature/diacritic mapping (æ→ae, é→e, ü→u, ...) and the
+        /// usual GOOD casing/stripping. Anything that cannot be represented in
+        /// ASCII (e.g. Cyrillic) is dropped, so names from unsupported alphabets
+        /// fold to an empty string instead of false-matching a lookalike
+        /// character name.
+        /// </summary>
+        internal static string FoldToOcrName(this string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+
+            var decomposed = text.Normalize(NormalizationForm.FormKC).Normalize(NormalizationForm.FormD);
+            var folded = new StringBuilder(decomposed.Length);
+            foreach (var c in decomposed)
+            {
+                if (AsciiFoldMap.TryGetValue(c, out var replacement)) folded.Append(replacement);
+                else if (c <= 0x7F) folded.Append(c);
+                // Everything else (combining marks left over from decomposition
+                // and non-Latin alphabets) is dropped: OCR never produces it.
+            }
+
+            // Underscore survives ConvertToGood's [\W] strip but is stripped by
+            // the OCR paths (e.g. ScanMainCharacterName), so drop it here too to
+            // keep both sides of the comparison in the same space.
+            return folded.ToString().Replace("_", string.Empty).ConvertToGood().ToLower();
         }
 
         internal static bool CharacterMatchesElement(string name, string element)
