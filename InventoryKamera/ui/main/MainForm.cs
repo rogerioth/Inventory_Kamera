@@ -108,7 +108,16 @@ namespace InventoryKamera
 
         private void RemoveHotkey()
         {
-            HotkeyManager.Current.Remove("Stop");
+            try
+            {
+                // HotkeyManager.Remove is a no-op when the hotkey is not
+                // registered, but Unregister throws if Win32 rejects the call.
+                HotkeyManager.Current.Remove("Stop");
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn(ex, "Failed to remove the 'Stop' hotkey");
+            }
         }
 
         public static void UnexpectedError(string error)
@@ -363,6 +372,18 @@ namespace InventoryKamera
 
         private void OpenOptimizerDialog(GOOD data, bool skip = false)
         {
+            // Issue #530: while the global "Stop" hotkey (Enter) is registered
+            // it consumes Enter system-wide, so a modal dialog can never be
+            // answered with the keyboard. The scan no longer needs the stop
+            // key once the data is gathered and exported, so unregister it
+            // before showing any dialog. Removal is idempotent, and the scan
+            // thread path must run it on the UI thread, synchronously so the
+            // hotkey is really gone when the dialog appears.
+            if (InvokeRequired)
+                Invoke((MethodInvoker)RemoveHotkey);
+            else
+                RemoveHotkey();
+
             if (!skip)
             {
                 var message = "Scan complete! Would you like to upload the database to Genshin Optimizer?";
