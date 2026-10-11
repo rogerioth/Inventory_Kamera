@@ -10,6 +10,7 @@ Genshin Impact account via OCR and exports the result in the
 | --- | --- |
 | [Architecture](architecture.md) | Components, responsibilities, and how they fit together |
 | [Scanning pipeline](scanning-pipeline.md) | End-to-end flow of a scan: window capture, input automation, OCR, and export |
+| [Achievement scanning](achievement-scanning.md) | Category-list OCR, achievement export formats, coverage checks and regression replay |
 | [Data updater](data-updater.md) | How lookup tables are generated from the AnimeGameData2 repository |
 | [Lookup tables](lookup-tables.md) | Format reference for `inventorylists/*.json` (for manual edits) |
 | [Project structure](project-structure.md) | What lives where in the repository and the Visual Studio solution |

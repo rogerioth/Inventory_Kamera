@@ -4,6 +4,10 @@ A fan-made Genshin Impact inventory scanner for Windows. Inventory Kamera naviga
 reads your characters, weapons, artifacts, and materials with OCR, and exports everything in the
 [GOOD](https://frzyc.github.io/genshin-optimizer/good) JSON format.
 
+It also scans achievements by reading and scrolling their category lists with
+OCR, and exports confirmed completed IDs for Paimon.moe, Seelie, and AkashaScanner.
+See [Achievement scanning](docs/achievement-scanning.md) for formats and coverage checks.
+
 The exported file works out of the box with popular tools such as
 [Genshin Optimizer](https://frzyc.github.io/genshin-optimizer/#/),
 [SEELIE.me](https://seelie.me/), and [Aspirine's Genshin Impact Calculator](https://genshin.aspirine.su/).
@@ -50,7 +54,7 @@ The game must also meet these settings before scanning:
 ## Quick start
 
 1. Launch Genshin Impact and log in.
-2. Start Inventory Kamera and pick what to scan (weapons, artifacts, characters, materials),
+2. Start Inventory Kamera and pick what to scan (weapons, artifacts, characters, materials, achievements),
    plus any rarity/level filters, in the scanner options.
 3. Leave the game sitting on the **Paimon menu** and click **Scan**.
 4. Do not touch the mouse or keyboard while the scan runs. Press `Enter` at any time to cancel;
@@ -77,6 +81,7 @@ update automatically; you can also run **Options → Update Lookup Tables** manu
 | [docs/index.md](docs/index.md) | Documentation index |
 | [docs/architecture.md](docs/architecture.md) | High-level architecture and component diagram |
 | [docs/scanning-pipeline.md](docs/scanning-pipeline.md) | How a scan works: navigation, OCR, and export |
+| [docs/achievement-scanning.md](docs/achievement-scanning.md) | Achievement scanning, compatible exports, completeness checks and regression replay |
 | [docs/data-updater.md](docs/data-updater.md) | The game data updater and its sources |
 | [docs/lookup-tables.md](docs/lookup-tables.md) | Lookup table formats for manual editing |
 | [docs/project-structure.md](docs/project-structure.md) | Repository and solution layout |

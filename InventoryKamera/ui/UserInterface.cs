@@ -77,22 +77,28 @@ namespace InventoryKamera
 
 		private static void UpdatePictureBox(Bitmap bm, PictureBox pictureBox)
 		{
+            Bitmap clone = null;
+            bool assigned = false;
 			try
 			{
-				Bitmap clone = new Bitmap(bm.Width, bm.Height);
+                clone = new Bitmap(bm.Width, bm.Height);
 				using (var copy = Graphics.FromImage(clone))
 				{
 					copy.DrawImage(bm, 0, 0);
 				}
 				MethodInvoker pictureBoxAction = delegate
 			{
+                var previous = pictureBox.Image;
 				pictureBox.Image = clone;
+                assigned = true;
+                previous?.Dispose();
 				pictureBox.Refresh();
 			};
 				pictureBox.Invoke(pictureBoxAction);
 			}
 			catch (Exception e)
 			{
+                if (!assigned) clone?.Dispose();
 				Logger.Debug($"Problem updating picturebox {0}\n{1}", pictureBox.Name, e);
 			}
 		}
@@ -151,6 +157,19 @@ namespace InventoryKamera
 		{
 			UpdatePictureBox(bm, gear_PictureBox);
 		}
+
+        public static void SetAchievement(Bitmap row, AchievementObservation observation)
+        {
+            SetGearPictureBox(row);
+            string state = !string.IsNullOrEmpty(observation.Error) ? "Needs review: " + observation.Error :
+                observation.Claimable ? "Completed (reward unclaimed)" : observation.CompletedText ? "Completed" :
+                "In progress: " + observation.Progress;
+            string text = observation.Title + Environment.NewLine + observation.Description + Environment.NewLine +
+                "Status: " + state + Environment.NewLine + "Primogems: " + (observation.Reward?.ToString() ?? "?");
+            if (!string.IsNullOrEmpty(observation.CompletionDate)) text += Environment.NewLine + "Completed on: " + observation.CompletionDate;
+            if (string.IsNullOrEmpty(observation.Error)) text += Environment.NewLine + "Completed tiers: " + observation.CompletedIds.Count;
+            gear_TextBox.Invoke((MethodInvoker)delegate { gear_TextBox.Text = text; });
+        }
 
 		public static void SetGearTextBox(string text)
 		{
@@ -277,7 +296,12 @@ namespace InventoryKamera
 
 		public static void ResetGearDisplay()
 		{
-			MethodInvoker gearAction = delegate { gear_PictureBox.Image = null; };
+            MethodInvoker gearAction = delegate
+            {
+                var previous = gear_PictureBox.Image;
+                gear_PictureBox.Image = null;
+                previous?.Dispose();
+            };
 
 			MethodInvoker textAction = delegate { gear_TextBox.Clear(); };
 

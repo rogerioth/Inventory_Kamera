@@ -8,6 +8,12 @@ namespace InventoryKamera
     {
         private ProgressBar scanActivity;
         private float layoutScale = 1F;
+        private CheckBox achievementsCheckBox;
+        private Label achievementCountLabel;
+        private TableLayoutPanel previewColumns;
+        private TableLayoutPanel equipmentPreview;
+        private Control characterPreview;
+        private bool achievementPreviewActive;
 
         // Reuse the designer controls so their settings bindings, tooltips and
         // event handlers remain intact. The menu strip is deliberately untouched.
@@ -146,6 +152,13 @@ namespace InventoryKamera
             AddCell(grid, Characters_CheckBox, 0, 2, 2);
             AddCell(grid, CharDevItems_CheckBox, 1, 0, 3);
             AddCell(grid, Materials_CheckBox, 1, 1, 4);
+            achievementsCheckBox = new CheckBox { Name = "Achievements_CheckBox", Text = "Achievements", AutoSize = true };
+            achievementsCheckBox.DataBindings.Add("Checked", Properties.Settings.Default, "ScanAchievements", true,
+                DataSourceUpdateMode.OnPropertyChanged);
+            achievementsCheckBox.CheckedChanged += (sender, args) =>
+                ManualExportButton.Text = achievementsCheckBox.Checked || data.Achievements.HasData ? "Export Scan Files" : "Open Genshin Optimizer";
+            ManualExportButton.Text = achievementsCheckBox.Checked ? "Export Scan Files" : "Open Genshin Optimizer";
+            AddCell(grid, achievementsCheckBox, 1, 2, 5);
             group.Controls.Add(grid);
             return group;
         }
@@ -263,6 +276,8 @@ namespace InventoryKamera
             counts.Controls.Add(Counter(WeaponsScanned_Label, WeaponsScannedCount_Label, WeaponsScannedSlash_Label, WeaponsMax_Labell));
             counts.Controls.Add(Counter(Artifacts_Label, ArtifactsScanned_Label, ArtifactsScannedSlash_Label, ArtifactsMax_Label));
             counts.Controls.Add(Counter(Characters_Label, CharactersScanned_Label));
+            achievementCountLabel = new Label { Name = "AchievementsScannedLabel", Text = "0 / ?" };
+            counts.Controls.Add(Counter(new Label { Name = "AchievementsCountCaption", Text = "Achievements:" }, achievementCountLabel));
             grid.Controls.Add(counts, 0, 3);
             var navigation = Grid("NavigationPreview", 1, 2);
             navigation.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
@@ -291,11 +306,13 @@ namespace InventoryKamera
         {
             var group = Section("Preview");
             var columns = Grid("ScanPreviews", 2, 1);
+            previewColumns = columns;
             columns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             columns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            WeaponArtifact_Label.Text = "Weapon / Artifact";
+            WeaponArtifact_Label.Text = "Equipment / Achievements";
             Character_Label.Text = "Character / Item";
-            columns.Controls.Add(Preview(WeaponArtifact_Label, GearPictureBox, ArtifactOutput_TextBox), 0, 0);
+            equipmentPreview = (TableLayoutPanel)Preview(WeaponArtifact_Label, GearPictureBox, ArtifactOutput_TextBox);
+            columns.Controls.Add(equipmentPreview, 0, 0);
             var characterImages = Grid("CharacterImages", 1, 5);
             foreach (var picture in new[] { CharacterName_PictureBox, CharacterLevel_PictureBox,
                 CharacterTalent1_PictureBox, CharacterTalent2_PictureBox, CharacterTalent3_PictureBox })
@@ -308,9 +325,38 @@ namespace InventoryKamera
                 characterImages.RowStyles.Add(new RowStyle(SizeType.Percent, 20));
                 characterImages.Controls.Add(picture, 0, characterImages.Controls.Count);
             }
-            columns.Controls.Add(Preview(Character_Label, characterImages, CharacterOutput_TextBox), 1, 0);
+            characterPreview = Preview(Character_Label, characterImages, CharacterOutput_TextBox);
+            columns.Controls.Add(characterPreview, 1, 0);
             group.Controls.Add(columns);
             return group;
+        }
+
+        private void SetAchievementPreviewMode(bool enabled)
+        {
+            if (equipmentPreview == null || achievementPreviewActive == enabled) return;
+            previewColumns.SuspendLayout();
+            equipmentPreview.SuspendLayout();
+            try
+            {
+                achievementPreviewActive = enabled;
+                characterPreview.Visible = !enabled;
+                previewColumns.SetColumnSpan(equipmentPreview, enabled ? 2 : 1);
+                equipmentPreview.RowCount = enabled ? 3 : 2;
+                equipmentPreview.RowStyles.Clear();
+                equipmentPreview.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+                if (enabled) equipmentPreview.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));
+                equipmentPreview.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+                equipmentPreview.SetColumnSpan(GearPictureBox, enabled ? 2 : 1);
+                equipmentPreview.SetCellPosition(ArtifactOutput_TextBox, new TableLayoutPanelCellPosition(enabled ? 0 : 1, enabled ? 2 : 1));
+                equipmentPreview.SetColumnSpan(ArtifactOutput_TextBox, enabled ? 2 : 1);
+                ArtifactOutput_TextBox.WordWrap = enabled;
+                WeaponArtifact_Label.Text = enabled ? "Achievements" : "Equipment / Achievements";
+            }
+            finally
+            {
+                equipmentPreview.ResumeLayout(true);
+                previewColumns.ResumeLayout(true);
+            }
         }
 
         private static Control Preview(Label title, Control images, TextBox output)

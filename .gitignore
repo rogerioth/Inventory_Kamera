@@ -47,6 +47,10 @@ Generated\ Files/
 [Tt]est[Rr]esult*/
 [Bb]uild[Ll]og.*
 *Tests/
+!/tests/
+/tests/*
+!/tests/AchievementTests.cs
+!/tests/run-achievement-tests.ps1
 
 # NUnit
 *.VisualState.xml

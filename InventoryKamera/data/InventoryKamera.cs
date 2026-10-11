@@ -20,6 +20,14 @@ namespace InventoryKamera
 		[JsonProperty]
 		public Inventory Inventory;
 
+        public AchievementScanResult Achievements { get; private set; }
+        public AchievementCatalog AchievementCatalog { get; set; }
+        private readonly CancellationTokenSource achievementCancellation = new CancellationTokenSource();
+        public bool IsScanningAchievements { get; private set; }
+        public Action<AchievementScanResult, AchievementCategory, int> AchievementProgress { get; set; }
+        public Action<System.Drawing.Bitmap, AchievementObservation> AchievementPreview { get; set; }
+        public bool HasInventoryData => Characters.Count > 0 || Inventory.Size > 0;
+
 		private List<Artifact> equippedArtifacts;
 		private List<Weapon> equippedWeapons;
 		public static Queue<OCRImageCollection> workerQueue;
@@ -34,13 +42,14 @@ namespace InventoryKamera
 
 		public bool HasData
         {
-			get { return Characters.Count > 0 || Inventory.Size > 0; }
+			get { return HasInventoryData || Achievements.HasData; }
         }
 
 		public InventoryKamera()
 		{
 			Characters = new List<Character>();
 			Inventory = new Inventory();
+            Achievements = new AchievementScanResult();
 			equippedArtifacts = new List<Artifact>();
 			equippedWeapons = new List<Weapon>();
 			ImageProcessors = new List<Thread>();
@@ -81,6 +90,7 @@ namespace InventoryKamera
 				Directory.CreateDirectory("./logging/artifacts");
 				Directory.CreateDirectory("./logging/characters");
 				Directory.CreateDirectory("./logging/materials");
+                Directory.CreateDirectory("./logging/achievements");
 			}
 			catch (Exception ex)
 			{
@@ -103,6 +113,14 @@ namespace InventoryKamera
 			Logger.Info("Starting inventory scan");
 			Logger.Info("    Preparing diagnostic logs and OCR data...");
 			ResetLogging();
+
+            if (!Properties.Settings.Default.ScanWeapons && !Properties.Settings.Default.ScanArtifacts &&
+                !Properties.Settings.Default.ScanCharacters && !Properties.Settings.Default.ScanCharDevItems &&
+                !Properties.Settings.Default.ScanMaterials)
+            {
+                ScanAchievements();
+                return;
+            }
 
 			GenshinProcesor.ReloadData();
 
@@ -260,8 +278,30 @@ namespace InventoryKamera
 				Navigation.MainMenuScreen();
 				Logger.Info("Finished material inventory scan");
 			}
+            ScanAchievements();
 			Logger.Info("Inventory scan finished");
 		}
+
+        public bool RequestAchievementStop()
+        {
+            if (!IsScanningAchievements) return false;
+            achievementCancellation.Cancel();
+            return true;
+        }
+
+        private void ScanAchievements()
+        {
+            if (!Properties.Settings.Default.ScanAchievements) return;
+            IsScanningAchievements = true;
+            try
+            {
+                var catalog = AchievementCatalog ?? global::InventoryKamera.AchievementCatalog.Load();
+                if (!string.IsNullOrWhiteSpace(catalog.Warning)) Logger.Warn(catalog.Warning);
+                var scraper = new AchievementScraper(catalog) { Progress = AchievementProgress, RowPreview = AchievementPreview };
+                scraper.Scan(Achievements, achievementCancellation.Token);
+            }
+            finally { IsScanningAchievements = false; }
+        }
 
 		private void AwaitProcessors()
 		{

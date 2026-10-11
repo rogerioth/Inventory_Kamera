@@ -14,6 +14,7 @@ namespace InventoryKamera
 		[STAThread]
 		private static void Main()
 		{
+			Environment.CurrentDirectory = AppDomain.CurrentDomain.BaseDirectory;
 			ConfigureLogging();
             try
             {

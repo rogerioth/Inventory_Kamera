@@ -59,6 +59,7 @@ namespace InventoryKamera
 
             InitializeComponent();
             InitializeResponsiveLayout();
+            InitializeAchievementMenu();
 
             Language_ComboBox.SelectedItem = "ENG";
 
@@ -112,6 +113,11 @@ namespace InventoryKamera
             // Check if scanner is running
             if (scannerThread != null && scannerThread.IsAlive)
             {
+                if (data != null && data.RequestAchievementStop())
+                {
+                    UserInterface.SetProgramStatus("Stopping achievements...");
+                    return;
+                }
                 // Stop navigating weapons/artifacts
                 scannerThread.Abort();
 
@@ -284,24 +290,29 @@ namespace InventoryKamera
             GC.Collect();
 
             UserInterface.ResetAll();
+            SetAchievementPreviewMode(false);
+            achievementCountLabel.Text = "0 / ?";
             ResetScanLogs();
 
             Logger.Info("Starting scan");
 
-            // Scanning without lookup tables would reject every item scanned.
-            // Reload once here so tables generated after startup (e.g. by the
-            // updater) are picked up without an app restart.
-            if (!GenshinProcesor.HasLookupData)
+            var selected = Properties.Settings.Default;
+            if (!selected.ScanWeapons && !selected.ScanArtifacts && !selected.ScanCharacters &&
+                !selected.ScanCharDevItems && !selected.ScanMaterials && !selected.ScanAchievements)
             {
-                GenshinProcesor.ReloadData();
-
-                if (!GenshinProcesor.HasLookupData)
-                {
-                    Logger.Warn("Scan not started: lookup tables are missing or empty");
-                    MessageBox.Show("No lookup tables were found. Run 'Options > Update Lookup Tables' first, then scan again.",
-                        "Lookup Tables Missing", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
+                MessageBox.Show("Select at least one scan type.", "Scan Items", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            GenshinProcesor.ReloadData();
+            if (selected.ScanWeapons && GenshinProcesor.Weapons.Count == 0 ||
+                selected.ScanArtifacts && GenshinProcesor.Artifacts.Count == 0 ||
+                selected.ScanCharacters && GenshinProcesor.Characters.Count == 0 ||
+                selected.ScanCharDevItems && GenshinProcesor.DevItems.Count == 0 ||
+                selected.ScanMaterials && GenshinProcesor.Materials.Count == 0)
+            {
+                MessageBox.Show("Lookup tables needed by the selected scan types are missing. Run 'Options > Update Lookup Tables' first.",
+                    "Lookup Tables Missing", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
             }
 
             // Refuse to start when the output location cannot be written to;
@@ -316,6 +327,11 @@ namespace InventoryKamera
                     return;
                 }
                 running = true;
+                SetScanOptionsEnabled(false);
+                data = new InventoryKamera { AchievementProgress = UpdateAchievementProgress, AchievementPreview = UpdateAchievementPreview };
+                string outputDirectory = OutputPath_TextBox.Text;
+                bool scanAchievements = selected.ScanAchievements;
+                ManualExportButton.Enabled = false;
 
                 HotkeyManager.Current.AddOrReplace("Stop", Keys.Enter, Hotkey_Pressed);
                 Logger.Info("Hotkey registered");
@@ -328,6 +344,7 @@ namespace InventoryKamera
                     $"\tCharacters:\t\t\t\t {settings.ScanCharacters}\n" +
                     $"\tDev Items:\t\t\t\t {settings.ScanCharDevItems}\n" +
                     $"\tMaterials:\t\t\t\t {settings.ScanMaterials}\n" +
+                    $"\tAchievements:\t\t\t {settings.ScanAchievements}\n" +
                     $"\tMin Weapon Rarity:\t\t {settings.MinimumWeaponRarity}\n" +
                     $"\tMin Weapon Level:\t\t {settings.MinimumWeaponLevel}\n" +
                     $"\tEquip Weapons:\t\t\t {settings.EquipWeapons}\n" +
@@ -342,6 +359,11 @@ namespace InventoryKamera
                 {
                     try
                     {
+                        if (scanAchievements)
+                        {
+                            UserInterface.SetProgramStatus("Scanning: loading achievement catalog");
+                            data.AchievementCatalog = AchievementCatalog.Load();
+                        }
                         // Get Screen Location and Size
                         Navigation.Initialize();
 
@@ -361,8 +383,6 @@ namespace InventoryKamera
                             if (Navigation.GetSize() != screenshot.Size) throw new FormatException("Window size and screenshot size mismatch. Please make sure the game is not in a fullscreen mode.");
                         }
 
-                        data = new InventoryKamera();
-
                         Logger.Info("Resolution: {0}x{1}", Navigation.GetSize().Width, Navigation.GetSize().Height);
 
                         // Add navigation delay
@@ -372,25 +392,36 @@ namespace InventoryKamera
                         // The Data object of json object
                         data.GatherData();
 
-                        // Covert to GOOD
-                        GOOD good = new GOOD(data);
-                        Logger.Info("Data converted to GOOD");
+                        // Scanning is finished. Enter must not abort the thread while files are being saved.
+                        Invoke((MethodInvoker)RemoveHotkey);
 
-                        // Make Json File
-                        good.WriteToJSON(OutputPath_TextBox.Text);
-                        Logger.Info("Exported data");
-
-                        UserInterface.SetProgramStatus("Finished");
-                        OpenOptimizerDialog(good);
+                        GOOD good = null;
+                        if (data.HasInventoryData)
+                        {
+                            good = new GOOD(data);
+                            good.WriteToJSON(outputDirectory);
+                        }
+                        bool exportSucceeded = !scanAchievements || ExportAchievements(outputDirectory);
+                        UserInterface.SetProgramStatus(!exportSucceeded ? "Export failed" : scanAchievements && data.Achievements.Cancelled ? "Scan stopped" :
+                            scanAchievements && !data.Achievements.Complete ? "Finished (partial)" : "Finished",
+                            ok: exportSucceeded && (!scanAchievements || data.Achievements.Complete));
+                        if (good != null && !data.Achievements.Cancelled) OpenOptimizerDialog(good);
                     }
                     catch (ThreadAbortException)
                     {
                         // Workers can get stuck if the thread is aborted or an exception is raised
                         data?.StopImageProcessorWorkers();
+                        if (scanAchievements)
+                        {
+                            data.Achievements.Cancelled = true;
+                            data.Achievements.Complete = false;
+                            ExportAchievements(outputDirectory);
+                        }
                         UserInterface.SetProgramStatus("Scan stopped");
                     }
                     catch (NotImplementedException ex)
                     {
+                        RecordAchievementFailure(scanAchievements, outputDirectory, ex);
                         UserInterface.AddError("    [FAILURE] Scan aborted: " + ex);
                         UserInterface.SetProgramStatus("Scan aborted", ok: false);
                     }
@@ -399,6 +430,7 @@ namespace InventoryKamera
                         // Workers can get stuck if the thread is aborted or an exception is raised
                         data?.StopImageProcessorWorkers();
                         while (ex.InnerException != null) ex = ex.InnerException;
+                        RecordAchievementFailure(scanAchievements, outputDirectory, ex);
                         UserInterface.AddError("    [FAILURE] Scan aborted: " + ex);
                         UserInterface.SetProgramStatus("Scan aborted", ok: false);
                     }
@@ -408,7 +440,8 @@ namespace InventoryKamera
                         running = false;
                         ManualExportButton.Invoke((MethodInvoker)delegate
                         {
-                            ManualExportButton.Enabled = data.HasData;
+                            ManualExportButton.Enabled = data != null && data.HasData;
+                            SetScanOptionsEnabled(true);
                             StartScan_Button.Enabled = true;
                         });
                         MainForm_Activate();
@@ -734,7 +767,15 @@ namespace InventoryKamera
 
         private void Export_Button_Click(object sender, EventArgs e)
         {
-            OpenOptimizerDialog(new GOOD(data), true);
+            if (data.Achievements.HasData)
+            {
+                if (!ValidateOutputDirectory(OutputPath_TextBox.Text)) return;
+                if (!ExportAchievements(OutputPath_TextBox.Text)) return;
+                if (data.HasInventoryData) new GOOD(data).WriteToJSON(OutputPath_TextBox.Text);
+                MessageBox.Show("Scan files saved to:\n" + OutputPath_TextBox.Text,
+                    "Export Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            else if (data.HasInventoryData) OpenOptimizerDialog(new GOOD(data), true);
         }
 
         private void MainForm_Activate()

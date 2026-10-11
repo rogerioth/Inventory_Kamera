@@ -134,6 +134,11 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="game\Artifact.cs" />
+    <Compile Include="game\Achievement.cs" />
+    <Compile Include="data\AchievementCatalog.cs" />
+    <Compile Include="data\AchievementExport.cs" />
+    <Compile Include="scraping\AchievementRecognizer.cs" />
+    <Compile Include="scraping\AchievementScraper.cs" />
     <Compile Include="Properties\JsonUserSettingsProvider.cs" />
     <Compile Include="scraping\ArtifactScraper.cs" />
     <Compile Include="game\Character.cs" />
@@ -162,6 +167,9 @@
       <DependentUpon>MainForm.cs</DependentUpon>
     </Compile>
     <Compile Include="ui\main\MainForm.Layout.cs">
+      <DependentUpon>MainForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="ui\main\MainForm.Achievements.cs">
       <DependentUpon>MainForm.cs</DependentUpon>
     </Compile>
     <Compile Include="ui\main\MainForm.Logs.cs">
