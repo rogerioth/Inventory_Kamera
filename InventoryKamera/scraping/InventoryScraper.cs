@@ -264,6 +264,15 @@ namespace InventoryKamera
                 List<Rectangle> rectangles = new List<Rectangle>();
                 List<Rectangle> blobRects = blobCounter.GetObjectsRectangles().ToList();
 
+                // A capture taken during a UI animation can contain no item blobs at
+                // all. Treat it as an unusable page (empty result) so the caller's
+                // bounded retry handles it instead of throwing out of the scan.
+                if (blobRects.Count == 0)
+                {
+                    Logger.Warn("No item blobs detected on the screenshot.");
+                    return (rectangles, 0, 0);
+                }
+
                 int minWidth = blobRects[0].Width;
                 int minHeight = blobRects[0].Height;
                 foreach (var rect in blobRects)
@@ -415,7 +424,10 @@ namespace InventoryKamera
                     {
                         (rectangles, cols, rows) = ProcessScreenshot(processedScreenshot, weight);
                         itemCount = rows * cols;
-                        if (itemCount != itemPerPage && !acceptLess)
+                        // An empty detection is never acceptable, even on a partial page:
+                        // accepting it would leave the walk with nothing to click and
+                        // could stall the scan.
+                        if (itemCount != itemPerPage && !(acceptLess && itemCount > 0))
                         {
                             Logger.Warn("Unable to locate full page of weapons with weight {0}", weight);
                             Logger.Warn("Detected {0} rows and {1} columns of items", rows, cols);
@@ -443,7 +455,7 @@ namespace InventoryKamera
                     }
                     while (itemCount != itemPerPage && weight < 1 && counter < 25);
 
-                    if (Properties.Settings.Default.LogScreenshots)
+                    if (Properties.Settings.Default.LogScreenshots && rectangles != null)
                     {
                         SaveInventoryBitmap(screenshot, $"{inventoryPage}Inventory.png");
                         using (Graphics g = Graphics.FromImage(screenshot))
@@ -520,13 +532,20 @@ namespace InventoryKamera
         /// Extracts a bitmap copy of an item card's lock status icon
         /// </summary>
         /// <param name="card">Bitmap of the item card</param>
+        /// <param name="isSanctified">Whether the card shows the Sanctifying Elixir banner, which shifts the icon down</param>
         /// <returns>A bitmap copy of the item card's lock status icon</returns>
-        internal static Bitmap GetLockedBitmap(Bitmap card)
+        internal static Bitmap GetLockedBitmap(Bitmap card, bool isSanctified = false)
         {
+			// Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6, fea6e1bb.
+			// The 16:10 shift (0.0471) is left for a follow-up branch.
+			double baseY = Navigation.IsNormal ? 0.353 : 0.309;
+			double sanctifiedShift = Navigation.IsNormal ? 0.0520 : 0.0;
+			double yShift = isSanctified ? sanctifiedShift : 0.0;
+
             return GenshinProcesor.CopyBitmap(card,
                 new Rectangle(
                     x: (int)(card.Width * 0.75),
-                    y: (int)(card.Height * (Navigation.IsNormal ? 0.353 : 0.309)),
+                    y: (int)(card.Height * (baseY + yShift)),
                     width: (int)(card.Width * 0.0955),
                     height: (int)(card.Height * (Navigation.IsNormal ? 0.055 : 0.0495))));
         }

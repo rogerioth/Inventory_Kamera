@@ -400,6 +400,11 @@ namespace InventoryKamera
 								imageCollection.Bitmaps[5].Save(artifactPath + "equipped/equipped.png");
 								Directory.CreateDirectory(artifactPath + "locked");
 								imageCollection.Bitmaps[6].Save(artifactPath + "locked/locked.png");
+								// Sanctified banner capture (index 7), for diagnosing
+								// artifacts crafted with Sanctifying Elixir.
+								// (Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6)
+								Directory.CreateDirectory(artifactPath + "sanctify");
+								imageCollection.Bitmaps[7].Save(artifactPath + "sanctify/sanctify.png");
 
 								imageCollection.Bitmaps.Last().Save(artifactPath + "card.png");
 

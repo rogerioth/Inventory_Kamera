@@ -193,20 +193,30 @@ namespace InventoryKamera
 			TesseractEngine e;
 			while (!engines.TryTake(out e)) { Thread.Sleep(10); }
 
-			if (numbersOnly) e.SetVariable("tessedit_char_whitelist", "0123456789");
-			using (var page = e.Process(bitmap, pageMode))
+			try
 			{
-				using (var iter = page.GetIterator())
+				if (numbersOnly) e.SetVariable("tessedit_char_whitelist", "0123456789");
+				using (var page = e.Process(bitmap, pageMode))
 				{
-					iter.Begin();
-					do
+					using (var iter = page.GetIterator())
 					{
-						text += iter.GetText(PageIteratorLevel.TextLine);
+						iter.Begin();
+						do
+						{
+							text += iter.GetText(PageIteratorLevel.TextLine);
+						}
+						while (iter.Next(PageIteratorLevel.TextLine));
 					}
-					while (iter.Next(PageIteratorLevel.TextLine));
 				}
 			}
-			engines.Add(e);
+			finally
+			{
+				// Always return the engine to the pool: an OCR failure on a malformed
+				// capture (e.g. a sanctified artifact card) must not leak it, otherwise
+				// the pool eventually starves and every worker freezes waiting for an
+				// engine.
+				engines.Add(e);
+			}
 
 			return text;
 		}

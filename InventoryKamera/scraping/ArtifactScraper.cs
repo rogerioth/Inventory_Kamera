@@ -14,6 +14,9 @@ namespace InventoryKamera
 	{
 		private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
 
+		// How many times an item card is captured before the artifact is skipped
+		private const int MaxCardReadAttempts = 3;
+
 		public ArtifactScraper() 
 		{
 			inventoryPage = InventoryPage.Artifacts;
@@ -25,6 +28,13 @@ namespace InventoryKamera
 			// Get Max artifacts from screen
 			int artifactCount = count == 0 ? ScanItemCount() : count;
 			int page = 1;
+
+			// Clear leftover filters before the first page is captured, otherwise the
+			// filter UI can still be on screen when the page is screenshotted and item
+			// detection fails.
+			// (Ported from taiwenlee/Inventory_Kamera (MIT): 63ba93ff)
+			ClearFilters();
+
 			var (rectangles, cols, rows) = GetPageOfItems(page);
 			int fullPage = cols * rows;
 			int totalRows = (int)Math.Ceiling(artifactCount / (decimal)cols);
@@ -35,8 +45,6 @@ namespace InventoryKamera
 			StopScanning = false;
 
 			Logger.Info("Found {0} for artifact count.", artifactCount);
-
-			ClearFilters();
 
 			//if (SortByLevel)
 			//{
@@ -97,8 +105,23 @@ namespace InventoryKamera
 					Navigation.Click();
 					Navigation.SystemWait(Navigation.Speed.SelectNextInventoryItem);
 
-					// Queue card for scanning
-					QueueScan(cardsQueued);
+					// Queue card for scanning. If the card could not be read, re-capture
+					// it a bounded number of times before skipping the item so that a
+					// single unreadable (e.g. sanctified) artifact can never stop or
+					// stall the rest of the scan.
+					int attempts = 1;
+					while (!QueueScan(cardsQueued))
+					{
+						if (attempts >= MaxCardReadAttempts)
+						{
+							Logger.Warn("Skipping artifact #{0}: card could not be read after {1} attempts. Continuing with the next artifact.", cardsQueued, attempts);
+							break;
+						}
+						attempts++;
+						Navigation.SetCursor(item.Center().X, item.Center().Y);
+						Navigation.Click();
+						Navigation.SystemWait(Navigation.Speed.SelectNextInventoryItem);
+					}
 					cardsQueued++;
 					if (cardsQueued >= artifactCount || StopScanning)
 					{
@@ -161,21 +184,38 @@ namespace InventoryKamera
 				{
 					Navigation.ClearArtifactFilters();
 				}
+				// Give the filter UI time to close before the next capture.
+				// (Ported from taiwenlee/Inventory_Kamera (MIT): 63ba93ff)
+				Navigation.SystemWait(Navigation.Speed.Slow);
             }
         }
 
-        public async void QueueScan(int id)
+        public bool QueueScan(int id)
 		{
 			var card = GetItemCard();
-            Bitmap name, gearSlot, mainStat, subStats, level, equipped, locked;
+            Bitmap name, gearSlot, mainStat, subStats, level, equipped, locked, sanctify;
+			bool isSanctified;
 
 			name = GetItemNameBitmap(card);
-			locked = GetLockedBitmap(card);
 			equipped = GetEquippedBitmap(card);
 			gearSlot = GetGearSlotBitmap(card);
 			mainStat = GetMainStatBitmap(card);
-			level = GetLevelBitmap(card);
-			subStats = GetSubstatsBitmap(card);
+
+			// Artifacts crafted with Sanctifying Elixir show a small purple banner on
+			// the card that shifts the level, substat and lock regions downward.
+			// Detect the banner so those regions can be read from their shifted
+			// positions instead of reading the banner itself (unreadable level and
+			// substats).
+			// (Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6)
+			sanctify = GetSanctifyBitmap(card);
+			Color sanctifiedColor = Color.FromArgb(255, 220, 192, 255); // Light purple sanctified banner
+			Color sanctifyStatus = sanctify.GetPixel(10, 10);
+			isSanctified = GenshinProcesor.CompareColors(sanctifiedColor, sanctifyStatus);
+
+			// These regions move down when the sanctified banner is present
+			locked = GetLockedBitmap(card, isSanctified);
+			level = GetLevelBitmap(card, isSanctified);
+			subStats = GetSubstatsBitmap(card, isSanctified);
 
 
 			//Navigation.DisplayBitmap(name);
@@ -184,6 +224,7 @@ namespace InventoryKamera
 			//Navigation.DisplayBitmap(mainStat);
 			//Navigation.DisplayBitmap(subStats);
 			//Navigation.DisplayBitmap(level);
+			//Navigation.DisplayBitmap(sanctify);
 
 			// Separate to all pieces of artifact and add to pics
 			List<Bitmap> artifactImages = new List<Bitmap>
@@ -194,28 +235,53 @@ namespace InventoryKamera
 				level,
 				subStats,
 				equipped, //5
-				locked, 
+				locked,
+				sanctify,
 				card
 			};
 
             bool belowRarity = GetRarity(name) < Properties.Settings.Default.MinimumArtifactRarity;
-            bool belowLevel = ScanArtifactLevel(level) < Properties.Settings.Default.MinimumArtifactLevel;
+            int readLevel = ScanArtifactLevel(level);
+			// An unreadable level (-1) means the card could not be read. It must not be
+			// treated as "below the minimum level": doing so stopped a level-filtered
+			// scan dead on the first unreadable (e.g. sanctified) card. The caller
+			// re-captures the card a bounded number of times and skips the artifact if
+			// it stays unreadable.
+			bool belowLevel = readLevel >= 0 && readLevel < Properties.Settings.Default.MinimumArtifactLevel;
+			bool unreadable = readLevel < 0;
             StopScanning = (SortByLevel && belowLevel) || (!SortByLevel && belowRarity);
 
 			if (StopScanning || belowRarity || belowLevel)
             {
 				artifactImages.ForEach(i => i.Dispose());
-				return;
+				return true;
             }
+
+			if (unreadable)
+			{
+				// Leave the last capture behind for diagnostics before asking the
+				// caller to retry.
+				SaveInventoryBitmap(card, $"unreadable_artifact{id}.png");
+				artifactImages.ForEach(i => i.Dispose());
+				return false;
+			}
+
             // Send images to Worker Queue
             InventoryKamera.workerQueue.Enqueue(new OCRImageCollection(artifactImages, "artifact", id));
-        }
+			return true;
+		}
 
-        private Bitmap GetSubstatsBitmap(Bitmap card)
+        private Bitmap GetSubstatsBitmap(Bitmap card, bool isSanctified = false)
         {
+			// Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6, fea6e1bb.
+			// The 16:10 shift (0.0471) is left for a follow-up branch.
+			double baseY = Navigation.IsNormal ? 0.4216 : 0.3682;
+			double sanctifiedShift = Navigation.IsNormal ? 0.0520 : 0.0;
+			double yShift = isSanctified ? sanctifiedShift : 0.0;
+
             return GenshinProcesor.CopyBitmap(card,new Rectangle(
 				x:(int)(card.Width * 0.0911),
-				y:(int)(card.Height * (Navigation.IsNormal ? 0.4216 : 0.3682)),
+				y:(int)(card.Height * (baseY + yShift)),
 				width:(int)(card.Width * 0.8097),
 				height:(int)(card.Height * (Navigation.IsNormal ? 0.1841 : 0.1573))));
         }
@@ -229,13 +295,32 @@ namespace InventoryKamera
 				height: (int)(card.Height * (Navigation.IsNormal ? 0.0416 : 0.0416))));
         }
 
-        private Bitmap GetLevelBitmap(Bitmap card)
+        private Bitmap GetLevelBitmap(Bitmap card, bool isSanctified = false)
         {
-            return GenshinProcesor.CopyBitmap(card, new Rectangle(
+			// Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6, fea6e1bb.
+			// The 16:10 shift (0.0465) is left for a follow-up branch.
+			double baseY = Navigation.IsNormal ? 0.3634 : 0.3197;
+			double sanctifiedShift = Navigation.IsNormal ? 0.0520 : 0.0;
+			double yShift = isSanctified ? sanctifiedShift : 0.0;
+
+			return GenshinProcesor.CopyBitmap(card, new Rectangle(
                 x: (int)(card.Width * 0.0506),
-                y: (int)(card.Height * (Navigation.IsNormal ? 0.3634 : 0.3197)),
+                y: (int)(card.Height * (baseY + yShift)),
                 width: (int)(card.Width * 0.1417),
                 height: (int)(card.Height * (Navigation.IsNormal ? 0.0416 : 0.0347))));
+        }
+
+        private Bitmap GetSanctifyBitmap(Bitmap card)
+        {
+			// Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6.
+			// The 16:10 coordinates (y 0.2941, height 0.0470, fea6e1bb) are left for a
+			// follow-up branch; on 16:10 the banner will not be detected and sanctified
+			// artifacts are skipped like any other unreadable card.
+			return GenshinProcesor.CopyBitmap(card, new Rectangle(
+				x: (int)(card.Width * 0.0),
+				y: (int)(card.Height * 0.3333),
+				width: (int)(card.Width * 0.0606),
+				height: (int)(card.Height * 0.0526)));
         }
 
         private Bitmap GetGearSlotBitmap(Bitmap card)
@@ -433,7 +518,13 @@ namespace InventoryKamera
             lines = new List<string>(text.Split('\n'));
             lines.RemoveAll(line => string.IsNullOrWhiteSpace(line));
 
-            var index = lines.FindIndex(line => line.Contains(":") || line.Contains("piece") || line.Contains("set") || line.Contains("2-"));
+			// Only cut the text once an actual header line is found. Trimming on any
+			// ":" made OCR noise containing a colon drop the substats read after it.
+			// (Ported from taiwenlee/Inventory_Kamera (MIT): 63ba93ff)
+			var index = lines.FindIndex(line =>
+				Regex.IsMatch(line, @"(piece|set|2-)") ||
+				Regex.IsMatch(line.Trim(), @"^[A-Za-z\s]+:$")
+			);
             if (index >= 0)
             {
                 lines.RemoveRange(index, lines.Count - index);
@@ -481,6 +572,13 @@ namespace InventoryKamera
 					substats.Insert(i, substat);
 				}
             }
+
+			// (Ported from taiwenlee/Inventory_Kamera (MIT): 63ba93ff)
+			if (substats.Count == 0)
+			{
+				Logger.Debug("Failed to obtain substats");
+			}
+
             return substats;
         }
 
