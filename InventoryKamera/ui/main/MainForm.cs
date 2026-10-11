@@ -162,6 +162,27 @@ namespace InventoryKamera
 
         private void MainForm_Load(object sender, EventArgs e)
         {
+            // Initialize the OCR engines here, on the UI thread, before anything
+            // else touches GenshinProcesor: a broken Tesseract install (missing
+            // tessdata, antivirus quarantine, missing VC++ runtime) otherwise
+            // surfaces later as an opaque TypeInitializationException
+            // (issues #536/#366/#287).
+            try
+            {
+                GenshinProcesor.EnsureInitialized();
+            }
+            catch (Exception ex)
+            {
+                // The real cause sits in the inner exception thrown by the
+                // static constructor, including the fix-it instructions.
+                var cause = ex.InnerException ?? ex;
+                Logger.Fatal(cause, "Tesseract initialization failed; exiting");
+                MessageBox.Show($"{cause.Message}\n\nInventory Kamera will now close. See the 'logging' folder for details.",
+                    "OCR Initialization Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Close();
+                return;
+            }
+
             if (Properties.Settings.Default.UpgradeNeeded)
             {
                 try

@@ -10,6 +10,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -182,15 +183,109 @@ namespace InventoryKamera
 
 		#region OCR
 
+		// A healthy genshin_fast_09_04_21.traineddata is several MB, so anything
+		// smaller means the file was installed incompletely or truncated.
+		private const long minTraineddataBytes = 1024 * 1024;
+
+		// Native libraries shipped by the Tesseract NuGet package. Antivirus
+		// products like to quarantine exactly these (issues #287/#366/#536).
+		private static readonly string[] tesseractNativeLibraries =
+		{
+			@"x64\tesseract50.dll",
+			@"x64\leptonica-1.82.0.dll",
+			@"x86\tesseract50.dll",
+			@"x86\leptonica-1.82.0.dll",
+		};
+
+		/// <summary>
+		/// Forces this type's static initialization (OCR engines + game data) to
+		/// run right away. Called once at startup so a broken Tesseract install
+		/// is reported with actionable instructions instead of an opaque
+		/// TypeInitializationException later (issues #536/#366/#287).
+		/// </summary>
+		internal static void EnsureInitialized() { }
+
+		private static string BuildTesseractInstallError(string detail)
+		{
+			return $"{detail}\n\n" +
+				"To fix this:\n" +
+				"1. Reinstall Inventory Kamera and keep the 'tessdata' folder next to InventoryKamera.exe.\n" +
+				"2. Check your antivirus quarantine for tesseract50.dll and leptonica-1.82.0.dll (in the 'x64' and 'x86' folders next to InventoryKamera.exe) and restore/whitelist them.\n" +
+				"3. Install the Visual C++ Redistributable 2015-2022: https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist#visual-studio-2015-2017-2019-and-2022 (a restart may be needed).";
+		}
+
+		/// <summary> Check the on-disk Tesseract install before creating any engine. </summary>
+		private static void ValidateTesseractInstall()
+		{
+			if (!Directory.Exists(tesseractDatapath))
+				throw new DirectoryNotFoundException(BuildTesseractInstallError(
+					$"The OCR training data folder '{Path.GetFullPath(tesseractDatapath)}' was not found."));
+
+			string traineddataPath = Path.Combine(tesseractDatapath, $"{tesseractLanguage}.traineddata");
+			var traineddata = new FileInfo(traineddataPath);
+			if (!traineddata.Exists)
+				throw new FileNotFoundException(BuildTesseractInstallError(
+					$"The OCR training data file '{traineddataPath}' was not found."));
+
+			if (traineddata.Length < minTraineddataBytes)
+				throw new InvalidDataException(BuildTesseractInstallError(
+					$"The OCR training data file '{traineddata.FullName}' is only {traineddata.Length} bytes and is likely truncated or quarantined."));
+		}
+
+		/// <summary> Log the environment details needed to diagnose OCR startup failures. </summary>
+		private static void LogTesseractEnvironment()
+		{
+			Logger.Info("Tesseract datapath '{0}' with language '{1}', {2} engines requested",
+				Path.GetFullPath(tesseractDatapath), tesseractLanguage, numEngines);
+
+			foreach (string library in tesseractNativeLibraries)
+				Logger.Info("Native library '{0}': {1}", library, File.Exists(library) ? "found" : "MISSING");
+		}
+
+		// A single engine failing to start must not sink the whole scan as long
+		// as the pool is not empty: AnalyzeText shares the surviving engines,
+		// so fewer engines only costs OCR throughput.
+		private static void CreateEngines()
+		{
+			Exception lastError = null;
+			int created = 0;
+			for (int i = 0; i < numEngines; i++)
+			{
+				try
+				{
+					engines.Add(new TesseractEngine(tesseractDatapath, tesseractLanguage, EngineMode.LstmOnly));
+					created++;
+				}
+				catch (Exception ex)
+				{
+					lastError = ex;
+					Logger.Error(ex, "Failed to create Tesseract engine {0} of {1}", i + 1, numEngines);
+				}
+			}
+
+			if (created == 0)
+			{
+				throw new InvalidOperationException(
+					BuildTesseractInstallError($"No OCR engines could be created{(lastError is null ? string.Empty : $": {lastError.Message}")}"),
+					lastError);
+			}
+
+			if (created < numEngines)
+				Logger.Warn("Only {0} of {1} OCR engines initialized; continuing with reduced OCR throughput", created, numEngines);
+			else
+				Logger.Info("{0} OCR engines initialized", created);
+		}
+
 		private static void InitEngines()
 		{
 			engines = new ConcurrentBag<TesseractEngine>();
 			try
 			{
-				for (int i = 0; i < numEngines; i++)
-				{
-					engines.Add(new TesseractEngine(tesseractDatapath, tesseractLanguage, EngineMode.LstmOnly));
-				}
+				ValidateTesseractInstall();
+
+				LogTesseractEnvironment();
+
+				CreateEngines();
 			}
 			catch (Exception ex)
 			{
@@ -201,7 +296,7 @@ namespace InventoryKamera
 
 		internal static void RestartEngines()
 		{
-			
+
 			if (engines is null) engines = new ConcurrentBag<TesseractEngine>();
 			lock (engines)
 			{
@@ -211,12 +306,12 @@ namespace InventoryKamera
 						e.Dispose();
 				}
 
-				for (int i = 0; i < numEngines; i++)
-				{
-					engines.Add(new TesseractEngine(tesseractDatapath, tesseractLanguage, EngineMode.LstmOnly));
-				}
+				// Throws with actionable instructions if no engine survives,
+				// leaving 0 engines behind (workers would otherwise wait for
+				// one forever).
+				CreateEngines();
 			}
-			Logger.Debug("{numEngines} Engines restarted", numEngines);
+			Logger.Debug("{0} engines restarted", engines.Count);
 		}
 
 		/// <summary> Use Tesseract OCR to find words on picture to string </summary>
