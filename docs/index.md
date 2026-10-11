@@ -14,6 +14,7 @@ Genshin Impact account via OCR and exports the result in the
 | [Lookup tables](lookup-tables.md) | Format reference for `inventorylists/*.json` (for manual edits) |
 | [Project structure](project-structure.md) | What lives where in the repository and the Visual Studio solution |
 | [Development](development.md) | Build prerequisites, working on the code, and debugging tips |
+| [Upstream issue log](upstream-issues.md) | How issues from the original repository were addressed in this fork |
 
 ## Where to start
 
