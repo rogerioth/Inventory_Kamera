@@ -279,11 +279,15 @@ namespace InventoryKamera
 			double sanctifiedShift = Navigation.IsNormal ? 0.0520 : 0.0;
 			double yShift = isSanctified ? sanctifiedShift : 0.0;
 
+			// The region is widened and extended downward so the "unactivated"
+			// substat row introduced in Genshin 6.0 is captured by the OCR.
+			// (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d)
+			// The 16:10 height (0.1573) is left for a follow-up branch.
             return GenshinProcesor.CopyBitmap(card,new Rectangle(
-				x:(int)(card.Width * 0.0911),
+				x:(int)(card.Width * 0.0605),
 				y:(int)(card.Height * (baseY + yShift)),
-				width:(int)(card.Width * 0.8097),
-				height:(int)(card.Height * (Navigation.IsNormal ? 0.1841 : 0.1573))));
+				width:(int)(card.Width * 0.8297),
+				height:(int)(card.Height * (Navigation.IsNormal ? 0.2301 : 0.1573))));
         }
 
         private Bitmap GetMainStatBitmap(Bitmap card)
@@ -340,6 +344,8 @@ namespace InventoryKamera
 			string setName = null;
 			string equippedCharacter = null;
 			List<SubStat> subStats = new List<SubStat>();
+			// (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d)
+			List<SubStat> unactivatedSubStats = new List<SubStat>();
 			int rarity = 0;
 			int level = 0;
 			bool _lock = false;
@@ -366,7 +372,7 @@ namespace InventoryKamera
 				var taskGear  = Task.Run(() => gearSlot = ScanArtifactGearSlot(bm[a_gearSlot]));
 				var taskMain  = taskGear.ContinueWith( (antecedent) => mainStat = ScanArtifactMainStat(bm[a_mainStat], antecedent.Result));
 				var taskLevel = Task.Run(() => level = ScanArtifactLevel(bm[a_level]));
-				var taskSubs  = Task.Run(() => subStats = ScanArtifactSubStats(bm[a_subStats]));
+				var taskSubs  = Task.Run(() => (subStats, unactivatedSubStats) = ScanArtifactSubStats(bm[a_subStats]));
 				var taskEquip = Task.Run(() => equippedCharacter = ScanArtifactEquippedCharacter(bm[a_equippedCharacter]));
 				var taskName = Task.Run(() => setName = ScanArtifactSet(bm[a_name]));
 
@@ -382,7 +388,7 @@ namespace InventoryKamera
 
 				await Task.WhenAll(tasks.ToArray());
 			}
-			return new Artifact(setName, rarity, level, gearSlot, mainStat, subStats, equippedCharacter, id, _lock);
+			return new Artifact(setName, rarity, level, gearSlot, mainStat, subStats, unactivatedSubStats, equippedCharacter, id, _lock);
 		}
 
 		private static int GetRarity(Bitmap bm)
@@ -502,17 +508,35 @@ namespace InventoryKamera
 			return int.TryParse(text, out int level) ? level : -1;
 		}
 
-		private static List<SubStat> ScanArtifactSubStats(Bitmap artifactImage)
+		// Returns the parsed active substats and, separately, the "unactivated"
+		// substat (Genshin 6.0) so it can be exported without corrupting the
+		// regular substat list.
+		// (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d)
+		private static (List<SubStat> active, List<SubStat> unactivated) ScanArtifactSubStats(Bitmap artifactImage)
         {
             Bitmap bm = (Bitmap)artifactImage.Clone();
 			List<string> lines = new List<string>();
 			List<SubStat> substats = new List<SubStat>();
+			// (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d)
+			List<SubStat> unactivated = new List<SubStat>();
 			string text;
             GenshinProcesor.SetBrightness(-30, ref bm);
             GenshinProcesor.SetContrast(85, ref bm);
+			bool hasUnactivated = false;
 			using (var n = GenshinProcesor.ConvertToGrayscale(bm))
 			{
 				text = GenshinProcesor.AnalyzeText(n, Tesseract.PageSegMode.Auto).ToLower();
+			}
+
+			// The unactivated row is rendered with an "(unactivated)" label. The
+			// parenthesized literal from the reference is matched without the
+			// parentheses here: OCR can drop punctuation, and no regular substat
+			// line ever contains the word.
+			// (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d)
+			if(text.Contains("unactivated"))
+			{
+				hasUnactivated = true;
+				Logger.Debug("Artifact has an unactivated substat");
 			}
 
             lines = new List<string>(text.Split('\n'));
@@ -579,7 +603,18 @@ namespace InventoryKamera
 				Logger.Debug("Failed to obtain substats");
 			}
 
-            return substats;
+			// If there is an unactivated substat, move the last parsed substat to
+			// the unactivated list: the unactivated row is rendered below the
+			// regular substats, so it is always the last line of the block.
+			// (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d, a7bf8a88)
+			if(hasUnactivated && substats.Count > 0)
+			{
+				SubStat lastSubstat = substats[substats.Count - 1];
+				unactivated.Insert(0, lastSubstat);
+				substats.Remove(lastSubstat);
+			}
+
+            return (substats, unactivated);
         }
 
         private static string ScanArtifactEquippedCharacter(Bitmap bm)

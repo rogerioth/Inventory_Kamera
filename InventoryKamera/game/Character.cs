@@ -111,7 +111,9 @@ namespace InventoryKamera
 
         public bool HasValidLevel()
         {
-            return 1 <= Level && Level <= 90;
+            // Genshin 6.x raised the character level cap to 100.
+            // (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d)
+            return 1 <= Level && Level <= 100;
         }
 
         public bool HasValidElement()
@@ -169,7 +171,9 @@ namespace InventoryKamera
             {
                 return 5;
             }
-            else if (Level <= 90 || (Level == 90 && !Ascended))
+            // Levels 81-100 map to ascension 6 like 81-90 did before the cap
+            // was raised. (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d)
+            else if (Level <= 100 || (Level == 100 && !Ascended))
             {
                 return 6;
             }
