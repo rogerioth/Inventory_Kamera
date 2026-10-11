@@ -106,13 +106,45 @@ namespace InventoryKamera
         {
 			var listManager = new DatabaseManager();
 
-			Characters = listManager.LoadCharacters();
-			Artifacts = listManager.LoadArtifacts();
-			Weapons = listManager.LoadWeapons();
-			DevItems = listManager.LoadDevItems();
-			Materials = listManager.LoadMaterials();
+			// A fresh install has no inventorylists yet (the updater generates
+			// them). Missing or invalid tables must not throw here: this runs
+			// inside the static constructor, where any exception permanently
+			// poisons the type (TypeInitializationException) and crashes the
+			// app before the updater prompt can even appear.
+			Characters = LoadListSafely(listManager.LoadCharacters, "characters");
+			Artifacts = LoadListSafely(listManager.LoadArtifacts, "artifacts");
+			Weapons = LoadListSafely(listManager.LoadWeapons, "weapons");
+			DevItems = LoadListSafely(listManager.LoadDevItems, "character development items");
+			Materials = LoadListSafely(listManager.LoadMaterials, "materials");
 
+			if (HasLookupData)
+				Logger.Info("Loaded lookup tables: {0} characters, {1} weapons, {2} artifact sets, {3} materials",
+					Characters.Count, Weapons.Count, Artifacts.Count, Materials.Count);
+			else
+				Logger.Warn("Lookup tables are missing or empty. Use 'Options > Update Lookup Tables' before scanning.");
 		}
+
+		private static Dictionary<string, T> LoadListSafely<T>(Func<Dictionary<string, T>> load, string name)
+		{
+			try
+			{
+				return load();
+			}
+			catch (Exception ex)
+			{
+				Logger.Warn(ex, "Could not load the {0} lookup table; continuing without it", name);
+				return new Dictionary<string, T>();
+			}
+		}
+
+		/// <summary>
+		/// True once the essential lookup tables (characters, weapons, artifact
+		/// sets) are loaded. Scanning without them would reject every item.
+		/// </summary>
+		internal static bool HasLookupData =>
+			Characters != null && Characters.Count > 0 &&
+			Weapons != null && Weapons.Count > 0 &&
+			Artifacts != null && Artifacts.Count > 0;
 
 		/// <summary>
 		/// A custom name that equals a real character's key or another character's
