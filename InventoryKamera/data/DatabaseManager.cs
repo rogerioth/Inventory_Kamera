@@ -47,6 +47,14 @@ namespace InventoryKamera
 
         private readonly string NewVersion = "version.txt";
 
+        // Sanity thresholds: a generated table far below these counts means the
+        // download or dump was broken, so the existing file is kept instead of
+        // being replaced with a stub. Ported from taiwenlee/Inventory_Kamera (MIT): 45e89685
+        private const int MinimumCharacters = 50;
+        private const int MinimumArtifacts = 30;
+        private const int MinimumWeapons = 100;
+        private const int MinimumMaterials = 50;
+
         // GitLab's REST API rejects unauthenticated clients, so update checks read the
         // project's public Atom commit feed instead. Raw file URLs are unaffected.
         private const string commitsFeedURL = "https://gitlab.com/Dimbreath/animegamedata2/-/commits/main.atom";
@@ -344,11 +352,14 @@ namespace InventoryKamera
 
         private UpdateStatus UpdateCharacters(bool force)
         {
-            if (force) File.Delete(ListsDir + CharactersJson);
-
             var status = UpdateStatus.Skipped;
 
-            var data = JToken.Parse(LoadJsonFromFile(CharactersJson)).ToObject<ConcurrentDictionary<string, JObject>>();
+            // Never delete the previous file up front: generate into memory and
+            // only replace the file once the new data is complete and plausible.
+            // Ported from taiwenlee/Inventory_Kamera (MIT): 45e89685
+            var data = force
+                ? new ConcurrentDictionary<string, JObject>()
+                : JToken.Parse(LoadJsonFromFile(CharactersJson)).ToObject<ConcurrentDictionary<string, JObject>>();
 
             try
             {
@@ -362,7 +373,14 @@ namespace InventoryKamera
                 Logger.Debug("Found {0} playable characters available", characters.Count);
                 characters.AsParallel().ForAll(character =>
                 {
-                    string name = Mappings[character["nameTextMapHash"].ToString()].ToString();
+                    // One unmapped hash must not abort the whole parallel update.
+                    if (!Mappings.TryGetValue(character["nameTextMapHash"]?.ToString() ?? string.Empty, out string mappedName) || string.IsNullOrWhiteSpace(mappedName))
+                    {
+                        Logger.Warn("Skipping avatar {0}: name hash {1} has no TextMap entry.", character["id"], character["nameTextMapHash"]?.ToString());
+                        return;
+                    }
+
+                    string name = mappedName;
 
                     try
                     {
@@ -373,6 +391,13 @@ namespace InventoryKamera
                         string nameGOOD = Regex.Replace(PascalCase, @"[\W]", string.Empty);
                         string nameKey = nameGOOD.ToLower();
                         int characterID = (int)character["id"];
+
+                        // Placeholder avatars (beta Columbina/Ineffa, trial duplicates,
+                        // UGC templates) reuse real characters' keys but have no fetter
+                        // data, which yields empty elements and can shadow the real
+                        // entry depending on parallel processing order.
+                        // Ported from taiwenlee/Inventory_Kamera (MIT): 43c16129
+                        if (characterID > 10000900) return;
 
                         string const3Description = "";
                         string const5Description = "";
@@ -430,8 +455,18 @@ namespace InventoryKamera
                             }
                             else // Any other character that isn't traveler
                             {
-                                skill = skills.First(entry => entry["skillIcon"]?.ToString().Contains($"Skill_S_{name}") == true)["nameTextMapHash"].ToString();
-                                skill = Mappings[skill].ToString();
+                                // Not every avatar has a Skill_S_ entry (e.g. test ones),
+                                // so look it up tolerantly instead of throwing.
+                                // Ported from taiwenlee/Inventory_Kamera (MIT): 480222b9
+                                var characterSkill = skills.FirstOrDefault(entry => entry["skillIcon"]?.ToString().Contains($"Skill_S_{name}") == true);
+
+                                if (characterSkill == null)
+                                {
+                                    Logger.Debug("Skipping {0} - no skill data available", name);
+                                    return;
+                                }
+
+                                skill = Mappings[characterSkill["nameTextMapHash"].ToString()].ToString();
 
 
                                 value.Add("ConstellationName", new JArray
@@ -534,18 +569,26 @@ namespace InventoryKamera
             }            
 
             if (status == UpdateStatus.Success)
-                SaveJsonToFile(JsonConvert.SerializeObject(new SortedDictionary<string, JObject>(data)), CharactersJson);
+            {
+                bool saved = IsPlausibleCount(ListType.Characters, data.Count)
+                    && SaveJsonToFile(JsonConvert.SerializeObject(new SortedDictionary<string, JObject>(data)), CharactersJson);
+
+                if (!saved) status = UpdateStatus.Fail;
+            }
 
             return status;
         }
 
         private UpdateStatus UpdateArtifacts(bool force)
         {
-            if (force) File.Delete(ListsDir + ArtifactsJson);
-
             var status = UpdateStatus.Skipped;
 
-            var data = JToken.Parse(LoadJsonFromFile(ArtifactsJson)).ToObject<ConcurrentDictionary<string, JObject>>();
+            // Never delete the previous file up front: generate into memory and
+            // only replace the file once the new data is complete and plausible.
+            // Ported from taiwenlee/Inventory_Kamera (MIT): 45e89685
+            var data = force
+                ? new ConcurrentDictionary<string, JObject>()
+                : JToken.Parse(LoadJsonFromFile(ArtifactsJson)).ToObject<ConcurrentDictionary<string, JObject>>();
 
             var artifactDisplays = JArray.Parse(LoadJsonFromURLAsync(ArtifactsDisplayItemURL)).ToObject<List<JObject>>();
             artifactDisplays.RemoveAll(a => a.TryGetValue("icon", out var icon) && !icon.ToString().Contains("RelicIcon"));
@@ -622,18 +665,26 @@ namespace InventoryKamera
             });
 
             if (status == UpdateStatus.Success)
-                SaveJsonToFile(JsonConvert.SerializeObject(new SortedDictionary<string, JObject>(data)), ArtifactsJson);
+            {
+                bool saved = IsPlausibleCount(ListType.Artifacts, data.Count)
+                    && SaveJsonToFile(JsonConvert.SerializeObject(new SortedDictionary<string, JObject>(data)), ArtifactsJson);
+
+                if (!saved) status = UpdateStatus.Fail;
+            }
 
             return status;
         }
 
         private UpdateStatus UpdateWeapons(bool force)
         {
-            if (force) File.Delete(ListsDir + WeaponsJson);
-
             var status = UpdateStatus.Skipped;
 
-            var data = JToken.Parse(LoadJsonFromFile(WeaponsJson)).ToObject<ConcurrentDictionary<string, string>>();
+            // Never delete the previous file up front: generate into memory and
+            // only replace the file once the new data is complete and plausible.
+            // Ported from taiwenlee/Inventory_Kamera (MIT): 45e89685
+            var data = force
+                ? new ConcurrentDictionary<string, string>()
+                : JToken.Parse(LoadJsonFromFile(WeaponsJson)).ToObject<ConcurrentDictionary<string, string>>();
 
             try
             {
@@ -650,7 +701,9 @@ namespace InventoryKamera
                             string nameGOOD = Regex.Replace(PascalCase, @"[\W]", string.Empty);              // DullBlade
                             string nameKey = nameGOOD.ToLower();                                             // dullblade
 
-                            if (!data.TryAdd(nameKey, nameGOOD)) status = UpdateStatus.Success;
+                            // An added weapon is new data; the inverted check used to
+                            // leave the list unsaved on a forced (empty) update.
+                            if (data.TryAdd(nameKey, nameGOOD)) status = UpdateStatus.Success;
                         }
                         else Logger.Warn("Weapon hash {0} not found in Mappings. It's likely unreleased.", weapon["nameTextMapHash"].ToString());
                     }
@@ -664,15 +717,18 @@ namespace InventoryKamera
             }
 
             if (status == UpdateStatus.Success)
-                SaveJsonToFile(JsonConvert.SerializeObject(new SortedDictionary<string, string>(data)), WeaponsJson);
+            {
+                bool saved = IsPlausibleCount(ListType.Weapons, data.Count)
+                    && SaveJsonToFile(JsonConvert.SerializeObject(new SortedDictionary<string, string>(data)), WeaponsJson);
+
+                if (!saved) status = UpdateStatus.Fail;
+            }
 
             return status;
         }
 
         private UpdateStatus UpdateMaterials(bool force)
         {
-            if (force) File.Delete(ListsDir + MaterialsJson);
-
             var status = UpdateStatus.Skipped;
 
             var materialCategories = new List<string>
@@ -685,7 +741,12 @@ namespace InventoryKamera
                 "MATERIAL_WEAPON_EXP_STONE",
             };
 
-            var data = JToken.Parse(LoadJsonFromFile(MaterialsJson)).ToObject<ConcurrentDictionary<string, string>>();
+            // Never delete the previous file up front: generate into memory and
+            // only replace the file once the new data is complete and plausible.
+            // Ported from taiwenlee/Inventory_Kamera (MIT): 45e89685
+            var data = force
+                ? new ConcurrentDictionary<string, string>()
+                : JToken.Parse(LoadJsonFromFile(MaterialsJson)).ToObject<ConcurrentDictionary<string, string>>();
 
             var materials = JArray.Parse(LoadJsonFromURLAsync(MaterialsURL)).ToObject<List<JObject>>();
             materials.RemoveAll(material => !(material.TryGetValue("materialType", out var materialType) && materialCategories.Contains(materialType.ToString())));
@@ -712,9 +773,35 @@ namespace InventoryKamera
             });
 
             if (status == UpdateStatus.Success)
-                SaveJsonToFile(JsonConvert.SerializeObject(new SortedDictionary<string, string>(data)), MaterialsJson);
+            {
+                bool saved = IsPlausibleCount(ListType.Materials, data.Count)
+                    && SaveJsonToFile(JsonConvert.SerializeObject(new SortedDictionary<string, string>(data)), MaterialsJson);
+
+                if (!saved) status = UpdateStatus.Fail;
+            }
 
             return status;
+        }
+
+        // A generated table far below these counts means the download or dump was
+        // broken; the caller keeps the previous file instead of replacing it.
+        // Ported from taiwenlee/Inventory_Kamera (MIT): 45e89685
+        private bool IsPlausibleCount(ListType list, int count)
+        {
+            int minimum;
+            switch (list)
+            {
+                case ListType.Characters: minimum = MinimumCharacters; break;
+                case ListType.Artifacts: minimum = MinimumArtifacts; break;
+                case ListType.Weapons: minimum = MinimumWeapons; break;
+                case ListType.Materials: minimum = MinimumMaterials; break;
+                default: return true;
+            }
+
+            if (count >= minimum) return true;
+
+            Logger.Error("Generated {0} table has only {1} entries (expected at least {2}).", list, count, minimum);
+            return false;
         }
 
         private string FetchHTML(string url)
@@ -755,17 +842,36 @@ namespace InventoryKamera
         {
             lock (this)
             {
+                string path = ListsDir + fileName;
+                string tempPath = path + ".tmp";
+
                 try
                 {
-                    using (StreamWriter file = new StreamWriter(ListsDir + fileName))
+                    // Write to a temporary file and swap it in, so a failure
+                    // halfway through never truncates the previous data file.
+                    using (StreamWriter file = new StreamWriter(tempPath))
                     using (JsonTextWriter writer = new JsonTextWriter(file))
                     {
                         writer.Formatting = Formatting.Indented;
                         JToken.Parse(json).WriteTo(writer);
                     }
+
+                    if (File.Exists(path))
+                        File.Replace(tempPath, path, null);
+                    else
+                        File.Move(tempPath, path);
+
                     return true;
                 }
-                catch (Exception ex) { Logger.Warn(ex); return false; }
+                catch (Exception ex)
+                {
+                    Logger.Warn(ex);
+
+                    try { if (File.Exists(tempPath)) File.Delete(tempPath); }
+                    catch { /* best effort cleanup */ }
+
+                    return false;
+                }
             }
         }
 
