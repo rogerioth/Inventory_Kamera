@@ -11,6 +11,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 
 
 namespace InventoryKamera
@@ -18,6 +19,15 @@ namespace InventoryKamera
     public class DatabaseManager
     {
         private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
+        private static readonly XNamespace atomNamespace = "http://www.w3.org/2005/Atom";
+
+        static DatabaseManager()
+        {
+            // GitLab requires TLS 1.2+. Opt in explicitly because .NET Framework
+            // only uses the OS default when strong-crypto registry keys are set.
+            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+        }
+
         private string _listdir = @".\inventorylists\";
 
         public string ListsDir
@@ -37,9 +47,11 @@ namespace InventoryKamera
 
         private readonly string NewVersion = "version.txt";
 
-        private const string commitsAPIURL = "https://gitlab.com/api/v4/projects/53216109/repository/commits";
-        private const string repoBaseURL = "https://gitlab.com/Dimbreath/AnimeGameData/-/raw/master/";
-        private const string TextMapEnURL = repoBaseURL + "TextMap/TextMapEN.json";
+        // GitLab's REST API rejects unauthenticated clients, so update checks read the
+        // project's public Atom commit feed instead. Raw file URLs are unaffected.
+        private const string commitsFeedURL = "https://gitlab.com/Dimbreath/animegamedata2/-/commits/main.atom";
+        private const string repoBaseURL = "https://gitlab.com/Dimbreath/animegamedata2/-/raw/main/";
+        private const string TextMapURL = repoBaseURL + "TextMap/TextMap_MediumEN.json";
         private const string CharactersURL = repoBaseURL + "ExcelBinOutput/AvatarExcelConfigData.json";
         private const string ConstellationsURL = repoBaseURL + "ExcelBinOutput/FetterInfoExcelConfigData.json";
         private const string TalentsURL = repoBaseURL + "ExcelBinOutput/AvatarTalentExcelConfigData.json";
@@ -98,17 +110,21 @@ namespace InventoryKamera
         }
 
         private Version CheckRemoteVersion()
-        { 
-            using (var response = new HttpClient().GetAsync(commitsAPIURL))
-            {
-                string pattern = @"(\d+\.\d+\.\d+)";
+        {
+            // Commit titles follow "CNRELWin<game version>_<build hashes>",
+            // e.g. "CNRELWin5.8.0_R48379043_S48511369_D48533839", so the first
+            // numeric triple found in the newest entry is the game version.
+            string pattern = @"(\d+\.\d+\.\d+)";
 
+            using (var response = new HttpClient().GetAsync(commitsFeedURL))
+            {
                 string body = response.Result.Content.ReadAsStringAsync().Result;
-                var commits = JsonConvert.DeserializeObject<List<JObject>>(body);
-                foreach (var commit in commits)
+                var feed = XDocument.Parse(body);
+
+                foreach (var title in feed.Descendants(atomNamespace + "entry")
+                    .Select(entry => entry.Element(atomNamespace + "title")?.Value))
                 {
-                    var c = commit.ToObject<Dictionary<string, object>>();
-                    var match = Regex.Match(c["title"].ToString(), pattern);
+                    var match = Regex.Match(title ?? string.Empty, pattern);
                     if (match.Success)
                     {
                         var v = match.Groups[1].Value;
@@ -251,7 +267,7 @@ namespace InventoryKamera
             {
                 if (!Mappings.Any())
                 {
-                    Mappings = new ConcurrentDictionary<string, string>(JObject.Parse(LoadJsonFromURLAsync(TextMapEnURL))
+                    Mappings = new ConcurrentDictionary<string, string>(JObject.Parse(LoadJsonFromURLAsync(TextMapURL))
                         .ToObject<Dictionary<string, string>>()
                         .Where(e => !string.IsNullOrWhiteSpace(e.Value)) // Remove any mapping with empty
                         .ToDictionary(i => i.Key, i => i.Value));
@@ -390,14 +406,13 @@ namespace InventoryKamera
 
                                 foreach (var element in playerElements)
                                 {
-                                    var elementSkill = skills.FirstOrDefault(entry => entry["skillIcon"].ToString().Contains($"Player{element.Key}") && !entry.ContainsKey("costElemType"));
-                                    
+                                    var elementSkill = skills.FirstOrDefault(entry => entry["skillIcon"]?.ToString().Contains($"Player{element.Key}") == true && !entry.ContainsKey("costElemType"));
 
                                     if (elementSkill == null) continue;
 
                                     skill = Mappings[elementSkill["nameTextMapHash"].ToString()].ToString();
 
-                                    const3Description = talents.Where(entry => entry["openConfig"].ToString().Contains($"Player_{element.Key}")).ElementAt(2)["descTextMapHash"].ToString();
+                                    const3Description = talents.Where(entry => entry["openConfig"]?.ToString().Contains($"Player_{element.Key}") == true).ElementAt(2)["descTextMapHash"].ToString();
                                     const3Description = Mappings[const3Description].ToString();
 
                                     if (const3Description.Contains(skill))
@@ -413,7 +428,7 @@ namespace InventoryKamera
                             }
                             else // Any other character that isn't traveler
                             {
-                                skill = skills.First(entry => entry["skillIcon"].ToString().Contains($"Skill_S_{name}"))["nameTextMapHash"].ToString();
+                                skill = skills.First(entry => entry["skillIcon"]?.ToString().Contains($"Skill_S_{name}") == true)["nameTextMapHash"].ToString();
                                 skill = Mappings[skill].ToString();
 
 
@@ -425,7 +440,7 @@ namespace InventoryKamera
                                 var constellationOrder = new JArray();
 
                                 // The skill/burst name is always mentioned in the constellation's description so we'll check for it
-                                const3Description = talents.Where(entry => entry["icon"].ToString().Contains(name)).ElementAt(2)["descTextMapHash"].ToString();
+                                const3Description = talents.Where(entry => entry["icon"]?.ToString().Contains(name) == true).ElementAt(2)["descTextMapHash"].ToString();
                                 const3Description = Mappings[const3Description].ToString();
 
                                 if (const3Description.Contains(skill))
@@ -451,6 +466,7 @@ namespace InventoryKamera
                             else if (weaponArchetype.Contains("POLE")) weaponType = WeaponType.Polearm;
                             else if (weaponArchetype.Contains("BOW")) weaponType = WeaponType.Bow;
                             else if (weaponArchetype.Contains("CATALYST")) weaponType = WeaponType.Catalyst;
+                            else if (weaponArchetype.Contains("CROSSBOW")) weaponType = WeaponType.Sword; // Not a released weapon class; current dumps only tag the traveler rows with it
                             else throw new IndexOutOfRangeException($"{name} uses unknown weapon type {weaponArchetype}");
 
                             value.Add("WeaponType", (int)weaponType);
