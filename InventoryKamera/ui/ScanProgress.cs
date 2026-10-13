@@ -1,0 +1,52 @@
+using System;
+
+namespace InventoryKamera
+{
+    public enum ScanPhase
+    {
+        Weapons,
+        Artifacts,
+        Characters,
+        CharacterDevelopmentItems,
+        Materials,
+        Achievements,
+        EquipmentProcessing
+    }
+
+    public sealed class ScanProgressUpdate
+    {
+        public ScanPhase Phase { get; }
+        public int Current { get; }
+        public int? Total { get; }
+        public string Detail { get; }
+        public bool Starting { get; }
+        public bool Finished { get; }
+
+        public ScanProgressUpdate(ScanPhase phase, int current, int? total, string detail, bool starting, bool finished)
+        {
+            Phase = phase;
+            Current = Math.Max(0, current);
+            Total = total.HasValue && total.Value >= 0 ? total : null;
+            Detail = detail;
+            Starting = starting;
+            Finished = finished;
+        }
+
+        public int Percentage => Total.HasValue && Total.Value > 0
+            ? (int)Math.Min(100, 100L * Current / Total.Value)
+            : Finished && Total == 0 ? 100 : 0;
+
+        public string Name
+        {
+            get
+            {
+                switch (Phase)
+                {
+                    case ScanPhase.CharacterDevelopmentItems: return "Development items";
+                    case ScanPhase.EquipmentProcessing: return "Equipment OCR";
+                    default: return Phase.ToString();
+                }
+            }
+        }
+    }
+}

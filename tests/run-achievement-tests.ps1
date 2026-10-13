@@ -2,6 +2,7 @@
 param(
     [string]$ScreenshotPath,
     [string]$CaptureDirectory,
+    [string]$SidebarDirectory,
     [string]$DependencyDirectory,
     [string]$CompilerPath,
     [switch]$BuildProject
@@ -123,6 +124,9 @@ if ($ScreenshotPath) {
 }
 if ($CaptureDirectory) {
     $testArguments += @('--capture-directory', (Resolve-Path -LiteralPath $CaptureDirectory).Path)
+}
+if ($SidebarDirectory) {
+    $testArguments += @('--sidebar-directory', (Resolve-Path -LiteralPath $SidebarDirectory).Path)
 }
 Push-Location -LiteralPath $outputDirectory
 try {

@@ -27,6 +27,11 @@ namespace InventoryKamera
         public Action<AchievementScanResult, AchievementCategory, int> AchievementProgress { get; set; }
         public Action<System.Drawing.Bitmap, AchievementObservation> AchievementPreview { get; set; }
         public bool HasInventoryData => Characters.Count > 0 || Inventory.Size > 0;
+        [JsonIgnore]
+        public bool CharacterScanComplete { get; private set; } = true;
+        private int equipmentEnqueued;
+        private int equipmentProcessed;
+        private volatile bool reportingEquipmentProcessing;
 
 		private List<Artifact> equippedArtifacts;
 		private List<Weapon> equippedWeapons;
@@ -55,8 +60,8 @@ namespace InventoryKamera
 			ImageProcessors = new List<Thread>();
 			workerQueue = new Queue<OCRImageCollection>();
 
-			weaponScraper = new WeaponScraper();
-			artifactScraper = new ArtifactScraper();
+            weaponScraper = new WeaponScraper { ItemQueued = () => Interlocked.Increment(ref equipmentEnqueued) };
+            artifactScraper = new ArtifactScraper { ItemQueued = () => Interlocked.Increment(ref equipmentEnqueued) };
 			materialScraper = new MaterialScraper();
 
 			b_threadCancel = false;
@@ -155,6 +160,7 @@ namespace InventoryKamera
 
 			if (Properties.Settings.Default.ScanWeapons)
 			{
+				UserInterface.BeginScanPhase(ScanPhase.Weapons);
 				Logger.Info("Starting weapon inventory scan");
 				// Get Weapons
 				Navigation.InventoryScreen();
@@ -176,6 +182,7 @@ namespace InventoryKamera
 
 			if (Properties.Settings.Default.ScanArtifacts)
 			{
+				UserInterface.BeginScanPhase(ScanPhase.Artifacts);
 				Logger.Info("Starting artifact inventory scan");
 
 				// Get Artifacts
@@ -200,26 +207,58 @@ namespace InventoryKamera
 
 			if (Properties.Settings.Default.ScanCharacters)
 			{
+				CharacterScanComplete = false;
+				UserInterface.BeginScanPhase(ScanPhase.Characters);
 				Logger.Info("Starting character roster scan");
 				// Get characters
-				Navigation.CharacterScreen();
+				CharacterNavigation.BeginScan();
+				bool characterTalentsCorrected = false;
 				try
 				{
+					CharacterNavigation.OpenCharacterScreen("start character roster scan", true);
 					CharacterScraper.ScanCharacters(ref Characters);
+					CharacterScanComplete = CharacterScraper.LastScanComplete;
+					characterTalentsCorrected = true;
+					CharacterNavigation.Require(CharacterScreenState.CharacterMenu, "finish character roster scan");
 				}
 				catch (ThreadAbortException) { }
+				catch (CharacterNavigationException)
+				{
+					if (!characterTalentsCorrected) CharacterScraper.ApplyTartagliaTalentCorrection(Characters);
+					throw;
+				}
 				catch (Exception ex)
 				{
 					UserInterface.AddError("    [FAILURE] Character roster scan: " + ex.Message);
 					Logger.Debug(ex, "Character roster scan exception");
 				}
+				finally { CharacterNavigation.EndScan(); }
 				Navigation.MainMenuScreen();
-				Logger.Info("Finished character roster scan: {0} characters recorded", Characters.Count);
+				Logger.Info("Finished character roster scan: {0} characters recorded; complete={1}, skipped={2}",
+					Characters.Count, CharacterScanComplete, CharacterScraper.LastSkippedCount);
 			}
 
 			// Wait for Image Processors to finish
 			Logger.Info("Waiting for remaining weapon and artifact scans...");
-			AwaitProcessors();
+            if (Volatile.Read(ref equipmentProcessed) < Volatile.Read(ref equipmentEnqueued))
+            {
+                UserInterface.BeginScanPhase(ScanPhase.EquipmentProcessing, Volatile.Read(ref equipmentEnqueued));
+                reportingEquipmentProcessing = true;
+                try
+                {
+                    UserInterface.ReportScanProgress(ScanPhase.EquipmentProcessing,
+                        Volatile.Read(ref equipmentProcessed), Volatile.Read(ref equipmentEnqueued));
+                    AwaitProcessors();
+                }
+                finally { reportingEquipmentProcessing = false; }
+                int processed = Volatile.Read(ref equipmentProcessed), enqueued = Volatile.Read(ref equipmentEnqueued);
+                if (processed == enqueued)
+                    UserInterface.FinishScanPhase(ScanPhase.EquipmentProcessing, processed, enqueued);
+                else
+                    UserInterface.ReportScanProgress(ScanPhase.EquipmentProcessing, processed, enqueued,
+                        "Some queued cards were not processed");
+            }
+            else AwaitProcessors();
 			Logger.Info("    Equipment processing finished");
 
 			if (Properties.Settings.Default.ScanCharacters)
@@ -234,6 +273,7 @@ namespace InventoryKamera
 			// Scan Character Development Items
 			if (Properties.Settings.Default.ScanCharDevItems)
 			{
+				UserInterface.BeginScanPhase(ScanPhase.CharacterDevelopmentItems);
 				Logger.Info("Starting character development material scan");
 				// Get Materials
 				Navigation.InventoryScreen();
@@ -258,6 +298,7 @@ namespace InventoryKamera
 			// Scan Materials
 			if (Properties.Settings.Default.ScanMaterials)
 			{
+				UserInterface.BeginScanPhase(ScanPhase.Materials);
 				Logger.Info("Starting material inventory scan");
 				// Get Materials
 				Navigation.InventoryScreen();
@@ -297,6 +338,7 @@ namespace InventoryKamera
             {
                 var catalog = AchievementCatalog ?? global::InventoryKamera.AchievementCatalog.Load();
                 if (!string.IsNullOrWhiteSpace(catalog.Warning)) Logger.Warn(catalog.Warning);
+                UserInterface.BeginScanPhase(ScanPhase.Achievements, catalog.Categories.Count);
                 var scraper = new AchievementScraper(catalog) { Progress = AchievementProgress, RowPreview = AchievementPreview };
                 scraper.Scan(Achievements, achievementCancellation.Token);
             }
@@ -526,6 +568,16 @@ namespace InventoryKamera
 						Logger.Error(ex, "    [FAILURE] Could not process {0} #{1}. Skipping item: {2}", imageCollection.Type, imageCollection.Id, ex.GetBaseException().Message);
 						try { imageCollection.Bitmaps?.ForEach(b => b?.Dispose()); } catch { }
 					}
+                    finally
+                    {
+                        if (imageCollection.Type == "weapon" || imageCollection.Type == "artifact")
+                        {
+                            int finished = Interlocked.Increment(ref equipmentProcessed);
+                            if (reportingEquipmentProcessing)
+                                UserInterface.ReportScanProgress(ScanPhase.EquipmentProcessing, finished,
+                                    Volatile.Read(ref equipmentEnqueued));
+                        }
+                    }
 				}
 				else
 				{

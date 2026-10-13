@@ -135,10 +135,16 @@ namespace InventoryKamera
     {
         private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
         private const string CategorySelectionIssue = "Category could not be selected or verified.";
+        private const int MaximumSidebarRecoveries = 3;
+        private const int MaximumNavigationEvidence = 160;
         private readonly AchievementCatalog catalog;
         private readonly AchievementRecognizer recognizer;
         private readonly IAchievementNavigation navigation;
+        private readonly Dictionary<int, string> selectionFailures = new Dictionary<int, string>();
         private CancellationToken cancellation;
+        private int sidebarRecoveries, navigationEvidence;
+        private bool evidenceLimitLogged;
+        private string lastSelectionFailure;
         public Action<AchievementScanResult, AchievementCategory, int> Progress { get; set; }
         public Action<Bitmap, AchievementObservation> RowPreview
         {
@@ -156,6 +162,9 @@ namespace InventoryKamera
         public void Scan(AchievementScanResult result, CancellationToken cancellationToken)
         {
             cancellation = cancellationToken;
+            sidebarRecoveries = navigationEvidence = 0;
+            evidenceLimitLogged = false;
+            selectionFailures.Clear();
             var accumulator = new AchievementScanAccumulator(result);
             result.StartedAt = DateTime.UtcNow;
             Directory.CreateDirectory("logging/achievements");
@@ -167,6 +176,7 @@ namespace InventoryKamera
                     result.Issues.Add("The game's completed achievement total could not be read.");
                 ResetSidebar();
 
+                int consecutiveSelectionFailures = 0;
                 foreach (var category in catalog.Categories.OrderBy(x => x.Order))
                 {
                     CheckStop();
@@ -174,10 +184,33 @@ namespace InventoryKamera
                     result.Categories.Add(coverage);
                     if (!SelectCategory(category))
                     {
-                        coverage.Issues.Add(CategorySelectionIssue);
-                        Logger.Warn("Achievement category '{0}' could not be selected; continuing with the remaining categories", category.Name);
-                        continue;
+                        consecutiveSelectionFailures++;
+                        if (consecutiveSelectionFailures >= 3)
+                        {
+                            Logger.Warn("Achievement sidebar failed for {0} consecutive categories; recovering before continuing", consecutiveSelectionFailures);
+                            if (RecoverSidebar("consecutive_selection_failures") && SelectCategory(category))
+                            {
+                                consecutiveSelectionFailures = 0;
+                            }
+                            else
+                            {
+                                coverage.Issues.Add(CategorySelectionIssue);
+                                selectionFailures[category.Id] = lastSelectionFailure;
+                                Progress?.Invoke(result, category, coverage.Pages);
+                                throw new InvalidOperationException("The achievement sidebar could not be verified after bounded recovery; remaining categories were not visited.");
+                            }
+                        }
+                        else
+                        {
+                            coverage.Issues.Add(CategorySelectionIssue);
+                            selectionFailures[category.Id] = lastSelectionFailure;
+                            Logger.Warn("Achievement category {0} '{1}' could not be selected: {2}", category.Id, category.Name, lastSelectionFailure);
+                            Progress?.Invoke(result, category, coverage.Pages);
+                            continue;
+                        }
                     }
+                    consecutiveSelectionFailures = 0;
+                    selectionFailures.Remove(category.Id);
                     Logger.Info("Scanning achievements: {0}", category.Name);
                     ScanCategory(result, coverage, category, accumulator);
                     Progress?.Invoke(result, category, coverage.Pages);
@@ -188,17 +221,19 @@ namespace InventoryKamera
                     // Finish visiting the rest before recovering an uncertain selection.
                     // Restarting the sidebar gives missed labels another chance in a fresh position.
                     Logger.Info("Retrying {0} achievement categories that could not be selected", missed.Count);
-                    ResetSidebar();
+                    ResetSidebar("selection_retry");
                     foreach (var coverage in missed)
                     {
                         CheckStop();
                         var category = catalog.Categories.Single(x => x.Id == coverage.CategoryId);
                         if (!SelectCategory(category))
                         {
-                            Logger.Warn("Achievement category '{0}' still could not be selected; preserving partial results", category.Name);
+                            selectionFailures[category.Id] = lastSelectionFailure;
+                            Logger.Warn("Achievement category {0} '{1}' still could not be selected: {2}; preserving partial results", category.Id, category.Name, lastSelectionFailure);
                             continue;
                         }
                         coverage.Issues.Remove(CategorySelectionIssue);
+                        selectionFailures.Remove(category.Id);
                         Logger.Info("Scanning achievements: {0} (selection retry)", category.Name);
                         ScanCategory(result, coverage, category, accumulator);
                         Progress?.Invoke(result, category, coverage.Pages);
@@ -223,7 +258,13 @@ namespace InventoryKamera
             }
             finally
             {
+                if (!result.Cancelled && !cancellation.IsCancellationRequested && !result.FinalExpectedCompleted.HasValue)
+                {
+                    try { using (var frame = Capture()) result.FinalExpectedCompleted = recognizer.ReadCompletedTotal(frame); }
+                    catch (Exception ex) { Logger.Debug(ex, "Could not read the final completed achievement total"); }
+                }
                 accumulator.Finish(catalog);
+                LogCoverageSummary(result);
                 Logger.Info("Achievement scan {0}: {1}/{2} completed IDs, {3} unresolved rows",
                     result.Complete ? "complete" : "partial", result.Completed.Count,
                     result.ExpectedCompleted?.ToString() ?? "?", result.Observations.Count(x => !string.IsNullOrEmpty(x.Error)));
@@ -280,34 +321,87 @@ namespace InventoryKamera
         private bool SelectCategory(AchievementCategory category)
         {
             string last = null;
-            int stationary = 0;
-            for (int attempt = 0; attempt < 100; attempt++)
+            int stationary = 0, unreadWithinRange = 0, previousDirection = 0;
+            lastSelectionFailure = "Sidebar search exceeded its bounded attempt limit.";
+            Logger.Info("Selecting achievement category {0} '{1}' (order {2})", category.Id, category.Name, category.Order);
+            for (int attempt = 0; attempt < 32; attempt++)
             {
                 CheckStop();
+                int direction, step;
                 using (var frame = Capture())
                 {
-                    var entries = recognizer.ReadCategories(frame);
-                    var entry = entries.FirstOrDefault(x => x.Category?.Id == category.Id &&
-                        x.Bounds.Top >= frame.Height * .16 && x.Bounds.Bottom <= frame.Height * .935);
-                    if (entry != null)
+                    if (!recognizer.IsDetailScreen(frame))
                     {
-                        if (entry.Selected) return true;
-                        // Use the verified tile from this capture for the first click. A second
-                        // OCR pass can lose an otherwise clear Roman numeral in the same label.
-                        return SelectVisibleCategory(category, entry, frame.Width, frame.Height);
-                    }
-                    string signature = string.Join("|", entries.Select(x => x.RawText + ":" + x.Bounds.Top));
-                    stationary = signature == last ? stationary + 1 : 0;
-                    if (stationary >= 2)
-                    {
-                        SaveCategoryFailure(frame, category.Id, "not_found", entries);
+                        lastSelectionFailure = "The achievement detail screen was not visible during sidebar selection.";
+                        SaveNavigationFrame(frame, "category_" + category.Id + "_detail_missing");
+                        Logger.Warn("Achievement category {0}: {1}", category.Id, lastSelectionFailure);
                         return false;
                     }
+                    var entries = ReadSidebar(frame, "select", category.Id, attempt + 1);
+                    var entry = entries.FirstOrDefault(x => x.Category?.Id == category.Id && IsFullSidebarEntry(x, frame));
+                    if (entry != null)
+                    {
+                        if (entry.Selected)
+                        {
+                            Logger.Info("Achievement category {0} selection verified at {1}", category.Id, entry.Bounds);
+                            return true;
+                        }
+                        // Use the verified tile from this capture for the first click. A second
+                        // OCR pass can lose an otherwise clear Roman numeral in the same label.
+                        SaveNavigationFrame(frame, "category_" + category.Id + "_before_select");
+                        return SelectVisibleCategory(category, entry, frame.Width, frame.Height);
+                    }
+                    direction = SidebarScrollDirection(category, entries);
+                    string signature = SidebarSignature(frame, entries);
+                    stationary = signature == last ? stationary + 1 : 0;
                     last = signature;
+                    if (direction == 0)
+                    {
+                        // Re-read a missing label inside the current known range before
+                        // moving away from a category that may already be visible.
+                        if (++unreadWithinRange >= 3)
+                        {
+                            lastSelectionFailure = entries.Any(x => x.Category != null)
+                                ? "The requested category was unreadable within the visible sidebar range."
+                                : "No known full sidebar categories could be read.";
+                            SaveCategoryFailure(frame, category.Id, "visible_range_unreadable", entries);
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        unreadWithinRange = 0;
+                        bool atEnd = direction < 0 ? SidebarAtTop(frame) : SidebarAtBottom(frame);
+                        if (atEnd || stationary >= 2)
+                        {
+                            lastSelectionFailure = atEnd
+                                ? "The requested category was not recognized at the verified sidebar " + (direction < 0 ? "top." : "bottom.")
+                                : "The sidebar did not move after two wheel requests.";
+                            if (atEnd && stationary < 2) direction = 0;
+                            else
+                            {
+                                SaveCategoryFailure(frame, category.Id, atEnd ? "endpoint_unreadable" : "scroll_stalled", entries);
+                                return false;
+                            }
+                        }
+                    }
+                    if (direction != 0 && previousDirection != 0 && direction != previousDirection)
+                    {
+                        Logger.Debug("Achievement category {0}: reversing sidebar search from {1} to {2}", category.Id, previousDirection, direction);
+                        stationary = 0;
+                    }
+                    var known = entries.Where(x => x.Category != null).Select(x => Math.Abs(x.Category.Order - category.Order)).ToList();
+                    step = known.Count > 0 && known.Min() <= 3 ? 4 : 12;
                 }
-                navigation.Scroll(true, 4);
-                Pause(400);
+                if (direction == 0) Pause(350);
+                else
+                {
+                    previousDirection = direction;
+                    ScrollSidebar(direction * step, "category_" + category.Id + "_search");
+                }
             }
+            lastSelectionFailure = "Sidebar search exceeded its bounded attempt limit.";
+            using (var frame = Capture()) SaveCategoryFailure(frame, category.Id, "search_limit", ReadSidebar(frame, "search_limit", category.Id, 32));
             return false;
         }
 
@@ -325,22 +419,35 @@ namespace InventoryKamera
                     {
                         using (var frame = Capture())
                         {
-                            var entries = recognizer.ReadCategories(frame);
-                            entry = entries.FirstOrDefault(x => x.Category?.Id == category.Id &&
-                                x.Bounds.Top >= frame.Height * .16 && x.Bounds.Bottom <= frame.Height * .935);
+                            var entries = ReadSidebar(frame, "reacquire", category.Id, recognitionAttempt + 1);
+                            entry = entries.FirstOrDefault(x => x.Category?.Id == category.Id && IsFullSidebarEntry(x, frame));
                             width = frame.Width;
                             height = frame.Height;
                             if (entry != null) break;
                             if (recognitionAttempt == 2)
+                            {
+                                lastSelectionFailure = "The category tile could not be reacquired after clicking.";
                                 SaveCategoryFailure(frame, category.Id, "not_visible", entries);
+                            }
                         }
                         if (recognitionAttempt < 2) Pause(300);
                     }
-                    if (entry == null) return false;
+                    if (entry == null)
+                    {
+                        lastSelectionFailure = "The category tile could not be reacquired after clicking.";
+                        return false;
+                    }
                 }
-                if (entry.Selected) return true;
-                navigation.Click((entry.Bounds.Left + entry.Bounds.Width * .5) / width,
-                    (entry.Bounds.Top + entry.Bounds.Height * .5) / height);
+                if (entry.Selected)
+                {
+                    Logger.Info("Achievement category {0} '{1}' selection verified while reacquiring its tile", category.Id, category.Name);
+                    return true;
+                }
+                double clickX = (entry.Bounds.Left + entry.Bounds.Width * .5) / width;
+                double clickY = (entry.Bounds.Top + entry.Bounds.Height * .5) / height;
+                Logger.Debug("Achievement category {0} click {1}/3: tile {2}, client ({3:F0},{4:F0}), normalized ({5:F4},{6:F4})",
+                    category.Id, clickAttempt + 1, entry.Bounds, clickX * width, clickY * height, clickX, clickY);
+                navigation.Click(clickX, clickY);
                 Pause(650);
                 // Selection changes the label's font/color and can take several frames
                 // to settle. Recheck before repeating the click at its current location.
@@ -348,26 +455,32 @@ namespace InventoryKamera
                 {
                     using (var selected = Capture())
                     {
-                        var entries = recognizer.ReadCategories(selected);
-                        if (entries.Any(x => x.Category?.Id == category.Id && x.Selected)) return true;
+                        var entries = ReadSidebar(selected, "confirm_click_" + (clickAttempt + 1), category.Id, confirmation + 1);
+                        if (entries.Any(e => e.Category?.Id == category.Id && e.Selected && IsFullSidebarEntry(e, selected)))
+                        {
+                            Logger.Info("Achievement category {0} '{1}' selection verified after click {2}", category.Id, category.Name, clickAttempt + 1);
+                            return true;
+                        }
                         if (clickAttempt == 2 && confirmation == 2)
                         {
+                            lastSelectionFailure = "Three clicks did not produce a verified selected category tile.";
                             SaveCategoryFailure(selected, category.Id, "selection_failed", entries);
                         }
                     }
                     if (confirmation < 2) Pause(300);
                 }
             }
+            lastSelectionFailure = "Three clicks did not produce a verified selected category tile.";
             return false;
         }
 
-        private static void SaveCategoryFailure(Bitmap frame, int categoryId, string step,
+        private void SaveCategoryFailure(Bitmap frame, int categoryId, string step,
             IEnumerable<AchievementCategoryEntryOnScreen> entries)
         {
-            SaveNavigationFrame(frame, "category_" + categoryId + "_" + step);
-            Logger.Debug("Achievement sidebar recognition: {0}", string.Join(" | ", entries.Select(x =>
-                string.Format("y={0}, selected={1}, category={2}, text='{3}'", x.Bounds.Top,
-                    x.Selected, x.Category?.Id.ToString() ?? "?", x.RawText))));
+            string path = SaveNavigationFrame(frame, "category_" + categoryId + "_" + step);
+            Logger.Warn("Achievement category {0} sidebar {1}: {2}; thumb {3}; evidence {4}; entries {5}",
+                categoryId, step, lastSelectionFailure, SidebarThumbBounds(frame)?.ToString() ?? "unreadable",
+                path ?? "navigation evidence limit reached", FormatSidebar(entries));
         }
 
         private void ScanCategory(AchievementScanResult result, AchievementCategoryScan coverage,
@@ -509,17 +622,198 @@ namespace InventoryKamera
             throw new InvalidOperationException("The achievement list could not be reset to its top.");
         }
 
-        private void ResetSidebar()
+        private void ResetSidebar(string context = "initial", bool allowRecovery = true)
         {
-            var first = catalog.Categories.OrderBy(x => x.Order).First();
-            for (int attempt = 0; attempt < 30; attempt++)
+            string last = null;
+            int stationary = 0;
+            Logger.Info("Resetting achievement sidebar to its top ({0})", context);
+            for (int attempt = 0; attempt < 20; attempt++)
             {
                 using (var frame = Capture())
-                    if (recognizer.ReadCategories(frame).Any(x => x.Category?.Id == first.Id)) return;
-                navigation.Scroll(true, -20);
-                Pause(350);
+                {
+                    var entries = ReadSidebar(frame, "reset_" + context, null, attempt + 1);
+                    if (SidebarAtTop(frame))
+                    {
+                        Logger.Info("Achievement sidebar top verified ({0}), thumb {1}", context, SidebarThumbBounds(frame));
+                        return;
+                    }
+                    string signature = SidebarSignature(frame, entries);
+                    stationary = signature == last ? stationary + 1 : 0;
+                    last = signature;
+                    if (!recognizer.IsDetailScreen(frame) || stationary >= 2 || attempt == 19)
+                    {
+                        string path = SaveNavigationFrame(frame, "sidebar_reset_" + context + "_failed");
+                        Logger.Warn("Achievement sidebar reset failed ({0}), attempt {1}/20, stationary {2}, thumb {3}, top {4}, bottom {5}; evidence {6}; entries {7}",
+                            context, attempt + 1, stationary, SidebarThumbBounds(frame)?.ToString() ?? "unreadable",
+                            SidebarAtTop(frame), SidebarAtBottom(frame), path ?? "navigation evidence limit reached", FormatSidebar(entries));
+                        break;
+                    }
+                }
+                ScrollSidebar(-24, "reset_" + context);
             }
+            if (allowRecovery && RecoverSidebar("reset_" + context)) return;
             throw new InvalidOperationException("The achievement category list could not be reset to its top.");
+        }
+
+        private bool RecoverSidebar(string reason)
+        {
+            if (sidebarRecoveries >= MaximumSidebarRecoveries)
+            {
+                Logger.Warn("Achievement sidebar recovery limit {0} reached ({1})", MaximumSidebarRecoveries, reason);
+                return false;
+            }
+            sidebarRecoveries++;
+            Logger.Warn("Recovering achievement sidebar {0}/{1} ({2})", sidebarRecoveries, MaximumSidebarRecoveries, reason);
+            try
+            {
+                using (var frame = Capture())
+                {
+                    var entries = ReadSidebar(frame, "before_recovery", null, sidebarRecoveries);
+                    SaveNavigationFrame(frame, "sidebar_before_recovery_" + sidebarRecoveries);
+                    if (!recognizer.IsDetailScreen(frame))
+                    {
+                        Logger.Warn("Achievement sidebar recovery stopped: detail screen was not verified; entries {0}", FormatSidebar(entries));
+                        return false;
+                    }
+                }
+                Logger.Debug("Achievement sidebar recovery: pressing Escape to return to the category overview");
+                navigation.PressKey(Navigation.escapeKey);
+                Pause(800);
+                using (var overview = Capture())
+                {
+                    bool detail = recognizer.IsDetailScreen(overview);
+                    int? total = recognizer.ReadCompletedTotal(overview);
+                    SaveNavigationFrame(overview, "sidebar_recovery_overview_" + sidebarRecoveries);
+                    Logger.Info("Achievement sidebar recovery overview: detail {0}, completed total {1}", detail, total?.ToString() ?? "unreadable");
+                    if (detail || !total.HasValue) return false;
+                }
+                Logger.Debug("Achievement sidebar recovery: opening first overview tile at normalized (0.1000,0.2500)");
+                navigation.Click(.10, .25);
+                Pause(800);
+                using (var detail = Capture())
+                {
+                    bool verified = recognizer.IsDetailScreen(detail);
+                    SaveNavigationFrame(detail, "sidebar_recovery_detail_" + sidebarRecoveries);
+                    Logger.Info("Achievement sidebar recovery detail screen verified: {0}", verified);
+                    if (!verified) return false;
+                }
+                ResetSidebar("recovery_" + sidebarRecoveries, false);
+                return true;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (ThreadAbortException) { throw; }
+            catch (Exception ex)
+            {
+                Logger.Warn(ex, "Achievement sidebar recovery failed ({0})", reason);
+                return false;
+            }
+        }
+
+        private void ScrollSidebar(int signedNotches, string context)
+        {
+            Logger.Debug("Achievement sidebar wheel ({0}): {1} notches at normalized (0.2200,0.5500)", context, signedNotches);
+            navigation.Scroll(true, signedNotches);
+            Pause(400);
+        }
+
+        private List<AchievementCategoryEntryOnScreen> ReadSidebar(Bitmap frame, string context, int? target, int attempt)
+        {
+            var entries = recognizer.ReadCategories(frame);
+            Logger.Debug("Achievement sidebar read ({0}), target {1}, attempt {2}, frame {3}x{4}, thumb {5}, top {6}, bottom {7}: {8}",
+                context, target?.ToString() ?? "none", attempt, frame.Width, frame.Height,
+                SidebarThumbBounds(frame)?.ToString() ?? "unreadable", SidebarAtTop(frame), SidebarAtBottom(frame), FormatSidebar(entries));
+            return entries;
+        }
+
+        private static string FormatSidebar(IEnumerable<AchievementCategoryEntryOnScreen> entries)
+        {
+            return string.Join(" | ", entries.Select(x => string.Format("bounds={0}, selected={1}, category={2}, order={3}, text='{4}'",
+                x.Bounds, x.Selected, x.Category?.Id.ToString() ?? "?", x.Category?.Order.ToString() ?? "?", x.RawText)));
+        }
+
+        private static bool IsFullSidebarEntry(AchievementCategoryEntryOnScreen entry, Bitmap frame)
+        {
+            return entry.Bounds.Width > 0 && entry.Bounds.Height > 0
+                && entry.Bounds.Top > (int)(162.0 / 1080 * frame.Height)
+                && entry.Bounds.Bottom < (int)(1018.0 / 1080 * frame.Height);
+        }
+
+        private static string SidebarSignature(Bitmap frame, IEnumerable<AchievementCategoryEntryOnScreen> entries)
+        {
+            int scale = Math.Max(1, frame.Height / 540);
+            var thumb = SidebarThumbBounds(frame);
+            return (thumb.HasValue ? thumb.Value.Top / scale + ":" + thumb.Value.Bottom / scale : "no-thumb") + "|"
+                + string.Join("|", entries.Where(x => x.Category != null).OrderBy(x => x.Bounds.Top)
+                    .Select(x => x.Category.Id + ":" + x.Bounds.Top / scale));
+        }
+
+        internal static int SidebarScrollDirection(AchievementCategory target, IList<AchievementCategoryEntryOnScreen> entries)
+        {
+            var orders = entries.Where(x => x.Category != null).Select(x => x.Category.Order).ToList();
+            if (orders.Count == 0) return 0;
+            return target.Order < orders.Min() ? -1 : target.Order > orders.Max() ? 1 : 0;
+        }
+
+        internal static Rectangle? SidebarThumbBounds(Bitmap frame)
+        {
+            if (frame == null || frame.Width < 1 || frame.Height < 1) return null;
+            int x = Math.Min(frame.Width - 1, (int)(676.0 / 1920 * frame.Width));
+            int top = (int)(180.0 / 1080 * frame.Height);
+            int bottom = Math.Min(frame.Height - 1, (int)(992.0 / 1080 * frame.Height));
+            int start = -1, longestTop = -1, longestLength = 0;
+            int halfWidth = Math.Max(1, frame.Width / 1920);
+            for (int y = top; y <= bottom + 1; y++)
+            {
+                int light = 0, samples = 0;
+                if (y <= bottom)
+                    for (int sx = Math.Max(0, x - halfWidth); sx <= Math.Min(frame.Width - 1, x + halfWidth); sx++)
+                    {
+                        Color c = frame.GetPixel(sx, y);
+                        if (c.R >= 175 && c.G >= 170 && c.B >= 155 && Math.Abs(c.R - c.G) <= 24 && Math.Abs(c.G - c.B) <= 24) light++;
+                        samples++;
+                    }
+                bool thumb = samples > 0 && light * 2 > samples;
+                if (thumb && start < 0) start = y;
+                if (!thumb && start >= 0)
+                {
+                    if (y - start > longestLength) { longestTop = start; longestLength = y - start; }
+                    start = -1;
+                }
+            }
+            if (longestLength < Math.Max(8, frame.Height * 16 / 1080) || longestLength > (bottom - top) / 2) return null;
+            return new Rectangle(Math.Max(0, x - halfWidth), longestTop, Math.Min(frame.Width - 1, x + halfWidth) - Math.Max(0, x - halfWidth) + 1, longestLength);
+        }
+
+        internal static bool SidebarAtTop(Bitmap frame)
+        {
+            var thumb = SidebarThumbBounds(frame);
+            return thumb.HasValue && thumb.Value.Top <= (int)(180.0 / 1080 * frame.Height) + Math.Max(2, frame.Height * 4 / 1080);
+        }
+
+        internal static bool SidebarAtBottom(Bitmap frame)
+        {
+            var thumb = SidebarThumbBounds(frame);
+            return thumb.HasValue && thumb.Value.Bottom >= (int)(992.0 / 1080 * frame.Height) - Math.Max(2, frame.Height * 4 / 1080);
+        }
+
+        private void LogCoverageSummary(AchievementScanResult result)
+        {
+            int verified = result.Categories.Count(x => x.ReachedBottom && x.Issues.Count == 0);
+            var missing = catalog.Categories.OrderBy(x => x.Order).Where(category =>
+                !result.Categories.Any(x => x.CategoryId == category.Id && x.ReachedBottom && x.Issues.Count == 0)).ToList();
+            Logger.Info("Achievement coverage: verified {0}/{1} categories, attempted {2}, missing {3}; completed total initial {4}, final {5}; retained {6} completed IDs from {7} rows; cancelled {8}",
+                verified, catalog.Categories.Count, result.Categories.Count, missing.Count,
+                result.ExpectedCompleted?.ToString() ?? "unreadable", result.FinalExpectedCompleted?.ToString() ?? "unreadable",
+                result.Completed.Count, result.Observations.Count, result.Cancelled);
+            foreach (var category in missing)
+            {
+                var coverage = result.Categories.FirstOrDefault(x => x.CategoryId == category.Id);
+                string reason;
+                if (!selectionFailures.TryGetValue(category.Id, out reason))
+                    reason = coverage == null ? "Not visited." : coverage.Issues.Count > 0 ? string.Join("; ", coverage.Issues) : "Scrollbar bottom was not verified.";
+                Logger.Warn("Achievement category missing {0} '{1}': {2}; retained pages {3}, bottom verified {4}",
+                    category.Id, category.Name, reason, coverage?.Pages ?? 0, coverage?.ReachedBottom ?? false);
+            }
         }
 
         private Bitmap Capture()
@@ -540,15 +834,26 @@ namespace InventoryKamera
         {
             frame.Save(Path.Combine("logging/achievements", "category_" + category + "_page_" + page + ".png"));
         }
-        private static void SaveNavigationFrame(Bitmap frame, string step)
+        private string SaveNavigationFrame(Bitmap frame, string step)
         {
+            if (navigationEvidence >= MaximumNavigationEvidence)
+            {
+                if (!evidenceLimitLogged)
+                {
+                    Logger.Warn("Achievement navigation evidence limit {0} reached; further navigation states are logged without additional images", MaximumNavigationEvidence);
+                    evidenceLimitLogged = true;
+                }
+                return null;
+            }
             try
             {
-                string path = Path.Combine("logging/achievements", DateTime.UtcNow.ToString("yyyyMMdd_HHmmssfff") + "_" + step + ".png");
+                string path = Path.GetFullPath(Path.Combine("logging/achievements", DateTime.UtcNow.ToString("yyyyMMdd_HHmmssfff") + "_" + step + ".png"));
                 frame.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+                navigationEvidence++;
                 Logger.Debug("Achievement navigation screenshot: {0}", path);
+                return path;
             }
-            catch (Exception ex) { Logger.Warn(ex, "Could not save achievement navigation evidence"); }
+            catch (Exception ex) { Logger.Warn(ex, "Could not save achievement navigation evidence"); return null; }
         }
     }
 }

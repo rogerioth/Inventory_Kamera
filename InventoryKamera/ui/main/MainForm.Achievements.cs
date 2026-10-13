@@ -18,13 +18,13 @@ namespace InventoryKamera
         private void UpdateAchievementProgress(AchievementScanResult result, AchievementCategory category, int page)
         {
             string count = result.Completed.Count + " / " + (result.ExpectedCompleted?.ToString() ?? "?");
-            string status = "Scanning achievements";
-            BeginInvoke((MethodInvoker)delegate
+            Invoke((MethodInvoker)delegate
             {
                 achievementCountLabel.Text = count;
-                ProgramStatus_Label.Text = status;
-                ProgramStatus_Label.ForeColor = System.Drawing.Color.Green;
             });
+            UserInterface.ReportScanProgress(ScanPhase.Achievements,
+                result.Categories.Count(coverage => coverage.ReachedBottom), data.AchievementCatalog?.Categories.Count,
+                count + " completed achievements");
         }
 
         private void UpdateAchievementPreview(Bitmap row, AchievementObservation observation)

@@ -419,7 +419,13 @@ namespace InventoryKamera
 
 		internal static bool IsValidCharacter(string character)
 		{
-			return character.Contains("Traveler") || character == "Wanderer" || Characters.ContainsKey(character.ToLower());
+			if (string.IsNullOrWhiteSpace(character)) return false;
+			if (character == "Wanderer" || Characters.ContainsKey(character.ToLowerInvariant())) return true;
+            // GOOD appends the selected element to Traveler. Only a supported
+            // element suffix is valid; an arbitrary name containing "Traveler"
+            // must not become an exportable character.
+            return character.StartsWith("Traveler", StringComparison.OrdinalIgnoreCase)
+                && GetCharactersElements(character).Count == 1;
 		}
 
 		internal static bool IsValidElement(string element)
@@ -1197,6 +1203,19 @@ namespace InventoryKamera
                     {
                         return elementToken.ToObject<List<string>>() ?? new List<string>();
                     }
+                }
+
+                // Resolve canonical GOOD Traveler<Element> keys back to the
+                // base Traveler entry, keeping that key's element restriction.
+                // The observed element alone never establishes Traveler identity.
+                const string travelerKey = "traveler";
+                if (name.Length > travelerKey.Length && name.StartsWith(travelerKey, StringComparison.OrdinalIgnoreCase)
+                    && Characters.TryGetValue(travelerKey, out var traveler) && traveler?["Element"] != null)
+                {
+                    string suffix = name.Substring(travelerKey.Length).ToLowerInvariant();
+                    var supported = traveler["Element"].ToObject<List<string>>() ?? new List<string>();
+                    if (supported.Any(element => string.Equals(element, suffix, StringComparison.OrdinalIgnoreCase)))
+                        return new List<string> { suffix };
                 }
 
                 return new List<string>();

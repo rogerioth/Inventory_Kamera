@@ -118,7 +118,8 @@ namespace InventoryKamera
 
         public bool HasValidElement()
         {
-            return !string.IsNullOrWhiteSpace(Element) && GenshinProcesor.IsValidElement(Element);
+            return !string.IsNullOrWhiteSpace(Element) && GenshinProcesor.IsValidElement(Element)
+                && GenshinProcesor.CharacterMatchesElement(_nameKey, Element);
         }
 
         public bool HasValidConstellation()

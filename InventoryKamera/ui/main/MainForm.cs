@@ -85,7 +85,8 @@ namespace InventoryKamera
                 CharactersScanned_Label,
                 ProgramStatus_Label,
                 ErrorLog_TextBox,
-                Navigation_Image);
+                Navigation_Image,
+                UpdateScanProgress);
         }
 
         private double ScannerDelayValue(int value)
@@ -292,6 +293,7 @@ namespace InventoryKamera
             UserInterface.ResetAll();
             SetAchievementPreviewMode(false);
             achievementCountLabel.Text = "0 / ?";
+            ResetScanProgress();
             ResetScanLogs();
 
             Logger.Info("Starting scan");
@@ -305,7 +307,6 @@ namespace InventoryKamera
             }
             GenshinProcesor.ReloadData();
             if (selected.ScanWeapons && GenshinProcesor.Weapons.Count == 0 ||
-                selected.ScanArtifacts && GenshinProcesor.Artifacts.Count == 0 ||
                 selected.ScanCharacters && GenshinProcesor.Characters.Count == 0 ||
                 selected.ScanCharDevItems && GenshinProcesor.DevItems.Count == 0 ||
                 selected.ScanMaterials && GenshinProcesor.Materials.Count == 0)
@@ -331,6 +332,8 @@ namespace InventoryKamera
                 data = new InventoryKamera { AchievementProgress = UpdateAchievementProgress, AchievementPreview = UpdateAchievementPreview };
                 string outputDirectory = OutputPath_TextBox.Text;
                 bool scanAchievements = selected.ScanAchievements;
+                bool scanArtifacts = selected.ScanArtifacts;
+                bool scanCharacters = selected.ScanCharacters;
                 ManualExportButton.Enabled = false;
 
                 HotkeyManager.Current.AddOrReplace("Stop", Keys.Enter, Hotkey_Pressed);
@@ -359,6 +362,33 @@ namespace InventoryKamera
                 {
                     try
                     {
+                        // Repair caches made by older artifact generators even
+                        // when version.txt already says the current game version.
+                        // Finish the update before any game input or OCR workers.
+                        if (scanArtifacts)
+                        {
+                            var artifactDatabase = new DatabaseManager();
+                            if (artifactDatabase.ArtifactUpdateRequired)
+                            {
+                                UserInterface.SetProgramStatus("Scanning: updating artifact database");
+                                if (artifactDatabase.UpdateArtifactData() == UpdateStatus.Fail)
+                                    throw new InvalidOperationException("The artifact lookup table could not be updated. Check the update error in the log and retry the scan.");
+                                GenshinProcesor.ReloadData();
+                            }
+                            if (GenshinProcesor.Artifacts.Count == 0)
+                                throw new InvalidOperationException("The artifact lookup table is empty. Update lookup tables before scanning artifacts.");
+                        }
+                        if (scanCharacters)
+                        {
+                            var characterDatabase = new DatabaseManager();
+                            if (characterDatabase.TravelerUpdateRequired)
+                            {
+                                UserInterface.SetProgramStatus("Scanning: updating Traveler database");
+                                if (characterDatabase.UpdateTravelerData() == UpdateStatus.Fail)
+                                    throw new InvalidOperationException("The Traveler lookup could not be updated. Check the update error in the log and retry the scan.");
+                                GenshinProcesor.ReloadData();
+                            }
+                        }
                         if (scanAchievements)
                         {
                             UserInterface.SetProgramStatus("Scanning: loading achievement catalog");
@@ -391,6 +421,7 @@ namespace InventoryKamera
 
                         // The Data object of json object
                         data.GatherData();
+                        if (scanAchievements) FinishAchievementProgress();
 
                         // Scanning is finished. Enter must not abort the thread while files are being saved.
                         Invoke((MethodInvoker)RemoveHotkey);
@@ -402,9 +433,11 @@ namespace InventoryKamera
                             good.WriteToJSON(outputDirectory);
                         }
                         bool exportSucceeded = !scanAchievements || ExportAchievements(outputDirectory);
+                        bool scansComplete = (!scanCharacters || data.CharacterScanComplete) &&
+                            (!scanAchievements || data.Achievements.Complete);
                         UserInterface.SetProgramStatus(!exportSucceeded ? "Export failed" : scanAchievements && data.Achievements.Cancelled ? "Scan stopped" :
-                            scanAchievements && !data.Achievements.Complete ? "Finished (partial)" : "Finished",
-                            ok: exportSucceeded && (!scanAchievements || data.Achievements.Complete));
+                            !scansComplete ? "Finished (partial)" : "Finished",
+                            ok: exportSucceeded && scansComplete);
                         if (good != null && !data.Achievements.Cancelled) OpenOptimizerDialog(good);
                     }
                     catch (ThreadAbortException)
@@ -418,6 +451,18 @@ namespace InventoryKamera
                             ExportAchievements(outputDirectory);
                         }
                         UserInterface.SetProgramStatus("Scan stopped");
+                    }
+                    catch (CharacterNavigationException ex)
+                    {
+                        data?.StopImageProcessorWorkers();
+                        if (data != null && data.HasInventoryData)
+                        {
+                            new GOOD(data).WriteToJSON(outputDirectory);
+                            Logger.Warn("Saved partial inventory after character navigation stopped; no further game input was sent");
+                        }
+                        RecordAchievementFailure(scanAchievements, outputDirectory, ex);
+                        UserInterface.AddError("    [FAILURE] Character navigation stopped: " + ex.Message);
+                        UserInterface.SetProgramStatus("Scan stopped (navigation)", ok: false);
                     }
                     catch (NotImplementedException ex)
                     {
@@ -755,7 +800,31 @@ namespace InventoryKamera
                     }
                 }
                 else
-                    Logger.Info("Current game data is up to date with data for {0}", databaseManager.LocalVersion.ToString(2));
+                {
+                    bool cacheRepairsSucceeded = true;
+                    if (databaseManager.ArtifactUpdateRequired)
+                    {
+                        Logger.Info("Repairing artifact lookup table generated by an older updater...");
+                        if (databaseManager.UpdateArtifactData() == UpdateStatus.Fail)
+                        {
+                            Logger.Error("Artifact lookup table repair failed; the previous table was preserved. Artifact scans will retry the update before starting.");
+                            cacheRepairsSucceeded = false;
+                        }
+                        else GenshinProcesor.ReloadData();
+                    }
+                    if (databaseManager.TravelerUpdateRequired)
+                    {
+                        Logger.Info("Repairing Traveler lookup generated by an older updater...");
+                        if (databaseManager.UpdateTravelerData() == UpdateStatus.Fail)
+                        {
+                            Logger.Error("Traveler lookup repair failed; the previous table was preserved. Character scans will retry the update before starting.");
+                            cacheRepairsSucceeded = false;
+                        }
+                        else GenshinProcesor.ReloadData();
+                    }
+                    if (cacheRepairsSucceeded)
+                        Logger.Info("Current game data is up to date with data for {0}", databaseManager.LocalVersion.ToString(2));
+                }
             }
             catch (Exception ex)
             {

@@ -225,7 +225,7 @@ namespace InventoryKamera
                     }
                     return samples > 0 && matches >= samples * .8;
                 }, geometry.Y(3), geometry.Y(65));
-                var ordinaryBands = Bands(top, bottom, y =>
+                var colorBands = Bands(top, bottom, y =>
                 {
                     int matches = 0, samples = 0;
                     for (int x = geometry.X(65); x < geometry.X(71); ++x)
@@ -236,6 +236,34 @@ namespace InventoryKamera
                     }
                     return samples > 0 && matches >= samples * .8;
                 }, geometry.Y(1), geometry.Y(65));
+                // The sidebar tiles are translucent. A blue scene can make the
+                // gaps satisfy the same dark-color predicate as the tiles and
+                // join several cards into one band. The left card rule remains
+                // lighter than its adjacent interior, regardless of the scene.
+                var edgeBands = Bands(top, bottom, y =>
+                {
+                    int edge = 0, inside = 0, samples = 0;
+                    for (int x = geometry.X(65); x < geometry.X(67); ++x)
+                    {
+                        var border = pixels.Get(x, y);
+                        var fill = pixels.Get(x + Math.Max(1, geometry.X(6)), y);
+                        if (border.R >= 180 || fill.R >= 180) return false;
+                        edge += border.R + border.G + border.B;
+                        inside += fill.R + fill.G + fill.B;
+                        ++samples;
+                    }
+                    return samples > 0 && edge - inside >= samples * 24;
+                }, geometry.Y(2), geometry.Y(65));
+                var ordinaryBands = colorBands.Where(band => band.Height <= geometry.Y(112)).ToList();
+                foreach (var band in edgeBands.Where(band => band.Height <= geometry.Y(112)))
+                {
+                    // Keep a previously detected full card instead of adding
+                    // its inset border a second time. Hovered dark tiles still
+                    // use their color band; their highlight shifts the left rule.
+                    if (!ordinaryBands.Any(existing => Math.Min(existing.Bottom, band.Bottom) -
+                        Math.Max(existing.Top, band.Top) >= Math.Min(existing.Height, band.Height) * .7))
+                        ordinaryBands.Add(band);
+                }
                 var tiles = ordinaryBands.Concat(selectedBands).OrderBy(b => b.Top).ToList();
                 foreach (var tile in tiles)
                 {

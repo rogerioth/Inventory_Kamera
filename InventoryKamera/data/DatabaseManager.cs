@@ -10,6 +10,8 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
@@ -42,7 +44,12 @@ namespace InventoryKamera
 
         private const string WeaponsJson = "weapons.json";
         private const string ArtifactsJson = "artifacts.json";
+        private const string ArtifactMetadataJson = "artifacts.metadata.json";
+        private const int ArtifactGeneratorRevision = 1;
+        private static readonly object ArtifactUpdateGate = new object();
         private const string CharactersJson = "characters.json";
+        private const string TravelerMetadataJson = "traveler.metadata.json";
+        private const int TravelerGeneratorRevision = 1;
         private const string MaterialsJson = "materials.json";
 
         private readonly string NewVersion = "version.txt";
@@ -64,9 +71,10 @@ namespace InventoryKamera
         private const string ConstellationsURL = repoBaseURL + "ExcelBinOutput/FetterInfoExcelConfigData.json";
         private const string TalentsURL = repoBaseURL + "ExcelBinOutput/AvatarTalentExcelConfigData.json";
         private const string SkillsURL = repoBaseURL + "ExcelBinOutput/AvatarSkillExcelConfigData.json";
+        private const string SkillDepotsURL = repoBaseURL + "ExcelBinOutput/AvatarSkillDepotExcelConfigData.json";
 
-        private const string ArtifactsDisplayItemURL = repoBaseURL + "ExcelBinOutput/DisplayItemExcelConfigData.json";
-        private const string ArtifactsCodex = repoBaseURL + "ExcelBinOutput/ReliquaryCodexExcelConfigData.json";
+        private const string ArtifactSetsURL = repoBaseURL + "ExcelBinOutput/ReliquarySetExcelConfigData.json";
+        private const string ArtifactAffixesURL = repoBaseURL + "ExcelBinOutput/EquipAffixExcelConfigData.json";
         private const string ArtifactSetConfig = repoBaseURL + "ExcelBinOutput/ReliquaryExcelConfigData.json";
 
         private const string WeaponsURL = repoBaseURL + "ExcelBinOutput/WeaponExcelConfigData.json";
@@ -204,6 +212,13 @@ namespace InventoryKamera
 
         public UpdateStatus UpdateGameData(bool force = false)
         {
+            // Keep mapping lifetime and artifact/table metadata publication within
+            // one gate, even when another DatabaseManager instance performs repair.
+            lock (ArtifactUpdateGate) return UpdateGameDataCore(force);
+        }
+
+        private UpdateStatus UpdateGameDataCore(bool force)
+        {
             try
             {
                 UpdateStatus overallStatus = UpdateStatus.Skipped;
@@ -267,6 +282,281 @@ namespace InventoryKamera
                 return UpdateStatus.Fail;
             }
             
+        }
+
+        public bool ArtifactUpdateRequired
+        {
+            get { lock (ArtifactUpdateGate) return ArtifactUpdateRequiredCore(); }
+        }
+
+        public UpdateStatus UpdateArtifactData(bool force = false)
+        {
+            lock (ArtifactUpdateGate)
+            {
+                try
+                {
+                    if (!force && !ArtifactUpdateRequiredCore()) return UpdateStatus.Skipped;
+                    LoadMappings();
+                    return UpdateArtifacts(force);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error(ex, "Could not repair the artifact lookup table; existing data is retained");
+                    return UpdateStatus.Fail;
+                }
+                finally { ReleaseMappings(); }
+            }
+        }
+
+        private bool ArtifactUpdateRequiredCore()
+        {
+            try
+            {
+                string tablePath = Path.Combine(ListsDir, ArtifactsJson);
+                string metadataPath = Path.Combine(ListsDir, ArtifactMetadataJson);
+                if (!File.Exists(tablePath) || !File.Exists(metadataPath)) return true;
+                var table = JObject.Parse(File.ReadAllText(tablePath));
+                var metadata = JObject.Parse(File.ReadAllText(metadataPath));
+                return table.Count < MinimumArtifacts
+                    || (string)metadata["format"] != "InventoryKameraArtifactCatalog"
+                    || (int?)metadata["generatorRevision"] != ArtifactGeneratorRevision
+                    || (int?)metadata["setCount"] != table.Count
+                    || !string.Equals((string)metadata["tableSha256"], ArtifactTableHash(tablePath), StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return true; }
+        }
+
+        private static string ArtifactTableHash(string path)
+        {
+            using (var stream = File.OpenRead(path))
+            using (var hash = SHA256.Create())
+                return BitConverter.ToString(hash.ComputeHash(stream)).Replace("-", string.Empty).ToLowerInvariant();
+        }
+
+        public bool TravelerUpdateRequired
+        {
+            get { lock (ArtifactUpdateGate) return TravelerUpdateRequiredCore(); }
+        }
+
+        public UpdateStatus UpdateTravelerData(bool force = false)
+        {
+            // Share the full-update/artifact gate so one update cannot clear mappings
+            // while another instance is joining Traveler skill depots and talents.
+            lock (ArtifactUpdateGate)
+            {
+                try
+                {
+                    if (!force && !TravelerUpdateRequiredCore()) return UpdateStatus.Skipped;
+                    LoadMappings();
+                    string path = Path.Combine(ListsDir, CharactersJson);
+                    if (!File.Exists(path)) return UpdateCharacters(true);
+                    var data = JObject.Parse(File.ReadAllText(path));
+                    if (!IsPlausibleCount(ListType.Characters, data.Count)) return UpdateStatus.Fail;
+                    var traveler = BuildTravelerData(
+                        JArray.Parse(LoadJsonFromURLAsync(CharactersURL)),
+                        JArray.Parse(LoadJsonFromURLAsync(SkillDepotsURL)),
+                        JArray.Parse(LoadJsonFromURLAsync(SkillsURL)),
+                        JArray.Parse(LoadJsonFromURLAsync(TalentsURL)), Mappings);
+                    bool changed = UpsertTraveler(data, traveler);
+                    if (changed && !SaveJsonToFile(data.ToString(Formatting.None), CharactersJson)) return UpdateStatus.Fail;
+                    if (!SaveTravelerMetadata(traveler)) return UpdateStatus.Fail;
+                    Logger.Info("Repaired Traveler data: {0} elements, generator revision {1}", ((JArray)traveler["Element"]).Count, TravelerGeneratorRevision);
+                    return UpdateStatus.Success;
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error(ex, "Could not repair Traveler data; existing character data is retained");
+                    return UpdateStatus.Fail;
+                }
+                finally { ReleaseMappings(); }
+            }
+        }
+
+        private bool TravelerUpdateRequiredCore()
+        {
+            try
+            {
+                string tablePath = Path.Combine(ListsDir, CharactersJson);
+                string metadataPath = Path.Combine(ListsDir, TravelerMetadataJson);
+                if (!File.Exists(tablePath) || !File.Exists(metadataPath)) return true;
+                var data = JObject.Parse(File.ReadAllText(tablePath));
+                var traveler = data["traveler"] as JObject;
+                var metadata = JObject.Parse(File.ReadAllText(metadataPath));
+                if (traveler == null || (string)traveler["GOOD"] != "Traveler"
+                    || data.Properties().Count(IsTravelerProperty) != 1) return true;
+                var supported = traveler["Element"] as JArray;
+                var orders = traveler["ConstellationOrder"] as JObject;
+                if (supported == null || orders == null || supported.Count != elements.Count || orders.Count != elements.Count) return true;
+                foreach (string element in elements.Select(x => x.ToLowerInvariant()))
+                {
+                    if (supported.Count(x => (string)x == element) != 1) return true;
+                    var order = orders[element] as JArray;
+                    if (order == null || order.Count != 2 || order.Any(x => !new[] { "auto", "skill", "burst" }.Contains((string)x))) return true;
+                }
+                return (string)metadata["format"] != "InventoryKameraTravelerCatalog"
+                    || (int?)metadata["generatorRevision"] != TravelerGeneratorRevision
+                    || !string.Equals((string)metadata["entrySha256"], TravelerDataHash(traveler), StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return true; }
+        }
+
+        private bool SaveTravelerMetadata(JObject traveler)
+        {
+            var metadata = new JObject
+            {
+                ["format"] = "InventoryKameraTravelerCatalog",
+                ["generatorRevision"] = TravelerGeneratorRevision,
+                ["entrySha256"] = TravelerDataHash(traveler),
+                ["updatedAtUtc"] = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)
+            };
+            return SaveJsonToFile(metadata.ToString(Formatting.None), TravelerMetadataJson);
+        }
+
+        private static string TravelerDataHash(JObject traveler)
+        {
+            using (var hash = SHA256.Create())
+                return BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(traveler.ToString(Formatting.None))))
+                    .Replace("-", string.Empty).ToLowerInvariant();
+        }
+
+        private static bool IsTravelerProperty(JProperty property)
+        {
+            string good = (string)property.Value["GOOD"];
+            return good == "Traveler" || good == "PlayerBoy" || good == "PlayerGirl";
+        }
+
+        private static bool UpsertTraveler(JObject data, JObject traveler)
+        {
+            var existing = data.Properties().Where(IsTravelerProperty).ToList();
+            bool changed = existing.Count != 1 || existing[0].Name != "traveler" || !JToken.DeepEquals(existing[0].Value, traveler);
+            foreach (var property in existing) property.Remove();
+            data["traveler"] = traveler.DeepClone();
+            return changed;
+        }
+
+        internal static JObject BuildTravelerData(JArray avatars, JArray depots, JArray skills, JArray talents,
+            IDictionary<string, string> textmap)
+        {
+            if (avatars == null) throw new ArgumentNullException(nameof(avatars));
+            if (depots == null) throw new ArgumentNullException(nameof(depots));
+            if (skills == null) throw new ArgumentNullException(nameof(skills));
+            if (talents == null) throw new ArgumentNullException(nameof(talents));
+            if (textmap == null) throw new ArgumentNullException(nameof(textmap));
+            var nativeElements = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["Fire"] = "pyro", ["Water"] = "hydro", ["Grass"] = "dendro", ["Electric"] = "electro",
+                ["Wind"] = "anemo", ["Ice"] = "cryo", ["Rock"] = "geo"
+            };
+            var avatarsById = avatars.OfType<JObject>().ToLookup(row => (int?)row["id"] ?? 0);
+            var depotsById = depots.OfType<JObject>().ToLookup(row => (int?)row["id"] ?? 0);
+            var skillsById = skills.OfType<JObject>().ToLookup(row => (int?)row["id"] ?? 0);
+            var talentsById = talents.OfType<JObject>().ToLookup(row => (int?)row["talentId"] ?? 0);
+            var orders = new SortedDictionary<string, JArray>(StringComparer.Ordinal);
+            foreach (int avatarId in new[] { 10000005, 10000007 })
+            {
+                var avatar = RequireTravelerRow(avatarsById[avatarId], "avatar " + avatarId);
+                if ((string)avatar["useType"] != "AVATAR_FORMAL" || (string)avatar["weaponType"] != "WEAPON_SWORD_ONE_HAND")
+                    throw new InvalidDataException("Traveler avatar " + avatarId + " is not a playable sword avatar.");
+                var candidates = avatar["candSkillDepotIds"] as JArray;
+                if (candidates == null || candidates.Count == 0) throw new InvalidDataException("Traveler candidate skill depots are missing.");
+                var seenDepots = new HashSet<int>();
+                var seenElements = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var candidate in candidates)
+                {
+                    int depotId = RequireTravelerId(candidate, "candidate depot");
+                    if (!seenDepots.Add(depotId)) throw new InvalidDataException("Duplicate Traveler candidate depot " + depotId + ".");
+                    var depot = RequireTravelerRow(depotsById[depotId], "skill depot " + depotId);
+                    int burstId = (int?)depot["energySkill"] ?? 0;
+                    if (burstId == 0) continue; // The common, elementless depot has no burst.
+                    var burst = RequireTravelerRow(skillsById[burstId], "burst " + burstId);
+                    string element;
+                    if (!nativeElements.TryGetValue((string)burst["costElemType"] ?? "", out element) || !seenElements.Add(element))
+                        throw new InvalidDataException("Traveler depot " + depotId + " has an unknown or duplicate element.");
+                    var skillIds = depot["skills"] as JArray;
+                    var talentIds = depot["talents"] as JArray;
+                    if (skillIds == null || skillIds.Count < 2 || talentIds == null || talentIds.Count != 6)
+                        throw new InvalidDataException("Traveler depot " + depotId + " lacks its skill or six constellation references.");
+                    int autoId = RequireTravelerId(skillIds[0], "normal attack in depot " + depotId);
+                    int skillId = RequireTravelerId(skillIds[1], "elemental skill in depot " + depotId);
+                    if (autoId == skillId || skillId == burstId || autoId == burstId)
+                        throw new InvalidDataException("Traveler depot " + depotId + " reuses a talent skill ID.");
+                    var auto = RequireTravelerRow(skillsById[autoId], "normal attack " + autoId);
+                    var skill = RequireTravelerRow(skillsById[skillId], "elemental skill " + skillId);
+                    string autoName = RequireTravelerText(auto["nameTextMapHash"], textmap, "normal attack " + autoId);
+                    string skillName = RequireTravelerText(skill["nameTextMapHash"], textmap, "elemental skill " + skillId);
+                    string burstName = RequireTravelerText(burst["nameTextMapHash"], textmap, "burst " + burstId);
+                    var ids = talentIds.Select(x => RequireTravelerId(x, "constellation in depot " + depotId)).ToList();
+                    if (ids.Distinct().Count() != 6) throw new InvalidDataException("Traveler depot " + depotId + " repeats a constellation ID.");
+                    var c3 = RequireTravelerRow(talentsById[ids[2]], "C3 talent " + ids[2]);
+                    var c5 = RequireTravelerRow(talentsById[ids[4]], "C5 talent " + ids[4]);
+                    var order = new JArray
+                    {
+                        TravelerUpgradeType(RequireTravelerText(c3["descTextMapHash"], textmap, "C3 talent " + ids[2]), autoId, skillId, burstId, autoName, skillName, burstName),
+                        TravelerUpgradeType(RequireTravelerText(c5["descTextMapHash"], textmap, "C5 talent " + ids[4]), autoId, skillId, burstId, autoName, skillName, burstName)
+                    };
+                    JArray previous;
+                    if (orders.TryGetValue(element, out previous) && !JToken.DeepEquals(previous, order))
+                        throw new InvalidDataException("The two Traveler avatars disagree on " + element + " constellation order.");
+                    orders[element] = order;
+                }
+                if (seenElements.Count != nativeElements.Count || nativeElements.Values.Any(x => !seenElements.Contains(x)))
+                    throw new InvalidDataException("Traveler avatar " + avatarId + " does not provide all seven elemental skill depots.");
+            }
+            return new JObject
+            {
+                ["GOOD"] = "Traveler",
+                ["Element"] = new JArray(orders.Keys),
+                ["ConstellationName"] = new JArray("Viator", "Viatrix"),
+                ["ConstellationOrder"] = new JObject(orders.Select(pair => new JProperty(pair.Key, pair.Value))),
+                ["WeaponType"] = (int)WeaponType.Sword
+            };
+        }
+
+        private static JObject RequireTravelerRow(IEnumerable<JObject> rows, string context)
+        {
+            var matches = rows.Take(2).ToList();
+            if (matches.Count != 1) throw new InvalidDataException("Missing or ambiguous Traveler " + context + ".");
+            return matches[0];
+        }
+
+        private static int RequireTravelerId(JToken token, string context)
+        {
+            long value;
+            if (token == null || token.Type != JTokenType.Integer || !long.TryParse(token.ToString(), out value) || value <= 0 || value > int.MaxValue)
+                throw new InvalidDataException("Invalid Traveler " + context + " ID.");
+            return (int)value;
+        }
+
+        private static string RequireTravelerText(JToken hash, IDictionary<string, string> textmap, string context)
+        {
+            string text;
+            if (hash == null || !textmap.TryGetValue(hash.ToString(), out text) || string.IsNullOrWhiteSpace(text))
+                throw new InvalidDataException("No English text is mapped for Traveler " + context + ".");
+            return text.Trim();
+        }
+
+        private static string TravelerUpgradeType(string description, int autoId, int skillId, int burstId,
+            string autoName, string skillName, string burstName)
+        {
+            var links = Regex.Matches(description, @"\{LINK#S(\d+)\}").Cast<Match>().Select(x => int.Parse(x.Groups[1].Value)).Distinct().ToList();
+            var matches = new List<string>();
+            if (links.Count > 0)
+            {
+                if (links.Any(x => x != autoId && x != skillId && x != burstId))
+                    throw new InvalidDataException("Traveler constellation links to a skill outside its depot.");
+                if (links.Contains(autoId)) matches.Add("auto");
+                if (links.Contains(skillId)) matches.Add("skill");
+                if (links.Contains(burstId)) matches.Add("burst");
+            }
+            else
+            {
+                // Older elemental constellations embed exact mapped names instead of links.
+                if (description.IndexOf(autoName, StringComparison.OrdinalIgnoreCase) >= 0) matches.Add("auto");
+                if (description.IndexOf(skillName, StringComparison.OrdinalIgnoreCase) >= 0) matches.Add("skill");
+                if (description.IndexOf(burstName, StringComparison.OrdinalIgnoreCase) >= 0) matches.Add("burst");
+            }
+            if (matches.Count != 1) throw new InvalidDataException("Traveler constellation has no unambiguous talent upgrade.");
+            return matches[0];
         }
 
         private void LoadMappings()
@@ -353,22 +643,34 @@ namespace InventoryKamera
         private UpdateStatus UpdateCharacters(bool force)
         {
             var status = UpdateStatus.Skipped;
+            JObject traveler = null;
 
             // Never delete the previous file up front: generate into memory and
             // only replace the file once the new data is complete and plausible.
             // Ported from taiwenlee/Inventory_Kamera (MIT): 45e89685
-            var data = force
-                ? new ConcurrentDictionary<string, JObject>()
-                : JToken.Parse(LoadJsonFromFile(CharactersJson)).ToObject<ConcurrentDictionary<string, JObject>>();
+            var data = new ConcurrentDictionary<string, JObject>();
 
             try
             {
-                var characters = JArray.Parse(LoadJsonFromURLAsync(CharactersURL)).ToObject<List<JObject>>();
+                string path = Path.Combine(ListsDir, CharactersJson);
+                if (!force && File.Exists(path))
+                    data = JObject.Parse(File.ReadAllText(path)).ToObject<ConcurrentDictionary<string, JObject>>();
+                var avatars = JArray.Parse(LoadJsonFromURLAsync(CharactersURL));
+                var characters = avatars.ToObject<List<JObject>>();
                 var constellations = JArray.Parse(LoadJsonFromURLAsync(ConstellationsURL)).ToObject<List<JObject>>();
-                var talents = JArray.Parse(LoadJsonFromURLAsync(TalentsURL)).ToObject<List<JObject>>();
-                var skills = JArray.Parse(LoadJsonFromURLAsync(SkillsURL)).ToObject<List<JObject>>();
+                var talentDefinitions = JArray.Parse(LoadJsonFromURLAsync(TalentsURL));
+                var skillDefinitions = JArray.Parse(LoadJsonFromURLAsync(SkillsURL));
+                var talents = talentDefinitions.ToObject<List<JObject>>();
+                var skills = skillDefinitions.ToObject<List<JObject>>();
+                traveler = BuildTravelerData(avatars, JArray.Parse(LoadJsonFromURLAsync(SkillDepotsURL)),
+                    skillDefinitions, talentDefinitions, Mappings);
+                var rebuilt = JObject.FromObject(data);
+                bool travelerChanged = UpsertTraveler(rebuilt, traveler);
+                data = rebuilt.ToObject<ConcurrentDictionary<string, JObject>>();
+                if (travelerChanged || TravelerUpdateRequiredCore()) status = UpdateStatus.Success;
 
-                characters.RemoveAll(c => !c.ContainsKey("useType") || c["useType"].ToString() != "AVATAR_FORMAL");
+                characters.RemoveAll(c => !c.ContainsKey("useType") || c["useType"].ToString() != "AVATAR_FORMAL"
+                    || (int?)c["id"] == 10000005 || (int?)c["id"] == 10000007);
 
                 Logger.Debug("Found {0} playable characters available", characters.Count);
                 characters.AsParallel().ForAll(character =>
@@ -384,9 +686,6 @@ namespace InventoryKamera
 
                     try
                     {
-
-                        if (name.ToLower() == "PlayerGirl".ToLower()) return; // Both travelers are listed but are essentially identical
-
                         string PascalCase = CultureInfo.GetCultureInfo("en").TextInfo.ToTitleCase(name);
                         string nameGOOD = Regex.Replace(PascalCase, @"[\W]", string.Empty);
                         string nameKey = nameGOOD.ToLower();
@@ -414,46 +713,7 @@ namespace InventoryKamera
                             // Ex: Jean -> Qin, Yanfei -> Feiyan, etc.
                             name = character["iconName"].ToString().Split('_').Last(); // UI_AvatarIcon_[Qin] -> Qin
 
-                            if (name.ToLower() == "PlayerBoy".ToLower()) // Handle traveler elements separately
-                            {
-                                var constellationNames = new JArray { "Viator", "Viatrix" };
-                                var constellationOrder = new JObject();
-
-                                var playerElements = new Dictionary<string, string>
-                                {
-                                    { "Electric", "electro" },
-                                    { "Fire", "pyro" },
-                                    { "Grass", "dendro" },
-                                    { "Rock", "geo"},
-                                    { "Water", "hydro"},
-                                    { "Wind", "anemo"}
-                                };
-
-                                value.Add("Element", new JArray(playerElements.Values));
-
-                                foreach (var element in playerElements)
-                                {
-                                    var elementSkill = skills.FirstOrDefault(entry => entry["skillIcon"]?.ToString().Contains($"Player{element.Key}") == true && !entry.ContainsKey("costElemType"));
-
-                                    if (elementSkill == null) continue;
-
-                                    skill = Mappings[elementSkill["nameTextMapHash"].ToString()].ToString();
-
-                                    const3Description = talents.Where(entry => entry["openConfig"]?.ToString().Contains($"Player_{element.Key}") == true).ElementAt(2)["descTextMapHash"].ToString();
-                                    const3Description = Mappings[const3Description].ToString();
-
-                                    if (const3Description.Contains(skill))
-                                    {
-                                        constellationOrder.Add(element.Value, new JArray { "skill", "burst" });
-                                    }
-                                    else
-                                    {
-                                        constellationOrder.Add(element.Value, new JArray { "burst", "skill" });
-                                    }
-                                }
-                                value.Add("ConstellationOrder", constellationOrder);
-                            }
-                            else // Any other character that isn't traveler
+                            // Traveler was rebuilt once above from explicit source-ID joins.
                             {
                                 // Not every avatar has a Skill_S_ entry (e.g. test ones),
                                 // so look it up tolerantly instead of throwing.
@@ -573,7 +833,7 @@ namespace InventoryKamera
                 bool saved = IsPlausibleCount(ListType.Characters, data.Count)
                     && SaveJsonToFile(JsonConvert.SerializeObject(new SortedDictionary<string, JObject>(data)), CharactersJson);
 
-                if (!saved) status = UpdateStatus.Fail;
+                if (!saved || !SaveTravelerMetadata(traveler)) status = UpdateStatus.Fail;
             }
 
             return status;
@@ -581,98 +841,124 @@ namespace InventoryKamera
 
         private UpdateStatus UpdateArtifacts(bool force)
         {
-            var status = UpdateStatus.Skipped;
+            // DisplayItem names can be absent from the English TextMap even for
+            // released sets. Set definitions and their equip affixes are authoritative.
+            var definitions = JArray.Parse(LoadJsonFromURLAsync(ArtifactSetsURL));
+            var affixes = JArray.Parse(LoadJsonFromURLAsync(ArtifactAffixesURL));
+            var pieces = JArray.Parse(LoadJsonFromURLAsync(ArtifactSetConfig));
+            var data = BuildArtifactLookup(definitions, affixes, pieces, Mappings);
+            if (!IsPlausibleCount(ListType.Artifacts, data.Count)) return UpdateStatus.Fail;
 
-            // Never delete the previous file up front: generate into memory and
-            // only replace the file once the new data is complete and plausible.
-            // Ported from taiwenlee/Inventory_Kamera (MIT): 45e89685
-            var data = force
-                ? new ConcurrentDictionary<string, JObject>()
-                : JToken.Parse(LoadJsonFromFile(ArtifactsJson)).ToObject<ConcurrentDictionary<string, JObject>>();
-
-            var artifactDisplays = JArray.Parse(LoadJsonFromURLAsync(ArtifactsDisplayItemURL)).ToObject<List<JObject>>();
-            artifactDisplays.RemoveAll(a => a.TryGetValue("icon", out var icon) && !icon.ToString().Contains("RelicIcon"));
-
-            var codex = JArray.Parse(LoadJsonFromURLAsync(ArtifactsCodex)).ToObject<List<JObject>>();
-            var sets = JArray.Parse(LoadJsonFromURLAsync(ArtifactSetConfig)).ToObject<List<JObject>>();
-
-            artifactDisplays.AsParallel().ForAll(artifactDisplay =>
+            bool repairRequired = ArtifactUpdateRequiredCore();
+            string tablePath = Path.Combine(ListsDir, ArtifactsJson);
+            bool changed = force || !File.Exists(tablePath);
+            if (!changed)
             {
-                if (Mappings.ContainsKey(artifactDisplay["nameTextMapHash"].ToString()))
-                {
-                    string setName = Mappings[artifactDisplay["nameTextMapHash"].ToString()];                  // Archaic Petra
-                    try
-                    {
-                        var setNamePascalCase = CultureInfo.GetCultureInfo("en").TextInfo.ToTitleCase(setName); // Archaic Petra
-                        var setNameGOOD = Regex.Replace(setNamePascalCase, @"[\W]", string.Empty);              // ArchaicPetra
-                        var setNameKey = setNameGOOD.ToLower();                                                 // archaicpetra
-                        var setNameNormalized = setName;
-                        var setID = (int)artifactDisplay["param"];
-
-                        if (!data.ContainsKey(setNameKey))
-                        {
-                            foreach (var set in codex)
-                            {
-                                var artifacts = new JObject();
-
-                                if ((int)set["suitId"] == setID)
-                                {
-                                    var artifactIDs = new Dictionary<string, JToken>()
-                                    {
-                                        { "flower", set["flowerId"]},
-                                        { "plume", set["leatherId"] },
-                                        { "sands" , set["sandId"] },
-                                        { "goblet", set["cupId"] },
-                                        { "circlet", set["capId"] },
-                                    };
-                                    
-                                    foreach (var artifact in sets.Where(s => artifactIDs.Values.Contains((int)s["id"])))
-                                    {
-                                        var slot = artifactIDs.First(x => x.Value != null && (int)x.Value == (int)artifact["id"]).Key;
-                                        var artifactName = Mappings[artifact["nameTextMapHash"].ToString()];                                  // Goblet of the Sojourner
-                                        string artifactNamePascalCase = CultureInfo.GetCultureInfo("en").TextInfo.ToTitleCase(artifactName);  // Goblet Of The Sojourner
-                                        string artifactNameGOOD = Regex.Replace(artifactNamePascalCase, @"[\W]", string.Empty);               // GobletOfTheSojourner
-                                        string artifactNormalized = artifactNameGOOD.ToLower();                                               // gobletofthesojourner
-
-                                        artifacts.Add(slot, new JObject
-                                        {
-                                            { "artifactName", artifactName },
-                                            { "GOOD", artifactNameGOOD },
-                                            { "normalizedName", artifactNormalized },
-                                        });
-                                    }
-                                }
-
-                                if (artifacts.Count < 1) continue;
-                                var value = new JObject
-                                {
-                                    { "setName", setName },
-                                    { "GOOD", setNameGOOD },
-                                    { "normalizedName", setNameGOOD.ToLower() },
-                                    { "artifacts", artifacts }
-                                };
-                                if (data.TryAdd(setNameKey, value) && status != UpdateStatus.Fail) status = UpdateStatus.Success;
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Error("An error was encountered when gathering information for the artifact set {0}", setName);
-                        Logger.Error(ex);
-                        status = UpdateStatus.Fail;
-                    }
-                }
-            });
-
-            if (status == UpdateStatus.Success)
-            {
-                bool saved = IsPlausibleCount(ListType.Artifacts, data.Count)
-                    && SaveJsonToFile(JsonConvert.SerializeObject(new SortedDictionary<string, JObject>(data)), ArtifactsJson);
-
-                if (!saved) status = UpdateStatus.Fail;
+                try { changed = !JToken.DeepEquals(data, JObject.Parse(File.ReadAllText(tablePath))); }
+                catch { changed = true; }
             }
+            if (!changed && !repairRequired) return UpdateStatus.Skipped;
+            if (changed && !SaveJsonToFile(data.ToString(Formatting.None), ArtifactsJson)) return UpdateStatus.Fail;
 
-            return status;
+            var metadata = new JObject
+            {
+                ["format"] = "InventoryKameraArtifactCatalog",
+                ["generatorRevision"] = ArtifactGeneratorRevision,
+                ["tableSha256"] = ArtifactTableHash(tablePath),
+                ["setCount"] = data.Count,
+                ["updatedAtUtc"] = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)
+            };
+            if (!SaveJsonToFile(metadata.ToString(Formatting.None), ArtifactMetadataJson)) return UpdateStatus.Fail;
+            Logger.Info("Updated artifact catalog: {0} enabled sets, generator revision {1}", data.Count, ArtifactGeneratorRevision);
+            return UpdateStatus.Success;
+        }
+
+        internal static JObject BuildArtifactLookup(JArray setDefs, JArray affixes, JArray pieces,
+            IDictionary<string, string> textmap)
+        {
+            if (setDefs == null) throw new ArgumentNullException(nameof(setDefs));
+            if (affixes == null) throw new ArgumentNullException(nameof(affixes));
+            if (pieces == null) throw new ArgumentNullException(nameof(pieces));
+            if (textmap == null) throw new ArgumentNullException(nameof(textmap));
+
+            var affixesById = affixes.OfType<JObject>().ToLookup(row => (int?)row["id"] ?? 0);
+            var piecesById = pieces.OfType<JObject>().ToLookup(row => (int?)row["id"] ?? 0);
+            var slotsByEquipment = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["EQUIP_BRACER"] = "flower", ["EQUIP_NECKLACE"] = "plume",
+                ["EQUIP_SHOES"] = "sands", ["EQUIP_RING"] = "goblet", ["EQUIP_DRESS"] = "circlet"
+            };
+            var prayerSets = new HashSet<int> { 15009, 15010, 15011, 15013 };
+            var seenSetIds = new HashSet<int>();
+            var seenPieceNames = new HashSet<string>(StringComparer.Ordinal);
+            var result = new SortedDictionary<string, JObject>(StringComparer.Ordinal);
+            foreach (var token in setDefs)
+            {
+                var definition = token as JObject;
+                if (definition == null) throw new InvalidDataException("An artifact set definition is not an object.");
+                if (((int?)definition["disableFilter"] ?? 0) != 0) continue;
+                int setId = RequireArtifactId(definition["setId"], "setId");
+                if (!seenSetIds.Add(setId)) throw new InvalidDataException("Duplicate artifact set ID " + setId + ".");
+                int affixId = RequireArtifactId(definition["equipAffixId"], "equipAffixId for set " + setId);
+                var names = affixesById[affixId].Select(row => RequireArtifactName(row["nameTextMapHash"], textmap,
+                    "affix for set " + setId)).Distinct(StringComparer.Ordinal).ToList();
+                if (names.Count != 1) throw new InvalidDataException("Artifact set " + setId + " has no unique mapped affix name.");
+                string setName = names[0], setGood = ConvertToGOOD(setName), setKey = setGood.ToLowerInvariant();
+                if (setKey.Length == 0 || result.ContainsKey(setKey))
+                    throw new InvalidDataException("Artifact set " + setId + " has an empty or ambiguous normalized name.");
+
+                var references = definition["containsList"] as JArray;
+                int expectedCount = prayerSets.Contains(setId) ? 1 : 5;
+                if (references == null || references.Count != expectedCount)
+                    throw new InvalidDataException("Artifact set " + setId + " does not contain its expected " + expectedCount + " pieces.");
+                var seenPieceIds = new HashSet<int>();
+                var artifacts = new JObject();
+                foreach (var reference in references)
+                {
+                    int pieceId = RequireArtifactId(reference, "piece ID for set " + setId);
+                    var matchingPieces = piecesById[pieceId].ToList();
+                    if (!seenPieceIds.Add(pieceId) || matchingPieces.Count != 1)
+                        throw new InvalidDataException("Artifact piece " + pieceId + " is missing or ambiguous.");
+                    var piece = matchingPieces[0];
+                    if (RequireArtifactId(piece["setId"], "setId for piece " + pieceId) != setId)
+                        throw new InvalidDataException("Artifact piece " + pieceId + " belongs to a different set.");
+                    string slot;
+                    if (!slotsByEquipment.TryGetValue((string)piece["equipType"] ?? string.Empty, out slot)
+                        || artifacts[slot] != null || prayerSets.Contains(setId) && slot != "circlet")
+                        throw new InvalidDataException("Artifact set " + setId + " has an unsupported or duplicate slot.");
+                    string pieceName = RequireArtifactName(piece["nameTextMapHash"], textmap, "piece " + pieceId);
+                    string pieceGood = ConvertToGOOD(pieceName), pieceKey = pieceGood.ToLowerInvariant();
+                    if (pieceKey.Length == 0 || !seenPieceNames.Add(pieceKey))
+                        throw new InvalidDataException("Artifact piece " + pieceId + " has an empty or ambiguous normalized name.");
+                    artifacts[slot] = new JObject
+                    {
+                        ["artifactName"] = pieceName, ["GOOD"] = pieceGood, ["normalizedName"] = pieceKey
+                    };
+                }
+                result.Add(setKey, new JObject
+                {
+                    ["setName"] = setName, ["GOOD"] = setGood, ["normalizedName"] = setKey, ["artifacts"] = artifacts
+                });
+            }
+            if (result.Count == 0) throw new InvalidDataException("No enabled artifact sets were generated.");
+            return new JObject(result.Select(pair => new JProperty(pair.Key, pair.Value)));
+        }
+
+        private static int RequireArtifactId(JToken token, string field)
+        {
+            long value;
+            if (token == null || token.Type != JTokenType.Integer || !long.TryParse(token.ToString(), out value)
+                || value <= 0 || value > int.MaxValue)
+                throw new InvalidDataException("Invalid artifact " + field + ".");
+            return (int)value;
+        }
+
+        private static string RequireArtifactName(JToken hash, IDictionary<string, string> textmap, string context)
+        {
+            string name;
+            if (hash == null || !textmap.TryGetValue(hash.ToString(), out name) || string.IsNullOrWhiteSpace(name))
+                throw new InvalidDataException("No English artifact name is mapped for " + context + ".");
+            return name.Trim();
         }
 
         private UpdateStatus UpdateWeapons(bool force)
@@ -875,7 +1161,7 @@ namespace InventoryKamera
             }
         }
 
-        private string ConvertToGOOD(string text)
+        private static string ConvertToGOOD(string text)
         {
             foreach (Match match in Regex.Matches(text, @"&#\d*;"))
             {

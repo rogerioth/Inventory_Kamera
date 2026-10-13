@@ -13,6 +13,7 @@ namespace InventoryKamera
     internal class ArtifactScraper : InventoryScraper
 	{
 		private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
+        internal Action ItemQueued { get; set; }
 
 		// How many times an item card is captured before the artifact is skipped
 		private const int MaxCardReadAttempts = 3;
@@ -41,6 +42,7 @@ namespace InventoryKamera
 			int cardsQueued = 0;
 			int rowsQueued = 0;
 			UserInterface.SetArtifact_Max(artifactCount);
+            UserInterface.ReportScanProgress(ScanPhase.Artifacts, 0, artifactCount);
 
 			StopScanning = false;
 
@@ -123,10 +125,13 @@ namespace InventoryKamera
 						Navigation.SystemWait(Navigation.Speed.SelectNextInventoryItem);
 					}
 					cardsQueued++;
+                    UserInterface.ReportScanProgress(ScanPhase.Artifacts, cardsQueued, artifactCount);
 					if (cardsQueued >= artifactCount || StopScanning)
 					{
 						if (StopScanning) Logger.Info("    Artifact capture finished at the configured filters");
 						else Logger.Info("    Artifact capture finished: {0} of {1} cards queued", cardsQueued, artifactCount);
+                        UserInterface.FinishScanPhase(ScanPhase.Artifacts, cardsQueued, artifactCount,
+                            StopScanning ? "Stopped at configured filters" : null);
 						return;
 					}
 				}
@@ -171,6 +176,7 @@ namespace InventoryKamera
 				++page;
 				(rectangles, cols, rows) = GetPageOfItems(page, acceptLess: totalRows - rowsQueued <= fullPage);
 			}
+            UserInterface.FinishScanPhase(ScanPhase.Artifacts, cardsQueued, artifactCount);
 		}
 
         private void ClearFilters()
@@ -272,6 +278,7 @@ namespace InventoryKamera
 
             // Send images to Worker Queue
             InventoryKamera.workerQueue.Enqueue(new OCRImageCollection(artifactImages, "artifact", id));
+            ItemQueued?.Invoke();
 			return true;
 		}
 

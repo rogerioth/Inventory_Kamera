@@ -20,6 +20,9 @@ progress, completion marks, dates, and completed totals where visible. It uses a
 cached achievement catalog to resolve the text to numeric game achievement IDs.
 During scanning, **Preview** shows each complete achievement row as a wide image
 with its recognized title, description, progress or completion status underneath.
+The Scan frame's determinate bar tracks verified category coverage, and the
+colored Achievements pill shows confirmed completed IDs against the global
+counter. The activity bar continues to animate while the scan is working.
 Only fully visible achievement cards are read and previewed; fixed category
 progress panels and clipped cards are excluded. Unresolved cards also appear,
 with the reason they need review. The usual equipment
@@ -93,10 +96,14 @@ The global total is read before and after traversal and must remain unchanged.
 
 Each category selection uses the initially recognized, fully visible tile for
 its first click and verifies the selected category before reading achievements.
-Unmatched sidebar names are retried with single-line OCR and alternative image
-thresholds. Selection attempts are bounded; a failed category does not stop the
-remaining categories. One final recovery pass resets the sidebar and retries
-missed categories. Any category still unverified leaves the result incomplete.
+Sidebar tile boundaries come from their edges, so background colors between
+tiles cannot merge several categories into a clipped row. Unmatched sidebar
+names are retried with alternative image thresholds. The scanner chooses an
+upward or downward search from the visible category order and verifies the
+sidebar's scrollbar when resetting to the top. Selection attempts and recovery
+are bounded; repeated navigation failures stop with partial results instead
+of repeatedly searching the wrong end of the list. A final recovery pass
+retries missed categories. Any category still unverified leaves the result incomplete.
 
 The scanner checks actual row movement while scrolling. A repeated capture
 alone is not enough to prove the bottom was reached: wrong scroll focus, dropped
@@ -114,7 +121,11 @@ or count mismatch leaves the result incomplete.
   changed. A new achievement may be absent from an older cached catalog.
 - **Scrolling stalls:** verify the game still has focus and the mouse is not
   being moved during the scan. The scan must stop or report incomplete coverage
-  instead of silently treating a stalled middle page as the end.
+  instead of silently treating a stalled middle page as the end. The main log
+  records category selection, reset and recovery attempts; the debug log adds
+  recognized labels, tile bounds, wheel direction, click coordinates and
+  scrollbar positions. Navigation failure messages link saved screenshots in
+  `logging/achievements`, even when **Log All Screenshots** is disabled.
 - **OCR reads digits or punctuation incorrectly:** use a supported aspect ratio,
   disable HDR, and retain the row screenshot with its raw OCR for diagnosis.
   Descriptions and goal numbers help distinguish tiers with identical titles.
@@ -157,6 +168,11 @@ top and bottom detection without controlling the game:
 powershell -ExecutionPolicy Bypass -File .\tests\run-achievement-tests.ps1 `
     -CaptureDirectory '.\InventoryKamera\bin\x64\Debug\logging\achievements'
 ```
+
+To check the sidebar navigation failure captures separately, use
+`-SidebarDirectory` with the same capture directory. This replays top and
+bottom sidebar frames and tests reset/search behavior through simulated
+navigation, without sending input to the game.
 
 The screenshot is supplied locally and is not copied into the repository. A
 passing replay validates recognition on that image; it does not establish that

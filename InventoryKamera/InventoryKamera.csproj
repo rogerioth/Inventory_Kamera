@@ -147,6 +147,8 @@
     <Compile Include="Settings.cs" />
     <Compile Include="scraping\MaterialScraper.cs" />
     <Compile Include="scraping\CharacterScraper.cs" />
+    <Compile Include="scraping\CharacterScreenRecognizer.cs" />
+    <Compile Include="game\CharacterNavigation.cs" />
     <Compile Include="data\GOOD.cs" />
     <Compile Include="ui\ExecutablesForm.cs">
       <SubType>Form</SubType>
@@ -167,6 +169,10 @@
       <DependentUpon>MainForm.cs</DependentUpon>
     </Compile>
     <Compile Include="ui\main\MainForm.Layout.cs">
+      <DependentUpon>MainForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="ui\ScanProgress.cs" />
+    <Compile Include="ui\main\MainForm.Progress.cs">
       <DependentUpon>MainForm.cs</DependentUpon>
     </Compile>
     <Compile Include="ui\main\MainForm.Achievements.cs">
