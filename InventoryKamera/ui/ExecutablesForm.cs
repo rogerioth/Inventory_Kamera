@@ -149,14 +149,11 @@ namespace InventoryKamera.ui
         private void AddButton_Click(object sender, EventArgs e)
         {
             string selected = (string) ProcessListBox.SelectedItem;
-            if (selected != null) 
-            { 
-                if (!Properties.Settings.Default.Executables.Contains(selected))
-                {
-                    Properties.Settings.Default.Executables.Add(selected);
-                    PopulateExecutables();
-                    PopulateProcesses();
-                }
+            if (selected != null && !Properties.Settings.Default.Executables.Contains(selected))
+            {
+                Properties.Settings.Default.Executables.Add(selected);
+                PopulateExecutables();
+                PopulateProcesses();
             }
         }
 

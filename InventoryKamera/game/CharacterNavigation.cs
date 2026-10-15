@@ -117,13 +117,10 @@ namespace InventoryKamera
                     || state.State == CharacterScreenState.PaimonMenu || state.State == CharacterScreenState.Gameplay,
                     "A recognizable entry screen", out current, CharacterScreenState.CharacterMenu);
             }
-            if (current.IsCharacterMenu)
+            if (current.IsCharacterMenu && !selectPartySlotOne)
             {
-                if (!selectPartySlotOne)
-                {
-                    Logger.Debug("Character screen already visible during {0}; no entry key sent", context);
-                    return;
-                }
+                Logger.Debug("Character screen already visible during {0}; no entry key sent", context);
+                return;
             }
             if (selectPartySlotOne)
             {

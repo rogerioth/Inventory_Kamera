@@ -73,22 +73,24 @@ namespace InventoryKamera
 
             Text = $"Inventory Kamera V{version}";
 
-            UserInterface.Init(
-                GearPictureBox,
-                ArtifactOutput_TextBox,
-                CharacterName_PictureBox,
-                CharacterLevel_PictureBox,
-                new[] { CharacterTalent1_PictureBox, CharacterTalent2_PictureBox, CharacterTalent3_PictureBox },
-                CharacterOutput_TextBox,
-                WeaponsScannedCount_Label,
-                WeaponsMax_Labell,
-                ArtifactsScanned_Label,
-                ArtifactsMax_Label,
-                CharactersScanned_Label,
-                ProgramStatus_Label,
-                ErrorLog_TextBox,
-                Navigation_Image,
-                UpdateScanProgress);
+            UserInterface.Init(new UserInterface.Controls
+            {
+                GearPictureBox = GearPictureBox,
+                ArtifactOutput = ArtifactOutput_TextBox,
+                CharacterName = CharacterName_PictureBox,
+                CharacterLevel = CharacterLevel_PictureBox,
+                CharacterTalents = new[] { CharacterTalent1_PictureBox, CharacterTalent2_PictureBox, CharacterTalent3_PictureBox },
+                CharacterOutput = CharacterOutput_TextBox,
+                WeaponCount = WeaponsScannedCount_Label,
+                WeaponMax = WeaponsMax_Labell,
+                ArtifactCount = ArtifactsScanned_Label,
+                ArtifactMax = ArtifactsMax_Label,
+                CharacterCount = CharactersScanned_Label,
+                ProgramStatus = ProgramStatus_Label,
+                ErrorLog = ErrorLog_TextBox,
+                NavigationImage = Navigation_Image,
+                ScanProgress = UpdateScanProgress,
+            });
         }
 
         private double ScannerDelayValue(int value)
@@ -205,7 +207,7 @@ namespace InventoryKamera
                     Properties.Settings.Default.Upgrade();
                     Logger.Info("Application settings loaded from previous version");
                 }
-                catch (Exception) { }
+                catch (Exception) { /* Intentionally ignored: fall back to the current settings if the upgrade fails. */ }
                 Properties.Settings.Default.UpgradeNeeded = false;
                 Properties.Settings.Default.Save();
             }

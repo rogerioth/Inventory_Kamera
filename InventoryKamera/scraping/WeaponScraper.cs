@@ -36,7 +36,6 @@ namespace InventoryKamera
             UserInterface.ReportScanProgress(ScanPhase.Weapons, 0, weaponCount);
 
             // Determine Delay if delay has not been found before
-            // Scraper.FindDelay(rectangles);
 
             StopScanning = false;
 
@@ -179,12 +178,6 @@ namespace InventoryKamera
             equipped = GetEquippedBitmap(card);
             level = GetLevelBitmap(card);
             refinement = GetRefinementBitmap(card);
-
-            //Navigation.DisplayBitmap(name);
-            //Navigation.DisplayBitmap(locked);
-            //Navigation.DisplayBitmap(equipped);
-            //Navigation.DisplayBitmap(level);
-            //Navigation.DisplayBitmap(refinement);
 
             // Separate to all pieces of card
             List<Bitmap> weaponImages = new List<Bitmap>
@@ -345,14 +338,12 @@ namespace InventoryKamera
 			{
 				string[] temp = text.Split(new[] { '/' }, 2);
 
-				if (temp.Length == 2)
+				if (temp.Length == 2
+					&& int.TryParse(temp[0], out int level) && int.TryParse(temp[1], out int maxLevel))
 				{
-					if (int.TryParse(temp[0], out int level) && int.TryParse(temp[1], out int maxLevel))
-					{
-						maxLevel = (int)Math.Round(maxLevel / 10.0, MidpointRounding.AwayFromZero) * 10;
-						ascended = 20 <= level && level < maxLevel;
-						return level;
-					}
+					maxLevel = (int)Math.Round(maxLevel / 10.0, MidpointRounding.AwayFromZero) * 10;
+					ascended = 20 <= level && level < maxLevel;
+					return level;
 				}
 			}
 			return -1;

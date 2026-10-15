@@ -33,14 +33,14 @@ namespace InventoryKamera
         private int equipmentProcessed;
         private volatile bool reportingEquipmentProcessing;
 
-		private List<Artifact> equippedArtifacts;
-		private List<Weapon> equippedWeapons;
+		private readonly List<Artifact> equippedArtifacts;
+		private readonly List<Weapon> equippedWeapons;
 		public static Queue<OCRImageCollection> workerQueue = new Queue<OCRImageCollection>();
-		private List<Thread> ImageProcessors;
+		private readonly List<Thread> ImageProcessors;
 
-		private WeaponScraper weaponScraper;
-		private ArtifactScraper artifactScraper;
-		private MaterialScraper materialScraper;
+		private readonly WeaponScraper weaponScraper;
+		private readonly ArtifactScraper artifactScraper;
+		private readonly MaterialScraper materialScraper;
 
 		private volatile bool b_threadCancel;
 		private readonly int NumWorkers;
@@ -86,7 +86,7 @@ namespace InventoryKamera
 				Directory.Delete("./logging/characters", true);
 				Directory.Delete("./logging/materials", true);
 			}
-			catch { }
+			catch { /* Intentionally ignored: the folders may not exist and are recreated below. */ }
 
 			try
 			{
@@ -187,7 +187,7 @@ namespace InventoryKamera
                     weaponScraper.ScanWeapons();
 				}
 				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Weapon inventory scan: " + ex.Message); }
-				catch (ThreadAbortException) { }
+				catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
 				catch (Exception ex)
 				{
 					UserInterface.AddError("    [FAILURE] Weapon inventory scan: " + ex.Message);
@@ -210,7 +210,7 @@ namespace InventoryKamera
 					artifactScraper.ScanArtifacts();
 				}
 				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Artifact inventory scan: " + ex.Message); }
-				catch (ThreadAbortException) { }
+				catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
 				catch (Exception ex)
 				{
 					UserInterface.AddError("    [FAILURE] Artifact inventory scan: " + ex.Message);
@@ -238,7 +238,7 @@ namespace InventoryKamera
 					characterTalentsCorrected = true;
 					CharacterNavigation.Require(CharacterScreenState.CharacterMenu, "finish character roster scan");
 				}
-				catch (ThreadAbortException) { }
+				catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
 				catch (CharacterNavigationException)
 				{
 					if (!characterTalentsCorrected) CharacterScraper.ApplyTartagliaTalentCorrection(Characters);
@@ -302,7 +302,7 @@ namespace InventoryKamera
 					materialScraper.Scan_Materials(ref Inventory);
 				}
 				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Character development material scan: " + ex.Message); }
-				catch (ThreadAbortException) { }
+				catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
 				catch (Exception ex)
 				{
 					UserInterface.AddError("    [FAILURE] Character development material scan: " + ex.Message);
@@ -327,7 +327,7 @@ namespace InventoryKamera
 					materialScraper.Scan_Materials(ref Inventory);
 				}
 				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Material inventory scan: " + ex.Message); }
-				catch (ThreadAbortException) { }
+				catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
 				catch (Exception ex)
 				{
 					UserInterface.AddError("    [FAILURE] Material inventory scan: " + ex.Message);
@@ -583,7 +583,7 @@ namespace InventoryKamera
 					catch (Exception ex)
 					{
 						Logger.Error(ex, "    [FAILURE] Could not process {0} #{1}. Skipping item: {2}", imageCollection.Type, imageCollection.Id, ex.GetBaseException().Message);
-						try { imageCollection.Bitmaps?.ForEach(b => b?.Dispose()); } catch { }
+						try { imageCollection.Bitmaps?.ForEach(b => b?.Dispose()); } catch { /* Intentionally ignored: best-effort cleanup during error handling. */ }
 					}
                     finally
                     {

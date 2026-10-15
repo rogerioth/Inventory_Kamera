@@ -596,8 +596,6 @@ namespace InventoryKamera
 				Logger.Info("        {0}: level {1}, ascended {2}", character.NameGOOD, character.Level, character.Ascended);
 
 				// Scan Experience
-				//experience = ScanExperience();
-				//Navigation.SystemRandomWait(Navigation.Speed.Normal);
 
 				// Scan Constellation
 				Logger.Info("    Scanning {0}'s constellations...", character.NameGOOD);
@@ -1019,54 +1017,51 @@ namespace InventoryKamera
                     bool matched = TryReadCharacterHeader(bm, out name, out element, out ocrName, out headerText);
 					string identity = CharacterIdentity(name, element, ocrName);
 					if (identity != null) checkpoint?.Invoke(identity);
-					if (!string.IsNullOrWhiteSpace(ocrName))
+					if (!string.IsNullOrWhiteSpace(ocrName) && !matched)
 					{
-						if (!matched)
+						// A name that is not in the character data, or a known character
+						// whose read element is missing from its data, will never resolve
+						// no matter how many times it is read.
+						bool unknownCharacter = !string.IsNullOrWhiteSpace(ocrName) && !GenshinProcesor.IsValidCharacter(name);
+						bool unknownPair = !unknownCharacter && GenshinProcesor.IsValidCharacter(name) && GenshinProcesor.IsValidElement(element);
+
+						if (unknownCharacter || unknownPair)
 						{
-							// A name that is not in the character data, or a known character
-							// whose read element is missing from its data, will never resolve
-							// no matter how many times it is read.
-							bool unknownCharacter = !string.IsNullOrWhiteSpace(ocrName) && !GenshinProcesor.IsValidCharacter(name);
-							bool unknownPair = !unknownCharacter && GenshinProcesor.IsValidCharacter(name) && GenshinProcesor.IsValidElement(element);
-
-							if (unknownCharacter || unknownPair)
-							{
-								if (ocrName == unknownName && element == unknownElement)
-									unknownAttempts++;
-								else
-								{
-									unknownName = ocrName;
-									unknownElement = element;
-									unknownAttempts = 1;
-								}
-                                if (unknownAttempts == 1)
-                                    Logger.Debug("Character header mismatch: raw name '{0}', resolved '{1}', observed element '{2}', catalog elements [{3}]; {4}",
-                                        ocrName, name, element, string.Join(", ", GenshinProcesor.GetCharactersElements(name)), headerText);
-
-								if (unknownAttempts >= maxUnknownAttempts)
-								{
-									if (!quiet)
-									{
-                                        string evidence = $"./logging/characters/unknown_{ocrName}.png";
-										Logger.Error("    [FAILURE] Character '{0}' ({1}) could not be matched to the character data. Skipping character. Resolved name '{2}', catalog elements [{3}], header OCR {4}; evidence {5}",
-                                            ocrName, element, name, string.Join(", ", GenshinProcesor.GetCharactersElements(name)), headerText, Path.GetFullPath(evidence));
-										SaveDiagnosticBitmap(bm, evidence);
-									}
-									giveUp = true;
-								}
-							}
+							if (ocrName == unknownName && element == unknownElement)
+								unknownAttempts++;
 							else
 							{
-								unknownName = null;
-								unknownElement = null;
-								unknownAttempts = 0;
+								unknownName = ocrName;
+								unknownElement = element;
+								unknownAttempts = 1;
 							}
+                            if (unknownAttempts == 1)
+                                Logger.Debug("Character header mismatch: raw name '{0}', resolved '{1}', observed element '{2}', catalog elements [{3}]; {4}",
+                                    ocrName, name, element, string.Join(", ", GenshinProcesor.GetCharactersElements(name)), headerText);
 
-							// Clear the read on every failed match so a partially parsed
-							// name/element pair is never used
-							name = giveUp ? null : "";
-							element = giveUp ? null : "";
+							if (unknownAttempts >= maxUnknownAttempts)
+							{
+								if (!quiet)
+								{
+                                    string evidence = $"./logging/characters/unknown_{ocrName}.png";
+									Logger.Error("    [FAILURE] Character '{0}' ({1}) could not be matched to the character data. Skipping character. Resolved name '{2}', catalog elements [{3}], header OCR {4}; evidence {5}",
+                                        ocrName, element, name, string.Join(", ", GenshinProcesor.GetCharactersElements(name)), headerText, Path.GetFullPath(evidence));
+									SaveDiagnosticBitmap(bm, evidence);
+								}
+								giveUp = true;
+							}
 						}
+						else
+						{
+							unknownName = null;
+							unknownElement = null;
+							unknownAttempts = 0;
+						}
+
+						// Clear the read on every failed match so a partially parsed
+						// name/element pair is never used
+						name = giveUp ? null : "";
+						element = giveUp ? null : "";
 					}
 					if (giveUp) return;
 
@@ -1146,42 +1141,6 @@ namespace InventoryKamera
 			} while (attempt < 50);
 
 			return -1;
-		}
-
-		private static int ScanExperience()
-		{
-			int experience = 0;
-
-			int xOffset = 1117;
-			int yOffset = 151;
-			Bitmap bm = new Bitmap(90, 10);
-			Graphics g = Graphics.FromImage(bm);
-			int screenLocation_X = Navigation.GetPosition().Left + xOffset;
-			int screenLocation_Y = Navigation.GetPosition().Top + yOffset;
-			g.CopyFromScreen(screenLocation_X, screenLocation_Y, 0, 0, bm.Size);
-
-			//Image Operations
-			bm = GenshinProcesor.ResizeImage(bm, bm.Width * 6, bm.Height * 6);
-			//Scraper.ConvertToGrayscale(ref bm);
-			//Scraper.SetInvert(ref bm);
-			GenshinProcesor.SetContrast(30.0, ref bm);
-
-			string text = GenshinProcesor.AnalyzeText(bm);
-			text = text.Trim();
-			text = Regex.Replace(text, @"(?![0-9\s/]).", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
-
-			if (Regex.IsMatch(text, "/", RegexOptions.None, RegexTimeouts.RegexTimeout))
-			{
-				string[] temp = text.Split('/');
-				experience = Convert.ToInt32(temp[0]);
-			}
-			else
-			{
-				Debug.Print("Error: Found " + experience + " instead of experience");
-				UserInterface.AddError("Found " + experience + " instead of experience");
-			}
-
-			return experience;
 		}
 
 		private static int ScanConstellations(Character character)
@@ -1308,13 +1267,11 @@ namespace InventoryKamera
 					lastTalentText = GenshinProcesor.AnalyzeText(n, Tesseract.PageSegMode.SingleBlock).Trim();
 					var text = lastTalentText.Split('\n').ToList();
 
-					if (int.TryParse(Regex.Replace(text.Last(), @"\D", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout), out int level))
+					if (int.TryParse(Regex.Replace(text.Last(), @"\D", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout), out int level)
+						&& level >= 1 && level <= 15)
 					{
-						if (level >= 1 && level <= 15)
-						{
-							talents[talent] = level;
-							UserInterface.SetCharacter_Talent(talentLevel, level.ToString(), i);
-						}
+						talents[talent] = level;
+						UserInterface.SetCharacter_Talent(talentLevel, level.ToString(), i);
 					}
 
 					n.Dispose();

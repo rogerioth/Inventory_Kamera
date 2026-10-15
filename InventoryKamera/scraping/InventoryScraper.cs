@@ -449,7 +449,6 @@ namespace InventoryKamera
                                     rectangles.ForEach(r => g.DrawRectangle(new Pen(Color.Green, 2), r));
                                 SaveInventoryBitmap(copy, $"{inventoryPage}Inventory{pageNum}_{cols}x{rows} - weight {weight}.png");
 #if DEBUG
-                                //Navigation.DisplayBitmap(copy, $"weight = {weight}");
 #endif
                             }
                         }

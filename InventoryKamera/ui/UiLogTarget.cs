@@ -139,7 +139,7 @@ namespace InventoryKamera.ui
             {
                 // A display subscriber must never stop the scanner's logging.
                 try { callback(entry); }
-                catch (Exception) { }
+                catch (Exception) { /* Intentionally ignored: subscriber failures must not break logging. */ }
             }
 
             public void Dispose()
