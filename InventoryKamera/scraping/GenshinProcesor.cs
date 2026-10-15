@@ -431,7 +431,10 @@ namespace InventoryKamera
 		internal static bool IsValidCharacter(string character)
 		{
 			if (string.IsNullOrWhiteSpace(character)) return false;
-			if (character == "Wanderer" || Characters.ContainsKey(character.ToLowerInvariant())) return true;
+			if (character == "Wanderer" || Characters.ContainsKey(character.ToLowerInvariant()))
+			{
+				return true;
+			}
             // GOOD appends the selected element to Traveler. Only a supported
             // element suffix is valid; an arbitrary name containing "Traveler"
             // must not become an exportable character.
@@ -840,10 +843,9 @@ namespace InventoryKamera
 				}
 				else
 				{
-					if (bStoppedOnce)
-					{
-                    }
-                    bStoppedOnce = true;
+					// bStoppedOnce is always false here: the loop stops as soon as it
+					// becomes true, so the (previously empty) dead branch was removed.
+					bStoppedOnce = true;
 				}
 			} while (!bStoppedOnce && ( Navigation.GetDelay() - delayOffset > 0 ));
 
@@ -1190,9 +1192,9 @@ namespace InventoryKamera
         {
             if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(element)) return false;
 
-            List<string> elements = GetCharactersElements(name.ToLower());
+            List<string> characterElements = GetCharactersElements(name.ToLower());
 
-            return elements != null && elements.Contains(element.ToLower());
+            return characterElements != null && characterElements.Contains(element.ToLower());
         }
 
         internal static List<string> GetCharactersElements(string name)

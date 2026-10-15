@@ -114,9 +114,9 @@ namespace InventoryKamera
 			return Rectangle.Left == _Left && Rectangle.Top == _Top && Rectangle.Right == _Right && Rectangle.Bottom == _Bottom;
 		}
 
-		public override bool Equals(object Object)
+		public override bool Equals(object obj)
 		{
-			switch (Object)
+			switch (obj)
 			{
 				case RECT rect:
 					return Equals(rect);

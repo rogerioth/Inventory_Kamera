@@ -35,7 +35,7 @@ namespace InventoryKamera
 
 		private List<Artifact> equippedArtifacts;
 		private List<Weapon> equippedWeapons;
-		public static Queue<OCRImageCollection> workerQueue;
+		public static Queue<OCRImageCollection> workerQueue = new Queue<OCRImageCollection>();
 		private List<Thread> ImageProcessors;
 
 		private WeaponScraper weaponScraper;
@@ -58,7 +58,6 @@ namespace InventoryKamera
 			equippedArtifacts = new List<Artifact>();
 			equippedWeapons = new List<Weapon>();
 			ImageProcessors = new List<Thread>();
-			workerQueue = new Queue<OCRImageCollection>();
 
             weaponScraper = new WeaponScraper { ItemQueued = () => Interlocked.Increment(ref equipmentEnqueued) };
             artifactScraper = new ArtifactScraper { ItemQueued = () => Interlocked.Increment(ref equipmentEnqueued) };
@@ -115,11 +114,20 @@ namespace InventoryKamera
 
 		private bool disposed;
 
-		public void Dispose()
+		protected virtual void Dispose(bool disposing)
 		{
 			if (disposed) return;
 			disposed = true;
-			achievementCancellation.Dispose();
+			if (disposing)
+			{
+				achievementCancellation.Dispose();
+			}
+		}
+
+		public void Dispose()
+		{
+			Dispose(disposing: true);
+			GC.SuppressFinalize(this);
 		}
 
 		public void GatherData()

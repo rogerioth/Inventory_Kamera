@@ -391,8 +391,11 @@ namespace InventoryKamera
         {
             // Screenshot of inventory
             using (Bitmap screenshot = Navigation.CaptureWindow())
+            // Disposed by the using on every path; explicit Dispose calls here
+            // could run twice (once in the try, once in the catch) on the
+            // "no page found" exception path.
+            using (Bitmap processedScreenshot = new Bitmap(screenshot))
             {
-                Bitmap processedScreenshot = new Bitmap(screenshot);
                 using (Graphics g = Graphics.FromImage(processedScreenshot))
                 using (var brush = new SolidBrush(Color.Black))
                 {
@@ -468,14 +471,13 @@ namespace InventoryKamera
 
                         SaveInventoryBitmap(screenshot, $"{inventoryPage}Inventory{pageNum}_{cols}x{rows} - weight {weight}.png");
                     }
-                    processedScreenshot.Dispose();
 
                     if (rectangles == null)
                     {
                         Logger.Warn("Could not find {0} items in inventory. Re-using previous item page.", itemPerPage);
 
                         return prevRect == null ?
-                            throw new ArgumentNullException("Could not find first page of items!") 
+                            throw new ArgumentNullException(nameof(pageNum), "Could not find first page of items!")
                             :
                             (prevRect, prevColumn, prevRow);
                     }
@@ -488,7 +490,6 @@ namespace InventoryKamera
                 }
                 catch (Exception)
                 {
-                    processedScreenshot.Dispose();
                     SaveInventoryBitmap(screenshot, $"{inventoryPage}Inventory.png");
                     throw;
                 }

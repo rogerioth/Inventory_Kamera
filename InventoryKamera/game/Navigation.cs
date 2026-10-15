@@ -70,7 +70,7 @@ namespace InventoryKamera
 				Logger.Debug("Could not find {0}.exe", processName);
 			}
 
-			throw new NullReferenceException("Cannot find Genshin Impact process");
+			throw new InvalidOperationException("Cannot find Genshin Impact process");
 		}
 
 		public static void Reset()
@@ -426,8 +426,14 @@ namespace InventoryKamera
 
 		#region Mouse
 
-		[DllImport("user32.dll")]
-		public static extern bool SetCursorPos(int X, int Y);
+		[DllImport("user32.dll", EntryPoint = "SetCursorPos")]
+		private static extern bool SetCursorPosNative(int X, int Y);
+
+		// Public wrapper keeping the previously public native entry point for callers.
+		public static bool SetCursorPos(int X, int Y)
+		{
+			return SetCursorPosNative(X, Y);
+		}
 
 		public static bool SetCursor(int X, int Y)
         {
