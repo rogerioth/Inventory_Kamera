@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 
 namespace InventoryKamera
 {
-    public class InventoryKamera
+    public class InventoryKamera : IDisposable
 	{
 
 		private static NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
@@ -113,6 +113,15 @@ namespace InventoryKamera
 			workerQueue = new Queue<OCRImageCollection>();
 		}
 
+		private bool disposed;
+
+		public void Dispose()
+		{
+			if (disposed) return;
+			disposed = true;
+			achievementCancellation.Dispose();
+		}
+
 		public void GatherData()
 		{
 			Logger.Info("Starting inventory scan");
@@ -136,7 +145,7 @@ namespace InventoryKamera
 				processor.Start();
 				ImageProcessors.Add(processor);
 			}
-			Logger.Debug("Added {ImageProcessors.Count} workers", ImageProcessors.Count);
+			Logger.Debug("Added {count} workers", ImageProcessors.Count);
 
 			GenshinProcesor.RestartEngines();
 

@@ -36,8 +36,6 @@ namespace InventoryKamera
 			{
 				return Weapons.Count + Artifacts.Count + Materials.Count + DevMaterials.Count;
 			}
-
-			set => Size = Weapons.Count + Artifacts.Count + AllMaterials.Count;
 		}
 
 		public Inventory()
