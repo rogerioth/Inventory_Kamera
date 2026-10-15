@@ -257,21 +257,25 @@ namespace InventoryKamera
         // Shared crop math for card regions whose y position (and sanctified
         // shift) differ between 16:9 and 16:10. All fractions are relative to
         // the captured card; values are the field-tested ones per aspect ratio.
-        private static Bitmap CropCardRegion(Bitmap card, bool isSanctified,
-            double x, double width,
-            double baseYNormal, double baseY16x10,
-            double shiftNormal, double shift16x10,
-            double heightNormal, double height16x10)
+        private struct CardCropFractions
         {
-            double baseY = Navigation.IsNormal ? baseYNormal : baseY16x10;
-            double sanctifiedShift = Navigation.IsNormal ? shiftNormal : shift16x10;
+            internal double X, Width;
+            internal double BaseYNormal, BaseY16x10;
+            internal double ShiftNormal, Shift16x10;
+            internal double HeightNormal, Height16x10;
+        }
+
+        private static Bitmap CropCardRegion(Bitmap card, bool isSanctified, CardCropFractions fractions)
+        {
+            double baseY = Navigation.IsNormal ? fractions.BaseYNormal : fractions.BaseY16x10;
+            double sanctifiedShift = Navigation.IsNormal ? fractions.ShiftNormal : fractions.Shift16x10;
             double yShift = isSanctified ? sanctifiedShift : 0.0;
 
             return GenshinProcesor.CopyBitmap(card, new Rectangle(
-                x: (int)(card.Width * x),
+                x: (int)(card.Width * fractions.X),
                 y: (int)(card.Height * (baseY + yShift)),
-                width: (int)(card.Width * width),
-                height: (int)(card.Height * (Navigation.IsNormal ? heightNormal : height16x10))));
+                width: (int)(card.Width * fractions.Width),
+                height: (int)(card.Height * (Navigation.IsNormal ? fractions.HeightNormal : fractions.Height16x10))));
         }
 
         private static Bitmap GetSubstatsBitmap(Bitmap card, bool isSanctified = false)
@@ -281,10 +285,13 @@ namespace InventoryKamera
 			// substat row introduced in Genshin 6.0 is captured by the OCR.
 			// (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d)
 			return CropCardRegion(card, isSanctified,
-				x: 0.0605, width: 0.8297,
-				baseYNormal: 0.4216, baseY16x10: 0.3682,
-				shiftNormal: 0.0520, shift16x10: 0.0471,
-				heightNormal: 0.2301, height16x10: 0.1573);
+                new CardCropFractions
+                {
+                    X = 0.0605, Width = 0.8297,
+                    BaseYNormal = 0.4216, BaseY16x10 = 0.3682,
+                    ShiftNormal = 0.0520, Shift16x10 = 0.0471,
+                    HeightNormal = 0.2301, Height16x10 = 0.1573
+                });
         }
 
         private static Bitmap GetMainStatBitmap(Bitmap card)
@@ -302,10 +309,13 @@ namespace InventoryKamera
         {
 			// Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6, fea6e1bb.
 			return CropCardRegion(card, isSanctified,
-				x: 0.0506, width: 0.1417,
-				baseYNormal: 0.3634, baseY16x10: 0.3197,
-				shiftNormal: 0.0520, shift16x10: 0.0465,
-				heightNormal: 0.0416, height16x10: 0.0347);
+                new CardCropFractions
+                {
+                    X = 0.0506, Width = 0.1417,
+                    BaseYNormal = 0.3634, BaseY16x10 = 0.3197,
+                    ShiftNormal = 0.0520, Shift16x10 = 0.0465,
+                    HeightNormal = 0.0416, Height16x10 = 0.0347
+                });
         }
 
         private static Bitmap GetSanctifyBitmap(Bitmap card)

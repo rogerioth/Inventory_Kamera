@@ -457,7 +457,9 @@ namespace InventoryKamera
 			if (prepareSkip == null) throw new ArgumentNullException(nameof(prepareSkip));
 			skipped = false;
 			string target = null;
-			for (int attempt = 0; ; attempt++)
+			// Recovery gives this slot three attempts; the second failure always
+			// omits or rethrows, so the loop can never run a fourth iteration.
+			for (int attempt = 0; attempt <= 2; attempt++)
 			{
 				string expectedTarget = target;
 				try
@@ -483,6 +485,8 @@ namespace InventoryKamera
 					}
 				}
 			}
+			// Unreachable: the final attempt always returns above or rethrows.
+			throw new InvalidOperationException("Character scan retries exhausted without a result.");
 		}
 
 		private static void VerifyInterruptedCheckpoint(string expectedTarget, string identity)
@@ -533,7 +537,8 @@ namespace InventoryKamera
 
 		private static void AdvanceCharacterWithRecovery(string currentIdentity)
 		{
-			for (int attempt = 0; ; attempt++)
+			// The catch below always rethrows by the second failed attempt.
+			for (int attempt = 0; attempt <= 2; attempt++)
 			{
 				try { Navigation.SelectNextCharacter(); return; }
 				catch (CharacterNavigationException ex)
@@ -726,10 +731,7 @@ namespace InventoryKamera
 			if (!character.HasValidTalents()) return;
 
 			// Scale down talents due to constellations
-			if (character.Constellation >= 3)
-			{
-				if (!ApplyConstellationTalentAdjustments(character, name)) return;
-			}
+			if (character.Constellation >= 3 && !ApplyConstellationTalentAdjustments(character, name)) return;
 		}
 
 		private static bool ApplyConstellationTalentAdjustments(Character character, string name)
@@ -1282,31 +1284,7 @@ namespace InventoryKamera
 			bool unknownPair = !unknownCharacter && GenshinProcesor.IsValidCharacter(name) && GenshinProcesor.IsValidElement(element);
 
 			if (unknownCharacter || unknownPair)
-			{
-				if (ocrName == state.UnknownName && element == state.UnknownElement)
-					state.UnknownAttempts++;
-				else
-				{
-					state.UnknownName = ocrName;
-					state.UnknownElement = element;
-					state.UnknownAttempts = 1;
-				}
-				if (state.UnknownAttempts == 1)
-					Logger.Debug("Character header mismatch: raw name '{0}', resolved '{1}', observed element '{2}', catalog elements [{3}]; {4}",
-						ocrName, name, element, string.Join(", ", GenshinProcesor.GetCharactersElements(name)), headerText);
-
-				if (state.UnknownAttempts >= HeaderScanState.MaxUnknownAttempts)
-				{
-					if (!state.Quiet)
-					{
-						string evidence = $"./logging/characters/unknown_{ocrName}.png";
-						Logger.Error("    [FAILURE] Character '{0}' ({1}) could not be matched to the character data. Skipping character. Resolved name '{2}', catalog elements [{3}], header OCR {4}; evidence {5}",
-						ocrName, element, name, string.Join(", ", GenshinProcesor.GetCharactersElements(name)), headerText, Path.GetFullPath(evidence));
-						SaveDiagnosticBitmap(header, evidence);
-					}
-					state.GiveUp = true;
-				}
-			}
+				TrackRepeatedUnresolvedName(state, ocrName, name, element, headerText, header);
 			else
 			{
 				state.UnknownName = null;
@@ -1318,6 +1296,34 @@ namespace InventoryKamera
 			// name/element pair is never used
 			name = state.GiveUp ? null : "";
 			element = state.GiveUp ? null : "";
+		}
+
+		private static void TrackRepeatedUnresolvedName(HeaderScanState state, string ocrName, string name,
+			string element, string headerText, Bitmap header)
+		{
+			if (ocrName == state.UnknownName && element == state.UnknownElement)
+				state.UnknownAttempts++;
+			else
+			{
+				state.UnknownName = ocrName;
+				state.UnknownElement = element;
+				state.UnknownAttempts = 1;
+			}
+			if (state.UnknownAttempts == 1)
+				Logger.Debug("Character header mismatch: raw name '{0}', resolved '{1}', observed element '{2}', catalog elements [{3}]; {4}",
+					ocrName, name, element, string.Join(", ", GenshinProcesor.GetCharactersElements(name)), headerText);
+
+			if (state.UnknownAttempts >= HeaderScanState.MaxUnknownAttempts)
+			{
+				if (!state.Quiet)
+				{
+					string evidence = $"./logging/characters/unknown_{ocrName}.png";
+					Logger.Error("    [FAILURE] Character '{0}' ({1}) could not be matched to the character data. Skipping character. Resolved name '{2}', catalog elements [{3}], header OCR {4}; evidence {5}",
+					ocrName, element, name, string.Join(", ", GenshinProcesor.GetCharactersElements(name)), headerText, Path.GetFullPath(evidence));
+					SaveDiagnosticBitmap(header, evidence);
+				}
+				state.GiveUp = true;
+			}
 		}
 
 		private static HeaderReadOutcome ResolveHeaderReadOutcome(HeaderScanState state, ref string name, ref string element,

@@ -217,14 +217,14 @@ namespace InventoryKamera
         public static AchievementMatch Resolve(AchievementCategory category, string title, string description, int? reward)
         {
             if (category == null) return Failure("The achievement category was not recognized.");
-            var normalizedTitle = Normalize(title);
-            if (normalizedTitle.Length == 0) return Failure("The achievement title was not recognized.");
-            var normalizedDescription = Normalize(description);
-            var hasDescription = normalizedDescription.Length > 0;
-            var observedNumbers = ExtractNumbers(description);
+            var observed = new ObservedAchievement { Reward = reward };
+            observed.NormalizedTitle = Normalize(title);
+            if (observed.NormalizedTitle.Length == 0) return Failure("The achievement title was not recognized.");
+            observed.NormalizedDescription = Normalize(description);
+            observed.HasDescription = observed.NormalizedDescription.Length > 0;
+            observed.ObservedNumbers = ExtractNumbers(description);
             bool hasExactTitle;
-            var candidates = CollectMatchingCandidates(category, normalizedTitle, normalizedDescription,
-                hasDescription, observedNumbers, reward, out hasExactTitle);
+            var candidates = CollectMatchingCandidates(category, observed, out hasExactTitle);
             candidates = candidates.OrderByDescending(candidate => candidate.Score).ToList();
             if (candidates.Count == 0)
             {
@@ -232,7 +232,7 @@ namespace InventoryKamera
                 // title needs independent, strong evidence before it can be repaired.
                 if (!hasExactTitle)
                 {
-                    var repaired = ResolveConfusableTitle(category, normalizedTitle, normalizedDescription, observedNumbers, reward);
+                    var repaired = ResolveConfusableTitle(category, observed.NormalizedTitle, observed.NormalizedDescription, observed.ObservedNumbers, reward);
                     if (repaired != null) return repaired;
                 }
                 return Failure("No catalog achievement matches the title, description, numbers and reward.");
@@ -248,37 +248,47 @@ namespace InventoryKamera
             return new AchievementMatch { Family = best.Family, Tier = best.Tier, Confidence = best.Score };
         }
 
-        private static List<Candidate> CollectMatchingCandidates(AchievementCategory category, string normalizedTitle,
-            string normalizedDescription, bool hasDescription, List<string> observedNumbers, int? reward, out bool hasExactTitle)
+        /// <summary>One OCR achievement observation threaded through the matching tiers.</summary>
+        private sealed class ObservedAchievement
+        {
+            internal string NormalizedTitle;
+            internal string NormalizedDescription;
+            internal bool HasDescription;
+            internal bool HasExactTitle;
+            internal List<string> ObservedNumbers;
+            internal int? Reward;
+        }
+
+        private static List<Candidate> CollectMatchingCandidates(AchievementCategory category, ObservedAchievement observed,
+            out bool hasExactTitle)
         {
             // Some families use different names for each tier (for example a Roman-numeral suffix).
             var families = category.Families.Where(family => family.Tiers.Count > 0)
-                .Select(family => new { Family = family, TitleScore = family.Tiers.Max(tier => Similarity(normalizedTitle, Normalize(tier.Name))) })
+                .Select(family => new { Family = family, TitleScore = family.Tiers.Max(tier => Similarity(observed.NormalizedTitle, Normalize(tier.Name))) })
                 .Where(candidate => candidate.TitleScore >= 84).ToList();
             hasExactTitle = families.Any(candidate => IsExactTitleScore(candidate.TitleScore));
             if (hasExactTitle) families = families.Where(candidate => IsExactTitleScore(candidate.TitleScore)).ToList();
+            observed.HasExactTitle = hasExactTitle;
             var candidates = new List<Candidate>();
             foreach (var familyCandidate in families)
             {
                 foreach (var tier in familyCandidate.Family.Tiers)
                 {
-                    var candidate = MatchTier(familyCandidate.Family, tier, normalizedTitle, normalizedDescription,
-                        hasDescription, hasExactTitle, observedNumbers, reward);
+                    var candidate = MatchTier(familyCandidate.Family, tier, observed);
                     if (candidate != null) candidates.Add(candidate);
                 }
             }
             return candidates;
         }
 
-        private static Candidate MatchTier(AchievementFamily family, AchievementDefinition tier, string normalizedTitle,
-            string normalizedDescription, bool hasDescription, bool hasExactTitle, List<string> observedNumbers, int? reward)
+        private static Candidate MatchTier(AchievementFamily family, AchievementDefinition tier, ObservedAchievement observed)
         {
-            var titleScore = Similarity(normalizedTitle, Normalize(tier.Name));
-            if (titleScore < 84 || (hasExactTitle && !IsExactTitleScore(titleScore))) return null;
-            if (reward.HasValue && reward.Value != tier.Reward) return null;
+            var titleScore = Similarity(observed.NormalizedTitle, Normalize(tier.Name));
+            if (titleScore < 84 || (observed.HasExactTitle && !IsExactTitleScore(titleScore))) return null;
+            if (observed.Reward.HasValue && observed.Reward.Value != tier.Reward) return null;
             var expectedNumbers = ExtractNumbers(tier.Description);
-            if (observedNumbers.Count > 0 && !NumbersAgree(observedNumbers, expectedNumbers)) return null;
-            return ScoreTierCandidate(family, tier, titleScore, normalizedDescription, hasDescription);
+            if (observed.ObservedNumbers.Count > 0 && !NumbersAgree(observed.ObservedNumbers, expectedNumbers)) return null;
+            return ScoreTierCandidate(family, tier, titleScore, observed.NormalizedDescription, observed.HasDescription);
         }
 
         private static Candidate ScoreTierCandidate(AchievementFamily family, AchievementDefinition tier, double titleScore,

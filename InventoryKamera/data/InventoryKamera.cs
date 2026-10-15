@@ -183,9 +183,12 @@ namespace InventoryKamera
 
 			// Scan Materials
 			if (Properties.Settings.Default.ScanMaterials)
+			{
 				ScanMaterialInventory();
+			}
 
-            ScanAchievements();
+			// Achievements are scanned regardless of the inventory toggles.
+			ScanAchievements();
 			Logger.Info("Inventory scan finished");
 		}
 

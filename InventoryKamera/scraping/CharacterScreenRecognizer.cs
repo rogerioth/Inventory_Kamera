@@ -998,13 +998,18 @@ namespace InventoryKamera
             return null;
         }
 
+        private static bool IsHealthBarGreen(Color color)
+        {
+            return color.G >= 140 && color.G > color.R * 1.18 && color.G > color.B * 1.15;
+        }
+
         private static Rectangle? FindHealthBarRun(Bitmap frame, int y, int minimumRun, int maximumGap, int maximumRun)
         {
             int start = -1, lastGreen = -1, greenPixels = 0;
             for (int x = (int)(frame.Width * 0.39); x < frame.Width * 0.64; x++)
             {
                 Color color = frame.GetPixel(x, y);
-                bool green = color.G >= 140 && color.G > color.R * 1.18 && color.G > color.B * 1.15;
+                bool green = IsHealthBarGreen(color);
                 if (green)
                 {
                     if (start < 0) start = x;

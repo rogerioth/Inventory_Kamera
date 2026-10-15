@@ -26,7 +26,10 @@ namespace InventoryKamera.Properties
 
         private static string SettingsFile => Path.Combine(SettingsDirectory, SettingsFileName);
 
-        private static List<SettingsSerializeAs> validSerializations;
+        // Fixed whitelist of supported serializations; initialized inline so the
+        // instance Initialize override never writes this static field.
+        private static readonly List<SettingsSerializeAs> validSerializations =
+            new List<SettingsSerializeAs>() { SettingsSerializeAs.Xml, SettingsSerializeAs.String };
 
         public override string ApplicationName
         {
@@ -39,7 +42,6 @@ namespace InventoryKamera.Properties
         public override void Initialize(string name, NameValueCollection config)
         {
             base.Initialize(Name, config);
-            validSerializations = new List<SettingsSerializeAs>() { SettingsSerializeAs.Xml, SettingsSerializeAs.String };
         }
 
         public override SettingsPropertyValueCollection GetPropertyValues(SettingsContext context,

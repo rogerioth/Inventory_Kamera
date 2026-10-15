@@ -119,7 +119,7 @@ namespace InventoryKamera
 				// Remove last row. Sometimes the bottom of a page of items is caught which results
 				// in a faded quantity that can't be parsed. Removing slightly increases the number of pages that
 				// need to be scrolled but it's fine.
-				var r = rectangles.Take(rectangles.Count() - cols).ToList();
+				var r = rectangles.Take(rectangles.Count - cols).ToList();
 
 				Logger.Info("    Scanning {0} inventory page {1}...", inventoryPage, page);
 				Logger.Debug("Located {0} possible item locations on page.", rectangles.Count);
@@ -237,20 +237,25 @@ namespace InventoryKamera
 					if (( k == 7 ) && ( ( scrollCount % 3 ) == 0 ))
 					{
 						k++;
-						if (scrollCount % 9 == 0)
-						{
-							if (scrollCount == 18)
-							{
-								scrollCount = 0;
-							}
-							else
-							{
-								Navigation.sim.Mouse.VerticalScroll(-1);
-							}
-						}
+						ApplySkippedMaterialScroll(ref scrollCount);
 					}
 					Navigation.SystemWait(Navigation.Speed.InventoryScroll);
 					k++;
+				}
+			}
+		}
+
+		private static void ApplySkippedMaterialScroll(ref int scrollCount)
+		{
+			if (scrollCount % 9 == 0)
+			{
+				if (scrollCount == 18)
+				{
+					scrollCount = 0;
+				}
+				else
+				{
+					Navigation.sim.Mouse.VerticalScroll(-1);
 				}
 			}
 		}

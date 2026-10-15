@@ -92,7 +92,7 @@ namespace InventoryKamera
 
 		private static List<SubStat> PositiveValues(List<SubStat> subStats, int capacity)
 		{
-			return subStats?.ToList().Where(e => e.Value > 0).ToList() ?? new List<SubStat>(capacity);
+			return subStats?.Where(e => e.Value > 0).ToList() ?? new List<SubStat>(capacity);
 		}
 
 		public bool IsValid()

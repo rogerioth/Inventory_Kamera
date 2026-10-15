@@ -364,7 +364,7 @@ namespace InventoryKamera
             }
             running = true;
             SetScanOptionsEnabled(false);
-            data = new InventoryKamera { AchievementProgress = UpdateAchievementProgress, AchievementPreview = UpdateAchievementPreview };
+            ReplaceScannerData(new InventoryKamera { AchievementProgress = UpdateAchievementProgress, AchievementPreview = UpdateAchievementPreview });
             string outputDirectory = OutputPath_TextBox.Text;
             bool scanAchievements = Properties.Settings.Default.ScanAchievements;
             bool scanArtifacts = Properties.Settings.Default.ScanArtifacts;
@@ -393,11 +393,28 @@ namespace InventoryKamera
 
             Logger.Info("Scan settings: {0}", options);
 
-            scannerThread = new Thread(() => RunScannerScan(scanAchievements, scanArtifacts, scanCharacters, outputDirectory))
+            CreateScannerThread(() => RunScannerScan(scanAchievements, scanArtifacts, scanCharacters, outputDirectory));
+            StartScan_Button.Enabled = false;
+            StartScannerThread();
+        }
+
+        // The scanner state below is static and shared with the hotkey/abort
+        // paths; instance UI handlers route their writes through these helpers.
+        private static void ReplaceScannerData(InventoryKamera value)
+        {
+            data = value;
+        }
+
+        private static void CreateScannerThread(ThreadStart scanAction)
+        {
+            scannerThread = new Thread(scanAction)
             {
                 IsBackground = true
             };
-            StartScan_Button.Enabled = false;
+        }
+
+        private static void StartScannerThread()
+        {
             scannerThread.Start();
         }
 
