@@ -48,49 +48,6 @@ namespace InventoryKamera
 
 			Logger.Info("    Found {0} artifacts in the inventory", artifactCount);
 
-			//if (SortByLevel)
-			//{
-			//	Logger.Debug("Sorting by level to optimize total scan time");
-			//	// Check if sorted by level
-			//	// If not, sort by level
-			//	if (CurrentSortingMethod() != "level")
-			//	{
-			//		Logger.Debug("Not already sorting by level...");
-			//		Navigation.SetCursor(
-			//			X: (int)(230 / 1280.0 * Navigation.GetWidth()),
-			//			Y: (int)(680 / 720.0 * Navigation.GetHeight()));
-			//		Navigation.Click();
-			//		Navigation.Wait();
-			//		Navigation.SetCursor(
-			//			X: (int)(250 / 1280.0 * Navigation.GetWidth()),
-			//			Y: (int)(615 / 720.0 * Navigation.GetHeight()));
-			//		Navigation.Click();
-			//		Navigation.Wait();
-			//	}
-			//	Logger.Debug("Inventory is sorted by level.");
-			//}
-			//else
-			//{
-			//	Logger.Debug("Sorting by quality to scan all artifacts matching quality filter.");
-			//	// Check if sorted by quality
-			//	if (CurrentSortingMethod() != "quality")
-			//	{
-			//		Logger.Debug("Not already sorting by quality...");
-			//		// If not, sort by quality
-			//		Navigation.SetCursor(
-			//			X: (int)(230 / 1280.0 * Navigation.GetWidth()),
-			//			Y: (int)(680 / 720.0 * Navigation.GetHeight()));
-			//		Navigation.Click();
-			//		Navigation.Wait();
-			//		Navigation.SetCursor(
-			//			X: (int)(250 / 1280.0 * Navigation.GetWidth()),
-			//			Y: (int)(645 / 720.0 * Navigation.GetHeight()));
-			//		Navigation.Click();
-			//		Navigation.Wait();
-			//	}
-			//	Logger.Debug("Inventory is sorted by quality");
-			//}
-
 			// Go through artifact list
 			while (cardsQueued < artifactCount)
 			{
@@ -194,7 +151,6 @@ namespace InventoryKamera
                 width: (int)((Navigation.IsNormal ? 0.2244 : 0.2236) * Navigation.GetWidth()),
                 height: (int)((Navigation.IsNormal ? 0.0422 : 0.0367) * Navigation.GetHeight())))
             {
-				//Navigation.DisplayBitmap(x);
 				// AnalyzeText always returns a non-null string, and the Trim() above
 				// would already have thrown for a null, so the null check is dead.
 				var t = GenshinProcesor.AnalyzeText(x).Trim().ToLower();
@@ -235,14 +191,6 @@ namespace InventoryKamera
 			level = GetLevelBitmap(card, isSanctified);
 			subStats = GetSubstatsBitmap(card, isSanctified);
 
-
-			//Navigation.DisplayBitmap(name);
-			//Navigation.DisplayBitmap(locked);
-			//Navigation.DisplayBitmap(equipped);
-			//Navigation.DisplayBitmap(mainStat);
-			//Navigation.DisplayBitmap(subStats);
-			//Navigation.DisplayBitmap(level);
-			//Navigation.DisplayBitmap(sanctify);
 
 			// Separate to all pieces of artifact and add to pics
 			List<Bitmap> artifactImages = new List<Bitmap>
@@ -642,15 +590,12 @@ namespace InventoryKamera
 			string equippedCharacter = GenshinProcesor.AnalyzeText(n).ToLower();
 			n.Dispose();
 
-			if (equippedCharacter != "")
+			if (equippedCharacter != "" && equippedCharacter.Contains("equipped") && equippedCharacter.Contains(":"))
 			{
-				if (equippedCharacter.Contains("equipped") && equippedCharacter.Contains(":"))
-				{
-					equippedCharacter = Regex.Replace(equippedCharacter.Split(':')[1], @"[\W]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
-					equippedCharacter = GenshinProcesor.FindClosestCharacterName(equippedCharacter);
+				equippedCharacter = Regex.Replace(equippedCharacter.Split(':')[1], @"[\W]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
+				equippedCharacter = GenshinProcesor.FindClosestCharacterName(equippedCharacter);
 
-					return equippedCharacter;
-				}
+				return equippedCharacter;
 			}
 			// artifact has no equipped character
 			return null;

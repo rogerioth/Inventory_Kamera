@@ -93,7 +93,9 @@ namespace InventoryKamera
                 Talents["burst"] = _talents[2];
             }
             catch (Exception)
-            { }
+            {
+                // Intentionally ignored: talents not present in the array keep their default value of 0.
+            }
         }
 
         public bool IsValid()

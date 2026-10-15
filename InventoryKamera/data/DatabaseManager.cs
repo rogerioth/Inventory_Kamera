@@ -98,15 +98,6 @@ namespace InventoryKamera
             "Geo",
         };
 
-        private static readonly List<string> slots = new List<string>
-        {
-            "flower of life",
-            "plume of death",
-            "sands of eon",
-            "goblet of eonothem",
-            "circlet of logos",
-        };
-
         public DatabaseManager()
         {
             Directory.CreateDirectory(ListsDir);
@@ -1079,20 +1070,6 @@ namespace InventoryKamera
 
             Logger.Error("Generated {0} table has only {1} entries (expected at least {2}).", list, count, minimum);
             return false;
-        }
-
-        private string FetchHTML(string url)
-        {
-            try
-            {
-                using (WebClient client = new WebClient())
-                {
-                    client.Encoding = System.Text.Encoding.UTF8;
-                    return client.DownloadString(url);
-                }
-            }
-            catch { throw; }
-
         }
 
         private string LoadJsonFromFile(string fileName)

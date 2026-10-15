@@ -15,13 +15,6 @@ namespace InventoryKamera.Properties
 
         public Settings()
         {
-            // // To add event handlers for saving and changing settings, uncomment the lines below:
-            //
-            // this.SettingChanging += this.SettingChangingEventHandler;
-            //
-            // this.SettingsSaving += this.SettingsSavingEventHandler;
-            //
-
             PropertyChanged += SettingChangedEventHandler;
         }
 

@@ -41,34 +41,57 @@ namespace InventoryKamera
 		// Current Images
 		private static PictureBox navigation_PictureBox;
 
-		public static void Init(PictureBox _gear_PictureBox, TextBox _a_textbox, PictureBox _c_name, PictureBox _c_level, PictureBox[] _c_talent, TextBox _c_textbox, Label _weaponCount, Label _weaponMax, Label _artifactCount, Label _artifactMax, Label _characterCount, Label _programStatus, TextBox _error_textBox, PictureBox _navigation_Image, Action<ScanProgressUpdate> _scanProgress = null)
+		/// <summary>
+		/// The controls and callbacks the scanner UI exposes to <see cref="UserInterface"/>.
+		/// Collected once by the main form and handed to <see cref="Init"/> as a single object.
+		/// </summary>
+		public sealed class Controls
+		{
+			public PictureBox GearPictureBox { get; internal set; }
+			public TextBox ArtifactOutput { get; internal set; }
+			public PictureBox CharacterName { get; internal set; }
+			public PictureBox CharacterLevel { get; internal set; }
+			public PictureBox[] CharacterTalents { get; internal set; }
+			public TextBox CharacterOutput { get; internal set; }
+			public Label WeaponCount { get; internal set; }
+			public Label WeaponMax { get; internal set; }
+			public Label ArtifactCount { get; internal set; }
+			public Label ArtifactMax { get; internal set; }
+			public Label CharacterCount { get; internal set; }
+			public Label ProgramStatus { get; internal set; }
+			public TextBox ErrorLog { get; internal set; }
+			public PictureBox NavigationImage { get; internal set; }
+			public Action<ScanProgressUpdate> ScanProgress { get; internal set; }
+		}
+
+		public static void Init(Controls controls)
 		{
 			// Artifacts and Weapons
-			gear_PictureBox = _gear_PictureBox;
-			gear_TextBox = _a_textbox;
+			gear_PictureBox = controls.GearPictureBox;
+			gear_TextBox = controls.ArtifactOutput;
 
 			// Characters
-			cName_PictureBox = _c_name;
-			cLevel_PictureBox = _c_level;
-			cTalent_PictureBoxes = _c_talent;
-			character_TextBox = _c_textbox;
+			cName_PictureBox = controls.CharacterName;
+			cLevel_PictureBox = controls.CharacterLevel;
+			cTalent_PictureBoxes = controls.CharacterTalents;
+			character_TextBox = controls.CharacterOutput;
 
 			// Counters
-			weaponCount_Label = _weaponCount;
-			weaponMax_Label = _weaponMax;
-			artifactCount_Label = _artifactCount;
-			artifactMax_Label = _artifactMax;
-			characterCount_Label = _characterCount;
+			weaponCount_Label = controls.WeaponCount;
+			weaponMax_Label = controls.WeaponMax;
+			artifactCount_Label = controls.ArtifactCount;
+			artifactMax_Label = controls.ArtifactMax;
+			characterCount_Label = controls.CharacterCount;
 
 			// Status
-			programStatus_Label = _programStatus;
-            scanProgress = _scanProgress;
+			programStatus_Label = controls.ProgramStatus;
+            scanProgress = controls.ScanProgress;
 
 			// Error
-			error_TextBox = _error_textBox;
+			error_TextBox = controls.ErrorLog;
 
 			// Navigation Image
-			navigation_PictureBox = _navigation_Image;
+			navigation_PictureBox = controls.NavigationImage;
 		}
 
 		private static void UpdateElements(Bitmap bm, string text, PictureBox pictureBox, TextBox textBox)

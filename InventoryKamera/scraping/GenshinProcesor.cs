@@ -619,82 +619,6 @@ namespace InventoryKamera
 			return mostSimilarString;
 		}
 
-		// Adapted from https://stackoverflow.com/a/9454016/13205651
-		private static int CalcDistance_1(string text, string setName, int maxEdits)
-		{
-			int length1 = text.Length;
-			int length2 = setName.Length;
-
-			// Return trivial case - difference in string lengths exceeds threshhold
-			if (Math.Abs(length1 - length2) > maxEdits) { return int.MaxValue; }
-
-			// Ensure arrays [i] / length1 use shorter length
-			if (length1 > length2)
-			{
-				Swap(ref setName, ref text);
-				Swap(ref length1, ref length2);
-			}
-
-			int maxi = length1;
-			int maxj = length2;
-
-			int[] dCurrent = new int[maxi + 1];
-			int[] dMinus1 = new int[maxi + 1];
-			int[] dMinus2 = new int[maxi + 1];
-			int[] dSwap;
-
-			for (int i = 0; i <= maxi; i++) { dCurrent[i] = i; }
-
-			int jm1 = 0, im1 = 0, im2 = -1;
-
-			for (int j = 1; j <= maxj; j++)
-			{
-				// Rotate
-				dSwap = dMinus2;
-				dMinus2 = dMinus1;
-				dMinus1 = dCurrent;
-				dCurrent = dSwap;
-
-				// Initialize
-				int minDistance = int.MaxValue;
-				dCurrent[0] = j;
-				im1 = 0;
-				im2 = -1;
-
-				for (int i = 1; i <= maxi; i++)
-				{
-					int cost = text[im1] == setName[jm1] ? 0 : 1;
-
-					int del = dCurrent[im1] + 1;
-					int ins = dMinus1[i] + 1;
-					int sub = dMinus1[im1] + cost;
-
-					//Fastest execution for min value of 3 integers
-					int min;
-					if (del > ins) min = ins > sub ? sub : ins;
-					else min = del > sub ? sub : del;
-
-					if (i > 1 && j > 1 && text[im2] == setName[jm1] && text[im1] == setName[j - 2])
-						min = Math.Min(min, dMinus2[im2] + cost);
-
-					dCurrent[i] = min;
-					if (min < minDistance) { minDistance = min; }
-					im1++;
-					im2++;
-				}
-				jm1++;
-				if (minDistance > maxEdits) { return int.MaxValue; }
-			}
-
-			int result = dCurrent[maxi];
-			return ( result > maxEdits ) ? int.MaxValue : result;
-
-			void Swap<T>(ref T arg1, ref T arg2)
-			{
-                (arg2, arg1) = (arg1, arg2);
-            }
-        }
-
 		private static int LevenshteinDistance(string s1, string s2)
 		{
             int m = s1.Length;
@@ -761,7 +685,7 @@ namespace InventoryKamera
 
 				card1 = Navigation.CaptureRegion(new RECT(left, top, right, bottom));
 			}
-			else // if (Navigation.GetAspectRatio() == new Size(8, 5))
+			else
 			{
 				reference = new RECT(new Rectangle(862, 80, 327, 640));
 
@@ -837,11 +761,9 @@ namespace InventoryKamera
 				if (!CompareBitmapsFast(card1, card2) && !CompareBitmapsFast(card2, card3))
 				{
 					Navigation.SetDelay(Navigation.GetDelay() - delayOffset);
-					//Navigation.SystemRandomWait();
 
 					Navigation.SetCursor(item1.Center().X, item1.Center().Y);
 					Navigation.Click();
-					//Navigation.SystemRandomWait();
 				}
 				else
 				{
@@ -1210,12 +1132,10 @@ namespace InventoryKamera
                 // Characters missing from characters.json (e.g. newly released or
                 // otherwise unknown characters) have no element data. Return an
                 // empty list instead of null so callers never get a NullReferenceException.
-                if (Characters.TryGetValue(name.ToLower(), out var data) && data != null)
+                if (Characters.TryGetValue(name.ToLower(), out var data) && data != null
+                    && data.TryGetValue("Element", out var elementToken) && elementToken != null)
                 {
-                    if (data.TryGetValue("Element", out var elementToken) && elementToken != null)
-                    {
-                        return elementToken.ToObject<List<string>>() ?? new List<string>();
-                    }
+                    return elementToken.ToObject<List<string>>() ?? new List<string>();
                 }
 
                 // Resolve canonical GOOD Traveler<Element> keys back to the
