@@ -258,14 +258,13 @@ namespace InventoryKamera
                 // Image pre-processing
                 screenshot = new KirschEdgeDetector().Apply(screenshot); // Algorithm to find edges. Really good but can take ~1s
                 screenshot = new Grayscale(0.2125, 0.7154, 0.0721).Apply(screenshot);
-                screenshot = new Threshold(75).Apply(screenshot); // Convert to black and white only based on pixel intensity			
+                screenshot = new Threshold(75).Apply(screenshot); // Convert to black and white only based on pixel intensity
 
                 blobCounter.ProcessImage(screenshot);
                 // Note: Processing won't always detect all item rectangles on screen. Since the
                 // background isn't a solid color it's a bit trickier to filter out.
 
                 // Don't save overlapping blobs
-                List<Rectangle> rectangles = new List<Rectangle>();
                 List<Rectangle> blobRects = blobCounter.GetObjectsRectangles().ToList();
 
                 // A capture taken during a UI animation can contain no item blobs at
@@ -274,68 +273,16 @@ namespace InventoryKamera
                 if (blobRects.Count == 0)
                 {
                     Logger.Warn("No item blobs detected on the screenshot.");
-                    return (rectangles, 0, 0);
+                    return (new List<Rectangle>(), 0, 0);
                 }
 
-                int minWidth = blobRects[0].Width;
-                int minHeight = blobRects[0].Height;
-                foreach (var rect in blobRects)
-                {
-                    bool add = true;
-                    foreach (var item in rectangles)
-                    {
-                        Rectangle r1 = rect;
-                        Rectangle r2 = item;
-                        Rectangle intersect = Rectangle.Intersect(r1, r2);
-                        if (intersect.Width > r1.Width * .1)
-                        {
-                            add = false;
-                            break;
-                        }
-                    }
-                    if (add)
-                    {
-                        minWidth = Math.Min(minWidth, rect.Width);
-                        minHeight = Math.Min(minHeight, rect.Height);
-                        rectangles.Add(rect);
-                    }
-                }
+                List<Rectangle> rectangles;
+                int minWidth, minHeight;
+                (rectangles, minWidth, minHeight) = DeduplicateBlobs(blobRects);
 
                 // Determine X and Y coordinates for columns and rows, respectively
-                var colCoords = new List<int>();
-                var rowCoords = new List<int>();
-
-                foreach (var item in rectangles)
-                {
-                    bool addX = true;
-                    bool addY = true;
-                    foreach (var x in colCoords)
-                    {
-                        var xC = item.Center().X;
-                        if (x - 75 / base_aspect_width * screenshot.Width <= xC && xC <= x + 75 / base_aspect_width * screenshot.Width)
-                        {
-                            addX = false;
-                            break;
-                        }
-                    }
-                    foreach (var y in rowCoords)
-                    {
-                        var yC = item.Center().Y;
-                        if (y - 100 / base_aspect_height * screenshot.Height <= yC && yC <= y + 100 / base_aspect_height * screenshot.Height)
-                        {
-                            addY = false;
-                            break;
-                        }
-                    }
-                    if (addX)
-                    {
-                        colCoords.Add(item.Center().X);
-                    }
-                    if (addY)
-                    {
-                        rowCoords.Add(item.Center().Y);
-                    }
-                }
+                List<int> colCoords, rowCoords;
+                (colCoords, rowCoords) = CollectGridCoordinates(rectangles, base_aspect_width, base_aspect_height, screenshot);
 
                 // Going to use X,Y coordinate pairings to build rectangles around. Items that might have been missed
                 // This is quite accurate and algorithmically puts rectangles over all items on the screen that were missed.
@@ -346,32 +293,8 @@ namespace InventoryKamera
 
                 colCoords.RemoveAll(col => col > screenshot.Width * 0.65);
 
-                foreach (var row in rowCoords)
-                {
-                    foreach (var col in colCoords)
-                    {
-                        int x = (int)(col - (minWidth * .5));
-                        int y = (int)(row - (minHeight * .5));
-
-                        rectangles.Add(new Rectangle(x, y, minWidth, minHeight));
-                    }
-                }
-
-                // Remove some rectangles that somehow overlap each other. Don't think this happens
-                // but it doesn't hurt to double check.
-                for (int i = 0; i < rectangles.Count - 1; i++)
-                {
-                    for (int j = i + 1; j < rectangles.Count; j++)
-                    {
-                        Rectangle r1 = rectangles[i];
-                        Rectangle r2 = rectangles[j];
-                        Rectangle intersect = Rectangle.Intersect(r1, r2);
-                        if (intersect.Width > r1.Width * .2)
-                        {
-                            rectangles.RemoveAt(j);
-                        }
-                    }
-                }
+                rectangles = BuildGridRectangles(colCoords, rowCoords, minWidth, minHeight);
+                RemoveOverlappingRectangles(rectangles);
 
                 // Sort by row then by column within each row
                 rectangles = rectangles.OrderBy(r => r.Top).ThenBy(r => r.Left).ToList();
@@ -389,6 +312,131 @@ namespace InventoryKamera
             }
         }
 
+        private static (List<Rectangle> rectangles, int minWidth, int minHeight) DeduplicateBlobs(List<Rectangle> blobRects)
+        {
+            List<Rectangle> rectangles = new List<Rectangle>();
+            int minWidth = blobRects[0].Width;
+            int minHeight = blobRects[0].Height;
+            foreach (var rect in blobRects)
+            {
+                bool add = true;
+                foreach (var item in rectangles)
+                {
+                    Rectangle r1 = rect;
+                    Rectangle r2 = item;
+                    Rectangle intersect = Rectangle.Intersect(r1, r2);
+                    if (intersect.Width > r1.Width * .1)
+                    {
+                        add = false;
+                        break;
+                    }
+                }
+                if (add)
+                {
+                    minWidth = Math.Min(minWidth, rect.Width);
+                    minHeight = Math.Min(minHeight, rect.Height);
+                    rectangles.Add(rect);
+                }
+            }
+            return (rectangles, minWidth, minHeight);
+        }
+
+        private static (List<int> colCoords, List<int> rowCoords) CollectGridCoordinates(List<Rectangle> rectangles,
+            double baseAspectWidth, double baseAspectHeight, Bitmap screenshot)
+        {
+            var colCoords = new List<int>();
+            var rowCoords = new List<int>();
+
+            foreach (var item in rectangles)
+            {
+                bool addX = true;
+                bool addY = true;
+                foreach (var x in colCoords)
+                {
+                    var xC = item.Center().X;
+                    if (x - 75 / baseAspectWidth * screenshot.Width <= xC && xC <= x + 75 / baseAspectWidth * screenshot.Width)
+                    {
+                        addX = false;
+                        break;
+                    }
+                }
+                foreach (var y in rowCoords)
+                {
+                    var yC = item.Center().Y;
+                    if (y - 100 / baseAspectHeight * screenshot.Height <= yC && yC <= y + 100 / baseAspectHeight * screenshot.Height)
+                    {
+                        addY = false;
+                        break;
+                    }
+                }
+                if (addX)
+                {
+                    colCoords.Add(item.Center().X);
+                }
+                if (addY)
+                {
+                    rowCoords.Add(item.Center().Y);
+                }
+            }
+            return (colCoords, rowCoords);
+        }
+
+        private static List<Rectangle> BuildGridRectangles(List<int> colCoords, List<int> rowCoords, int minWidth, int minHeight)
+        {
+            var rectangles = new List<Rectangle>();
+            foreach (var row in rowCoords)
+            {
+                foreach (var col in colCoords)
+                {
+                    int x = (int)(col - (minWidth * .5));
+                    int y = (int)(row - (minHeight * .5));
+
+                    rectangles.Add(new Rectangle(x, y, minWidth, minHeight));
+                }
+            }
+            return rectangles;
+        }
+
+        private static void RemoveOverlappingRectangles(List<Rectangle> rectangles)
+        {
+            // Remove some rectangles that somehow overlap each other. Don't think this happens
+            // but it doesn't hurt to double check.
+            for (int i = 0; i < rectangles.Count - 1; i++)
+            {
+                for (int j = i + 1; j < rectangles.Count; j++)
+                {
+                    Rectangle r1 = rectangles[i];
+                    Rectangle r2 = rectangles[j];
+                    Rectangle intersect = Rectangle.Intersect(r1, r2);
+                    if (intersect.Width > r1.Width * .2)
+                    {
+                        rectangles.RemoveAt(j);
+                    }
+                }
+            }
+        }
+
+        /// <summary>Bounded page-detection retry state shared between the probe phases.</summary>
+        private sealed class ItemPageProbe
+        {
+            internal readonly Bitmap Screenshot;
+            internal readonly Bitmap ProcessedScreenshot;
+            internal readonly int PageNum;
+            internal readonly bool AcceptLess;
+            internal List<Rectangle> Rectangles;
+            internal int Cols;
+            internal int Rows;
+            internal double Weight;
+
+            internal ItemPageProbe(Bitmap screenshot, Bitmap processedScreenshot, int pageNum, bool acceptLess)
+            {
+                Screenshot = screenshot;
+                ProcessedScreenshot = processedScreenshot;
+                PageNum = pageNum;
+                AcceptLess = acceptLess;
+            }
+        }
+
         internal (List<Rectangle> rectangles, int cols, int rows) GetPageOfItems(int pageNum, bool acceptLess = false)
         {
             // Screenshot of inventory
@@ -401,78 +449,27 @@ namespace InventoryKamera
                 using (Graphics g = Graphics.FromImage(processedScreenshot))
                 using (var brush = new SolidBrush(Color.Black))
                 {
-                    // Fill Top region
-                    switch (inventoryPage)
-                    {
-                        case InventoryPage.Artifacts:
-                            g.FillRectangle(brush, 0, 0, processedScreenshot.Width, (int)(processedScreenshot.Height * 0.143));
-                            break;
-                        default:
-                            g.FillRectangle(brush, 0, 0, processedScreenshot.Width, (int)(processedScreenshot.Height * 0.09));
-                            break;
-                    }
-
-                    // Fill Left region
-                    g.FillRectangle(brush, 0, 0, (int)(processedScreenshot.Width * 0.05), processedScreenshot.Height);
-
-                    // Fill Right region
-                    g.FillRectangle(brush, (int)(processedScreenshot.Width * 0.7), 0, processedScreenshot.Width, processedScreenshot.Height);
-
-                    // Fill Bottom Region
-                    g.FillRectangle(brush, 0, (int)(processedScreenshot.Height * 0.9), processedScreenshot.Width, processedScreenshot.Height);
+                    FillInventoryMargins(g, brush, processedScreenshot);
                 }
                 try
                 {
-                    List<Rectangle> rectangles;
-                    int cols, rows, itemCount, counter = 0;
-                    double weight = 0;
                     // On 16:10 the artifact page fits a fifth row of items
                     // (40 per page instead of 32).
                     // (Ported from taiwenlee/Inventory_Kamera (MIT): f3ee8527)
                     int itemPerPage = (inventoryPage != InventoryPage.Artifacts || !Navigation.IsNormal) ? 40 : 32;
-                    do
-                    {
-                        (rectangles, cols, rows) = ProcessScreenshot(processedScreenshot, weight);
-                        itemCount = rows * cols;
-                        // An empty detection is never acceptable, even on a partial page:
-                        // accepting it would leave the walk with nothing to click and
-                        // could stall the scan.
-                        if (itemCount != itemPerPage && !(acceptLess && itemCount > 0))
-                        {
-                            Logger.Warn("Unable to locate full page of weapons with weight {0}; detected {1} rows and {2} columns of items", weight, rows, cols);
+                    var probe = new ItemPageProbe(screenshot, processedScreenshot, pageNum, acceptLess);
+                    DetectItemPage(probe, itemPerPage);
 
-                            // Generate rectangles
-                            using (Bitmap copy = (Bitmap)screenshot.Clone())
-                            {
-                                SaveInventoryBitmap(copy, $"{inventoryPage}Inventory{pageNum}_{cols}x{rows}.png");
-                                using (Graphics g = Graphics.FromImage(copy))
-                                    rectangles.ForEach(r => g.DrawRectangle(new Pen(Color.Green, 2), r));
-                                SaveInventoryBitmap(copy, $"{inventoryPage}Inventory{pageNum}_{cols}x{rows} - weight {weight}.png");
-#if DEBUG
-#endif
-                            }
-                        }
-                        else break;
-
-                        if (itemCount <= 32)
-                            weight += 0.125;
-                        else
-                        { weight -= 0.095; ++counter; }
-                        weight = Math.Min(weight, 1);
-                        rectangles = null;
-                    }
-                    while (itemCount != itemPerPage && weight < 1 && counter < 25);
-
-                    if (Properties.Settings.Default.LogScreenshots && rectangles != null)
+                    if (Properties.Settings.Default.LogScreenshots && probe.Rectangles != null)
                     {
                         SaveInventoryBitmap(screenshot, $"{inventoryPage}Inventory.png");
                         using (Graphics g = Graphics.FromImage(screenshot))
-                            rectangles.ForEach(r => g.DrawRectangle(new Pen(Color.Green, 2), r));
+                            probe.Rectangles.ForEach(r => g.DrawRectangle(new Pen(Color.Green, 2), r));
 
-                        SaveInventoryBitmap(screenshot, $"{inventoryPage}Inventory{pageNum}_{cols}x{rows} - weight {weight}.png");
+                        SaveInventoryBitmap(screenshot, $"{inventoryPage}Inventory{pageNum}_{probe.Cols}x{probe.Rows} - weight {probe.Weight}.png");
                     }
 
-                    if (rectangles == null)
+                    if (probe.Rectangles == null)
                     {
                         Logger.Warn("Could not find {0} items in inventory. Re-using previous item page.", itemPerPage);
 
@@ -483,8 +480,8 @@ namespace InventoryKamera
                     }
                     else
                     {
-                        prevRect = rectangles; prevColumn = cols; prevRow = rows;
-                        return (rectangles, cols, rows);
+                        prevRect = probe.Rectangles; prevColumn = probe.Cols; prevRow = probe.Rows;
+                        return (probe.Rectangles, probe.Cols, probe.Rows);
                     }
 
                 }
@@ -495,6 +492,70 @@ namespace InventoryKamera
                 }
             }
 
+        }
+
+        private void FillInventoryMargins(Graphics g, SolidBrush brush, Bitmap processedScreenshot)
+        {
+            // Fill Top region
+            switch (inventoryPage)
+            {
+                case InventoryPage.Artifacts:
+                    g.FillRectangle(brush, 0, 0, processedScreenshot.Width, (int)(processedScreenshot.Height * 0.143));
+                    break;
+                default:
+                    g.FillRectangle(brush, 0, 0, processedScreenshot.Width, (int)(processedScreenshot.Height * 0.09));
+                    break;
+            }
+
+            // Fill Left region
+            g.FillRectangle(brush, 0, 0, (int)(processedScreenshot.Width * 0.05), processedScreenshot.Height);
+
+            // Fill Right region
+            g.FillRectangle(brush, (int)(processedScreenshot.Width * 0.7), 0, processedScreenshot.Width, processedScreenshot.Height);
+
+            // Fill Bottom Region
+            g.FillRectangle(brush, 0, (int)(processedScreenshot.Height * 0.9), processedScreenshot.Width, processedScreenshot.Height);
+        }
+
+        private void DetectItemPage(ItemPageProbe probe, int itemPerPage)
+        {
+            List<Rectangle> rectangles;
+            int cols, rows, itemCount, counter = 0;
+            double weight = 0;
+            do
+            {
+                (rectangles, cols, rows) = ProcessScreenshot(probe.ProcessedScreenshot, weight);
+                probe.Rectangles = rectangles; probe.Cols = cols; probe.Rows = rows;
+                itemCount = rows * cols;
+                // An empty detection is never acceptable, even on a partial page:
+                // accepting it would leave the walk with nothing to click and
+                // could stall the scan.
+                if (itemCount != itemPerPage && !(probe.AcceptLess && itemCount > 0))
+                {
+                    Logger.Warn("Unable to locate full page of weapons with weight {0}; detected {1} rows and {2} columns of items", weight, rows, cols);
+
+                    // Generate rectangles
+                    using (Bitmap copy = (Bitmap)probe.Screenshot.Clone())
+                    {
+                        SaveInventoryBitmap(copy, $"{inventoryPage}Inventory{probe.PageNum}_{cols}x{rows}.png");
+                        using (Graphics g = Graphics.FromImage(copy))
+                            rectangles.ForEach(r => g.DrawRectangle(new Pen(Color.Green, 2), r));
+                        SaveInventoryBitmap(copy, $"{inventoryPage}Inventory{probe.PageNum}_{cols}x{rows} - weight {weight}.png");
+#if DEBUG
+#endif
+                    }
+                }
+                else break;
+
+                if (itemCount <= 32)
+                    weight += 0.125;
+                else
+                { weight -= 0.095; ++counter; }
+                weight = Math.Min(weight, 1);
+                probe.Rectangles = null;
+            }
+            while (itemCount != itemPerPage && weight < 1 && counter < 25);
+            probe.Weight = weight;
         }
 
         /// <summary>

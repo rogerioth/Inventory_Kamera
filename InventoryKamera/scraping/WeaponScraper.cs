@@ -55,20 +55,11 @@ namespace InventoryKamera
                 for (int i = cardsRemaining < fullPage ? (rows - (totalRows - rowsQueued)) * cols : 0; i < rectangles.Count; i++)
                 {
                     Rectangle item = rectangles[i];
-                    Navigation.SetCursor(item.Center().X, item.Center().Y + offset);
-                    Navigation.Click();
-                    Navigation.SystemWait(Navigation.Speed.SelectNextInventoryItem);
-
-                    // Queue card for scanning
-                    QueueScan(cardsQueued);
+                    QueueWeaponCard(item, cardsQueued, offset);
                     cardsQueued++;
                     UserInterface.ReportScanProgress(ScanPhase.Weapons, cardsQueued, weaponCount);
-                    if (cardsQueued >= weaponCount || this.StopScanning)
+                    if (FinishWeaponCapture(cardsQueued, weaponCount))
                     {
-                        if (StopScanning) Logger.Info("    Weapon capture finished at the configured filters");
-                        else Logger.Info("    Weapon capture finished: {0} of {1} cards queued", cardsQueued, weaponCount);
-                        UserInterface.FinishScanPhase(ScanPhase.Weapons, cardsQueued, weaponCount,
-                            StopScanning ? "Stopped at configured filters" : null);
                         return;
                     }
                 }
@@ -76,83 +67,108 @@ namespace InventoryKamera
 
                 rowsQueued += rows;
 
-                // Page done, now scroll
-                // If the number of remaining scans is shorter than a full page then
-                // only scroll a few rows
-                if (totalRows - rowsQueued <= rows)
-                {
-                    if (Navigation.GetAspectRatio() == new Size(8, 5))
-                    {
-                        offset = 35; // Lazy fix
-                    }
-                    for (int i = 0; i < 10 * (totalRows - rowsQueued) - 1; i++)
-                    {
-                        Navigation.sim.Mouse.VerticalScroll(-1);
-                        Navigation.Wait(1);
-                    }
-                    Navigation.SystemWait(Navigation.Speed.Fast);
-                }
-                else
-                {
-                    // Scroll back one to keep it from getting too crazy
-                    if (rowsQueued % 15 == 0)
-                    {
-                        Navigation.sim.Mouse.VerticalScroll(1);
-                    }
-                    for (int i = 0; i < 10 * rows - 1; i++)
-                    {
-                        Navigation.sim.Mouse.VerticalScroll(-1);
-                        Navigation.Wait(1);
-                    }
-                    Navigation.SystemWait(Navigation.Speed.Fast);
-                }
+                ScrollWeaponPage(rowsQueued, totalRows, rows, ref offset);
                 ++page;
                 (rectangles, cols, rows) = GetPageOfItems(page, acceptLess: totalRows - rowsQueued <= fullPage);
             }
             UserInterface.FinishScanPhase(ScanPhase.Weapons, cardsQueued, weaponCount);
+        }
 
-            // Opens the sort dropdown (fixed coordinates) and picks the row for
-            // the requested sort mode; only the row's Y coordinate differs.
-            void SelectSorting(int filterRowY)
+        private void QueueWeaponCard(Rectangle item, int cardsQueued, int offset)
+        {
+            Navigation.SetCursor(item.Center().X, item.Center().Y + offset);
+            Navigation.Click();
+            Navigation.SystemWait(Navigation.Speed.SelectNextInventoryItem);
+
+            // Queue card for scanning
+            QueueScan(cardsQueued);
+        }
+
+        private bool FinishWeaponCapture(int cardsQueued, int weaponCount)
+        {
+            if (cardsQueued < weaponCount && !StopScanning) return false;
+            if (StopScanning) Logger.Info("    Weapon capture finished at the configured filters");
+            else Logger.Info("    Weapon capture finished: {0} of {1} cards queued", cardsQueued, weaponCount);
+            UserInterface.FinishScanPhase(ScanPhase.Weapons, cardsQueued, weaponCount,
+                StopScanning ? "Stopped at configured filters" : null);
+            return true;
+        }
+
+        private static void ScrollWeaponPage(int rowsQueued, int totalRows, int rows, ref int offset)
+        {
+            // Page done, now scroll
+            // If the number of remaining scans is shorter than a full page then
+            // only scroll a few rows
+            if (totalRows - rowsQueued <= rows)
             {
-                Navigation.SetCursor(
-                    X: (int)(230 / 1280.0 * Navigation.GetWidth()),
-                    Y: (int)(680 / 720.0 * Navigation.GetHeight()));
-                Navigation.Click();
-                Navigation.Wait();
-                Navigation.SetCursor(
-                    X: (int)(250 / 1280.0 * Navigation.GetWidth()),
-                    Y: (int)(filterRowY / 720.0 * Navigation.GetHeight()));
-                Navigation.Click();
-                Navigation.Wait();
+                if (Navigation.GetAspectRatio() == new Size(8, 5))
+                {
+                    offset = 35; // Lazy fix
+                }
+                for (int i = 0; i < 10 * (totalRows - rowsQueued) - 1; i++)
+                {
+                    Navigation.sim.Mouse.VerticalScroll(-1);
+                    Navigation.Wait(1);
+                }
+                Navigation.SystemWait(Navigation.Speed.Fast);
             }
-
-            void SelectSortingMethod()
+            else
             {
-                if (SortByLevel)
+                // Scroll back one to keep it from getting too crazy
+                if (rowsQueued % 15 == 0)
                 {
-                    Logger.Debug("Sorting by level to optimize scan time.");
-                    // Check if sorted by level
-                    if (CurrentSortingMethod() != "level")
-                    {
-                        Logger.Debug("Not already sorting by level...");
-                        // If not, sort by level
-                        SelectSorting(filterRowY: 575);
-                    }
-                    Logger.Debug("Inventory is sorted by level.");
+                    Navigation.sim.Mouse.VerticalScroll(1);
                 }
-                else
+                for (int i = 0; i < 10 * rows - 1; i++)
                 {
-                    Logger.Debug("Sorting by quality to optimize scan time.");
-                    // Check if sorted by quality
-                    if (CurrentSortingMethod() != "quality")
-                    {
-                        Logger.Debug("Not already sorting by quality...");
-                        // If not, sort by quality
-                        SelectSorting(filterRowY: 615);
-                    }
-                    Logger.Debug("Inventory is sorted by quality");
+                    Navigation.sim.Mouse.VerticalScroll(-1);
+                    Navigation.Wait(1);
                 }
+                Navigation.SystemWait(Navigation.Speed.Fast);
+            }
+        }
+
+        // Opens the sort dropdown (fixed coordinates) and picks the row for
+        // the requested sort mode; only the row's Y coordinate differs.
+        private static void SelectSorting(int filterRowY)
+        {
+            Navigation.SetCursor(
+                X: (int)(230 / 1280.0 * Navigation.GetWidth()),
+                Y: (int)(680 / 720.0 * Navigation.GetHeight()));
+            Navigation.Click();
+            Navigation.Wait();
+            Navigation.SetCursor(
+                X: (int)(250 / 1280.0 * Navigation.GetWidth()),
+                Y: (int)(filterRowY / 720.0 * Navigation.GetHeight()));
+            Navigation.Click();
+            Navigation.Wait();
+        }
+
+        private void SelectSortingMethod()
+        {
+            if (SortByLevel)
+            {
+                Logger.Debug("Sorting by level to optimize scan time.");
+                // Check if sorted by level
+                if (CurrentSortingMethod() != "level")
+                {
+                    Logger.Debug("Not already sorting by level...");
+                    // If not, sort by level
+                    SelectSorting(filterRowY: 575);
+                }
+                Logger.Debug("Inventory is sorted by level.");
+            }
+            else
+            {
+                Logger.Debug("Sorting by quality to optimize scan time.");
+                // Check if sorted by quality
+                if (CurrentSortingMethod() != "quality")
+                {
+                    Logger.Debug("Not already sorting by quality...");
+                    // If not, sort by quality
+                    SelectSorting(filterRowY: 615);
+                }
+                Logger.Debug("Inventory is sorted by quality");
             }
         }
 
