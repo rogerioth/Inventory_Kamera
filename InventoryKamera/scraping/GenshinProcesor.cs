@@ -90,7 +90,7 @@ namespace InventoryKamera
 		// the type initializer without an explicit static constructor. Field
 		// initializers run in declaration order, so Stats and elements are
 		// ready before this builds the element lookup.
-		internal static Dictionary<string, string> Elements = BuildElements();
+		internal static readonly Dictionary<string, string> Elements = BuildElements();
 
 		private static Dictionary<string, string> BuildElements()
 		{
