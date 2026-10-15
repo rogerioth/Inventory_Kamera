@@ -301,11 +301,13 @@ namespace InventoryKamera
 
         private Bitmap GetMainStatBitmap(Bitmap card)
         {
+			// Height is identical for 16:9 and 16:10 today; re-split it if
+			// real 16:10 values ever diverge.
 			return GenshinProcesor.CopyBitmap(card, new Rectangle(
 				x: (int)(card.Width * 0.0405),
 				y: (int)(card.Height * (Navigation.IsNormal ? 0.1722 : 0.1477)),
 				width: (int)(card.Width * 0.4555),
-				height: (int)(card.Height * (Navigation.IsNormal ? 0.0416 : 0.0416))));
+				height: (int)(card.Height * 0.0416)));
         }
 
         private Bitmap GetLevelBitmap(Bitmap card, bool isSanctified = false)

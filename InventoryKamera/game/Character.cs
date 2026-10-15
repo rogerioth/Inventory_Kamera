@@ -171,7 +171,7 @@ namespace InventoryKamera
             }
             // Levels 81-100 map to ascension 6 like 81-90 did before the cap
             // was raised. (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d)
-            else if (Level <= 100 || (Level == 100 && !Ascended))
+            else if (Level <= 100)
             {
                 return 6;
             }

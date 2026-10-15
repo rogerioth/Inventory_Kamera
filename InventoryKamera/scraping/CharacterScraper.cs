@@ -1259,11 +1259,13 @@ namespace InventoryKamera
 			// Ported from taiwenlee/Inventory_Kamera (MIT): 84874142
 			// Non-16:9 aspect ratios previously produced a zero-sized region,
 			// which made the talent level impossible to read.
+			// x/width/height are identical for 16:9 and 16:10 today; re-split
+			// them if real 16:10 values ever diverge.
 			Rectangle region =  new Rectangle(
-				x:		(int)((Navigation.IsNormal ? 0.0003 : 0.0003) * Navigation.GetWidth() ),
+				x:		(int)(0.0003 * Navigation.GetWidth() ),
 				y:		(int)((Navigation.IsNormal ? 0.1278 : 0.1078) * Navigation.GetHeight() ),
-				width:	(int)((Navigation.IsNormal ? 0.2913 : 0.2913) * Navigation.GetWidth() ),
-				height:	(int)((Navigation.IsNormal ? 0.0711 : 0.0711) * Navigation.GetHeight() ));
+				width:	(int)(0.2913 * Navigation.GetWidth() ),
+				height:	(int)(0.0711 * Navigation.GetHeight() ));
 
 			const int maxTalentAttempts = 50;
 

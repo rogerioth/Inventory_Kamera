@@ -142,7 +142,7 @@ namespace InventoryKamera
 			{
 				return 5;
 			}
-			else if (Level <= 90 || ( Level == 90 && Ascended == false ))
+			else if (Level <= 90)
 			{
 				return 6;
 			}
