@@ -300,7 +300,7 @@ namespace InventoryKamera
 			if (created == 0)
 			{
 				throw new InvalidOperationException(
-					BuildTesseractInstallError($"No OCR engines could be created{(lastError is null ? string.Empty : $": {lastError.Message}")}"),
+					BuildTesseractInstallError($"No OCR engines could be created: {lastError.Message}"),
 					lastError);
 			}
 
@@ -772,8 +772,6 @@ namespace InventoryKamera
 
 			do
 			{
-				if (bStoppedOnce)
-					delayOffset = 10;
 
 				// Do mouse movement to first and second UI element in Inventory
 				Navigation.SetCursor(item1.Center().X, item1.Center().Y);
