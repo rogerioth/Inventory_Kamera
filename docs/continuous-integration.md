@@ -18,6 +18,11 @@ The first token-backed PR analysis also passed its quality gate and published
 2. Runs the default achievement, character-navigation, artifact-database, and
    material-quantity harnesses against the x64 output: **27 grouped checks**.
 
+Checkout explicitly uses `method: full`. CircleCI's default blobless checkout
+can omit historical file contents needed by Sonar's Git blame reader, causing
+`MissingObjectException: Missing blob` during a full project scan. See the
+[checkout reference](https://circleci.com/docs/reference/configuration-reference/#checkout).
+
 The script builds the classic .NET Framework 4.7.2 application `.csproj`, not
 the installer project. It requires Windows, Visual Studio/MSBuild, Roslyn, the
 4.7.2 targeting pack, and the Visual C++ 2015–2022 x64 runtime. NuGet supplies Tesseract's
