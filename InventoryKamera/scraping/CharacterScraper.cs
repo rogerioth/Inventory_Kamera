@@ -730,8 +730,12 @@ namespace InventoryKamera
 			Navigation.SystemWait(Navigation.Speed.Normal);
 			if (!character.HasValidTalents()) return;
 
-			// Scale down talents due to constellations
-			if (character.Constellation >= 3 && !ApplyConstellationTalentAdjustments(character, name)) return;
+			// Scale down talents due to constellations. This is the last
+			// statement of the method, so its result needs no early return.
+			if (character.Constellation >= 3)
+			{
+				ApplyConstellationTalentAdjustments(character, name);
+			}
 		}
 
 		private static bool ApplyConstellationTalentAdjustments(Character character, string name)
@@ -1011,10 +1015,10 @@ namespace InventoryKamera
             catalog.MatchingCanonical = catalog.Canonical.Where(candidate => GenshinProcesor.CharacterMatchesElement(candidate.Value, element)).ToList();
             var aliases = new List<KeyValuePair<string, string>>(catalog.MatchingCanonical);
             var reserved = new HashSet<string>(catalog.Canonical.Select(candidate => candidate.Key), StringComparer.Ordinal);
-            foreach (var pair in GenshinProcesor.Characters)
+            foreach (var characterData in GenshinProcesor.Characters.Select(pair => pair.Value))
             {
-                string alias = ((string)pair.Value?["CustomName"])?.FoldToOcrName();
-                string good = (string)pair.Value?["GOOD"];
+                string alias = ((string)characterData?["CustomName"])?.FoldToOcrName();
+                string good = (string)characterData?["GOOD"];
                 // Real character names keep priority, including when their element does
                 // not match; custom Traveler/Wanderer aliases cannot steal those names.
                 if (!string.IsNullOrEmpty(alias) && !reserved.Contains(alias) && GenshinProcesor.CharacterMatchesElement(good, element))

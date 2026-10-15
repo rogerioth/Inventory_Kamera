@@ -78,7 +78,7 @@ namespace InventoryKamera
         /// Gets the item card on the right side of the in-game screen
         /// </summary>
         /// <returns>An image of the in-game item card</returns>
-        internal Bitmap GetItemCard()
+        internal static Bitmap GetItemCard()
         {
             Rectangle cardRectangle = new Rectangle();
 
@@ -102,7 +102,7 @@ namespace InventoryKamera
         /// </summary>
         /// <param name="nameplate">The item nameplate to parse</param>
         /// <returns>String parsed from nameplate</returns>
-        internal string ScanItemName(Bitmap nameplate)
+        internal static string ScanItemName(Bitmap nameplate)
         {
             GenshinProcesor.SetGamma(0.2, 0.2, 0.2, ref nameplate);
             Bitmap n = GenshinProcesor.ConvertToGrayscale(nameplate);
@@ -365,14 +365,7 @@ namespace InventoryKamera
 
         private static bool HasNearbyGridCoordinate(int center, List<int> coords, double tolerance)
         {
-            foreach (var coordinate in coords)
-            {
-                if (coordinate - tolerance <= center && center <= coordinate + tolerance)
-                {
-                    return true;
-                }
-            }
-            return false;
+            return coords.Any(coordinate => coordinate - tolerance <= center && center <= coordinate + tolerance);
         }
 
         private static List<Rectangle> BuildGridRectangles(List<int> colCoords, List<int> rowCoords, int minWidth, int minHeight)

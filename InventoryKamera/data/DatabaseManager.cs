@@ -65,6 +65,10 @@ namespace InventoryKamera
         private const string TalentSkill = "skill";
         private const string TalentBurst = "burst";
 
+        // Prefixes shared by the traveler/artifact generator's validation messages.
+        private const string TravelerDepotPrefix = "Traveler depot ";
+        private const string ArtifactSetPrefix = "Artifact set ";
+
         private readonly string NewVersion = "version.txt";
 
         // Sanity thresholds: a generated table far below these counts means the
@@ -520,15 +524,15 @@ namespace InventoryKamera
             var burst = RequireTravelerRow(sources.SkillsById[burstId], "burst " + burstId);
             string element;
             if (!nativeElements.TryGetValue((string)burst["costElemType"] ?? "", out element) || !seenElements.Add(element))
-                throw new InvalidDataException("Traveler depot " + depotId + " has an unknown or duplicate element.");
+                throw new InvalidDataException(TravelerDepotPrefix + depotId + " has an unknown or duplicate element.");
             var skillIds = depot["skills"] as JArray;
             var talentIds = depot["talents"] as JArray;
             if (skillIds == null || skillIds.Count < 2 || talentIds == null || talentIds.Count != 6)
-                throw new InvalidDataException("Traveler depot " + depotId + " lacks its skill or six constellation references.");
+                throw new InvalidDataException(TravelerDepotPrefix + depotId + " lacks its skill or six constellation references.");
             int autoId = RequireTravelerId(skillIds[0], "normal attack in depot " + depotId);
             int skillId = RequireTravelerId(skillIds[1], "elemental skill in depot " + depotId);
             if (autoId == skillId || skillId == burstId || autoId == burstId)
-                throw new InvalidDataException("Traveler depot " + depotId + " reuses a talent skill ID.");
+                throw new InvalidDataException(TravelerDepotPrefix + depotId + " reuses a talent skill ID.");
             var order = BuildTravelerDepotOrder(depotId, talentIds, sources, textmap,
                 new TravelerTalentSkills { AutoId = autoId, SkillId = skillId, BurstId = burstId, Burst = burst });
             JArray previous;
@@ -555,7 +559,7 @@ namespace InventoryKamera
             string skillName = RequireTravelerText(skill[NameTextMapHashKey], textmap, "elemental skill " + skills.SkillId);
             string burstName = RequireTravelerText(skills.Burst[NameTextMapHashKey], textmap, "burst " + skills.BurstId);
             var ids = talentIds.Select(x => RequireTravelerId(x, "constellation in depot " + depotId)).ToList();
-            if (ids.Distinct().Count() != 6) throw new InvalidDataException("Traveler depot " + depotId + " repeats a constellation ID.");
+            if (ids.Distinct().Count() != 6) throw new InvalidDataException(TravelerDepotPrefix + depotId + " repeats a constellation ID.");
             var c3 = RequireTravelerRow(sources.TalentsById[ids[2]], "C3 talent " + ids[2]);
             var c5 = RequireTravelerRow(sources.TalentsById[ids[4]], "C5 talent " + ids[4]);
             return new JArray
@@ -1029,10 +1033,10 @@ namespace InventoryKamera
             int affixId = RequireArtifactId(definition["equipAffixId"], "equipAffixId for set " + setId);
             var names = sources.AffixesById[affixId].Select(row => RequireArtifactName(row[NameTextMapHashKey], textmap,
                 "affix for set " + setId)).Distinct(StringComparer.Ordinal).ToList();
-            if (names.Count != 1) throw new InvalidDataException("Artifact set " + setId + " has no unique mapped affix name.");
+            if (names.Count != 1) throw new InvalidDataException(ArtifactSetPrefix + setId + " has no unique mapped affix name.");
             string setName = names[0], setGood = ConvertToGOOD(setName), setKey = setGood.ToLowerInvariant();
             if (setKey.Length == 0 || result.ContainsKey(setKey))
-                throw new InvalidDataException("Artifact set " + setId + " has an empty or ambiguous normalized name.");
+                throw new InvalidDataException(ArtifactSetPrefix + setId + " has an empty or ambiguous normalized name.");
 
             result.Add(setKey, new JObject
             {
@@ -1047,7 +1051,7 @@ namespace InventoryKamera
             var references = definition["containsList"] as JArray;
             int expectedCount = sources.PrayerSets.Contains(setId) ? 1 : 5;
             if (references == null || references.Count != expectedCount)
-                throw new InvalidDataException("Artifact set " + setId + " does not contain its expected " + expectedCount + " pieces.");
+                throw new InvalidDataException(ArtifactSetPrefix + setId + " does not contain its expected " + expectedCount + " pieces.");
             var seenPieceIds = new HashSet<int>();
             var artifacts = new JObject();
             foreach (var reference in references)
@@ -1070,7 +1074,7 @@ namespace InventoryKamera
             string slot;
             if (!sources.SlotsByEquipment.TryGetValue((string)piece["equipType"] ?? string.Empty, out slot)
                 || artifacts[slot] != null || sources.PrayerSets.Contains(setId) && slot != "circlet")
-                throw new InvalidDataException("Artifact set " + setId + " has an unsupported or duplicate slot.");
+                throw new InvalidDataException(ArtifactSetPrefix + setId + " has an unsupported or duplicate slot.");
             string pieceName = RequireArtifactName(piece[NameTextMapHashKey], textmap, "piece " + pieceId);
             string pieceGood = ConvertToGOOD(pieceName), pieceKey = pieceGood.ToLowerInvariant();
             if (pieceKey.Length == 0 || !seenPieceNames.Add(pieceKey))

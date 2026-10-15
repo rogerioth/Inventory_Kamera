@@ -306,15 +306,16 @@ namespace InventoryKamera
             IEnumerable<Rectangle> edgeBands, Geometry geometry)
         {
             var ordinaryBands = colorBands.Where(band => band.Height <= geometry.Y(112)).ToList();
-            foreach (var band in edgeBands.Where(band => band.Height <= geometry.Y(112)))
-            {
-                // Keep a previously detected full card instead of adding
-                // its inset border a second time. Hovered dark tiles still
-                // use their color band; their highlight shifts the left rule.
-                if (!ordinaryBands.Any(existing => Math.Min(existing.Bottom, band.Bottom) -
-                    Math.Max(existing.Top, band.Top) >= Math.Min(existing.Height, band.Height) * .7))
-                    ordinaryBands.Add(band);
-            }
+            // Keep a previously detected full card instead of adding
+            // its inset border a second time. Hovered dark tiles still
+            // use their color band; their highlight shifts the left rule.
+            // The Where chains below run lazily during AddRange, so each band
+            // is still tested against the bands added before it, exactly as
+            // the original loop did.
+            ordinaryBands.AddRange(edgeBands
+                .Where(band => band.Height <= geometry.Y(112))
+                .Where(band => !ordinaryBands.Any(existing => Math.Min(existing.Bottom, band.Bottom) -
+                    Math.Max(existing.Top, band.Top) >= Math.Min(existing.Height, band.Height) * .7)));
             return ordinaryBands;
         }
 
@@ -820,7 +821,7 @@ namespace InventoryKamera
             }, geometry.Y(2), geometry.Y(10));
         }
 
-        private void ReadCard(Bitmap frame, Pixels pixels, Geometry geometry, Rectangle bounds,
+        private static void ReadCard(Bitmap frame, Pixels pixels, Geometry geometry, Rectangle bounds,
             AchievementCategory category, AchievementObservation observation)
         {
             int left = geometry.X(859), right = geometry.X(1568);

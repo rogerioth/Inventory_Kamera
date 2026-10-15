@@ -688,7 +688,7 @@ namespace InventoryKamera
             // Validate that key is an acceptable Genshin keybind.
             if (!vk && !np && !oem && !misc)
             {
-                Logger.Debug("Invalid {key} key pressed", e.KeyCode);
+                Logger.Debug("Invalid {Key} key pressed", e.KeyCode);
                 return;
             }
             ToolStripTextBox s = (ToolStripTextBox)sender;
@@ -707,19 +707,19 @@ namespace InventoryKamera
             {
                 case "InventoryKey":
                     Navigation.inventoryKey = (VirtualKeyCode)e.KeyCode;
-                    Logger.Debug("Inv key set to: {key}", Navigation.inventoryKey);
+                    Logger.Debug("Inv key set to: {Key}", Navigation.inventoryKey);
                     Properties.Settings.Default.InventoryKey = e.KeyValue;
                     break;
 
                 case "CharacterKey":
                     Navigation.characterKey = (VirtualKeyCode)e.KeyCode;
-                    Logger.Debug("Char key set to: {key}", Navigation.characterKey);
+                    Logger.Debug("Char key set to: {Key}", Navigation.characterKey);
                     Properties.Settings.Default.CharacterKey = e.KeyValue;
                     break;
 
                 case "slot1Key":
                     Navigation.slotOneKey = (VirtualKeyCode)e.KeyCode;
-                    Logger.Debug("Slot 1 key set to: {key}", Navigation.slotOneKey);
+                    Logger.Debug("Slot 1 key set to: {Key}", Navigation.slotOneKey);
                     Properties.Settings.Default.Slot1Key = e.KeyValue;
                     break;
 

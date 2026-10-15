@@ -155,6 +155,9 @@ namespace InventoryKamera
         private const string CategoryEvidencePrefix = "category_";
         private const string AchievementsLogDirectory = "logging/achievements";
         private const string SidebarResetContext = "reset_";
+
+        // Diagnostic fallback when a sidebar value cannot be rendered for evidence.
+        private const string UnreadableLabel = "unreadable";
         private readonly AchievementCatalog catalog;
         private readonly AchievementRecognizer recognizer;
         private readonly IAchievementNavigation navigation;
@@ -731,7 +734,7 @@ namespace InventoryKamera
         {
             string path = SaveNavigationFrame(frame, CategoryEvidencePrefix + categoryId + "_" + step);
             Logger.Warn("Achievement category {0} sidebar {1}: {2}; thumb {3}; evidence {4}; entries {5}",
-                categoryId, step, lastSelectionFailure, SidebarThumbBounds(frame)?.ToString() ?? "unreadable",
+                categoryId, step, lastSelectionFailure, SidebarThumbBounds(frame)?.ToString() ?? UnreadableLabel,
                 path ?? "navigation evidence limit reached", FormatSidebar(entries));
         }
 
@@ -934,7 +937,7 @@ namespace InventoryKamera
                     {
                         string path = SaveNavigationFrame(frame, "sidebar_reset_" + context + "_failed");
                         Logger.Warn("Achievement sidebar reset failed ({0}), attempt {1}/20, stationary {2}, thumb {3}, top {4}, bottom {5}; evidence {6}; entries {7}",
-                            context, attempt + 1, stationary, SidebarThumbBounds(frame)?.ToString() ?? "unreadable",
+                            context, attempt + 1, stationary, SidebarThumbBounds(frame)?.ToString() ?? UnreadableLabel,
                             SidebarAtTop(frame), SidebarAtBottom(frame), path ?? "navigation evidence limit reached", FormatSidebar(entries));
                         break;
                     }
@@ -974,7 +977,7 @@ namespace InventoryKamera
                     bool detail = AchievementRecognizer.IsDetailScreen(overview);
                     int? total = AchievementRecognizer.ReadCompletedTotal(overview);
                     SaveNavigationFrame(overview, "sidebar_recovery_overview_" + sidebarRecoveries);
-                    Logger.Info("Achievement sidebar recovery overview: detail {0}, completed total {1}", detail, total?.ToString() ?? "unreadable");
+                    Logger.Info("Achievement sidebar recovery overview: detail {0}, completed total {1}", detail, total?.ToString() ?? UnreadableLabel);
                     if (detail || !total.HasValue) return false;
                 }
                 Logger.Debug("Achievement sidebar recovery: opening first overview tile at normalized (0.1000,0.2500)");
@@ -1011,7 +1014,7 @@ namespace InventoryKamera
             var entries = sidebarReader(frame);
             Logger.Debug("Achievement sidebar read ({0}), target {1}, attempt {2}, frame {3}x{4}, thumb {5}, top {6}, bottom {7}: {8}",
                 context, target?.ToString() ?? "none", attempt, frame.Width, frame.Height,
-                SidebarThumbBounds(frame)?.ToString() ?? "unreadable", SidebarAtTop(frame), SidebarAtBottom(frame), FormatSidebar(entries));
+                SidebarThumbBounds(frame)?.ToString() ?? UnreadableLabel, SidebarAtTop(frame), SidebarAtBottom(frame), FormatSidebar(entries));
             return entries;
         }
 
@@ -1171,7 +1174,7 @@ namespace InventoryKamera
                 !result.Categories.Any(x => x.CategoryId == category.Id && x.ReachedBottom && x.Issues.Count == 0)).OrderBy(x => x.Order).ToList();
             Logger.Info("Achievement coverage: verified {0}/{1} categories, attempted {2}, missing {3}; completed total initial {4}, final {5}; retained {6} completed IDs from {7} rows; cancelled {8}",
                 verified, catalog.Categories.Count, result.Categories.Count, missing.Count,
-                result.ExpectedCompleted?.ToString() ?? "unreadable", result.FinalExpectedCompleted?.ToString() ?? "unreadable",
+                result.ExpectedCompleted?.ToString() ?? UnreadableLabel, result.FinalExpectedCompleted?.ToString() ?? UnreadableLabel,
                 result.Completed.Count, result.Observations.Count, result.Cancelled);
             foreach (var category in missing)
             {
