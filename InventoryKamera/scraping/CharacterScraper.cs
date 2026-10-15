@@ -738,7 +738,7 @@ namespace InventoryKamera
 			}
 		}
 
-		private static bool ApplyConstellationTalentAdjustments(Character character, string name)
+		private static void ApplyConstellationTalentAdjustments(Character character, string name)
 		{
 			if (!GenshinProcesor.Characters.TryGetValue(name.ToLower(), out var characterData) ||
 				characterData == null ||
@@ -746,11 +746,11 @@ namespace InventoryKamera
 				constellationOrder == null)
 			{
 				Logger.Warn("        [WARNING] {0} is missing from the character data. Keeping scanned talent levels.", character.NameGOOD);
-				return false;
+				return;
 			}
 			if (!TryResolveConstellationTalentOrder(character, constellationOrder, out string talentLeveledAtConst3, out string talentLeveledAtConst5))
 			{
-				return false;
+				return;
 			}
 
 			// Scale down talents. Ported from taiwenlee/Inventory_Kamera (MIT): 191fa8f2
@@ -768,12 +768,11 @@ namespace InventoryKamera
 				if (talentLeveledAtConst5 is null)
 				{
 					Logger.Warn("        [WARNING] {0} is missing constellation 5 order data. Keeping scanned talent levels.", character.NameGOOD);
-					return false;
+					return;
 				}
 				Logger.Info("        Adjusting {0}'s {1} talent by -3 levels for constellation 5", character.NameGOOD, talentLeveledAtConst5);
 				character.Talents[talentLeveledAtConst5] -= 3;
 			}
-			return true;
 		}
 
 		private static bool TryResolveConstellationTalentOrder(Character character, JToken constellationOrder,
