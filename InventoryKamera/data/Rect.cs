@@ -4,71 +4,52 @@ using System.Runtime.InteropServices;
 namespace InventoryKamera
 {
 	[StructLayout(LayoutKind.Sequential)]
-	public struct RECT
+	public struct Rect
 	{
-		private int _Left;
-		private int _Top;
-		private int _Right;
-		private int _Bottom;
-
-		public RECT(RECT Rectangle) : this(Rectangle.Left, Rectangle.Top, Rectangle.Right, Rectangle.Bottom)
+		public Rect(Rect Rectangle) : this(Rectangle.Left, Rectangle.Top, Rectangle.Right, Rectangle.Bottom)
 		{
 		}
 
-		public RECT(int Left, int Top, int Right, int Bottom)
+		public Rect(int Left, int Top, int Right, int Bottom)
 		{
-			_Left = Left;
-			_Top = Top;
-			_Right = Right;
-			_Bottom = Bottom;
+			this.Left = Left;
+			this.Top = Top;
+			this.Right = Right;
+			this.Bottom = Bottom;
 		}
+
+		// The auto-property backing fields keep the sequential Win32 RECT
+		// layout (left, top, right, bottom) used by the P/Invoke callers.
+		public int Left { get; set; }
+
+		public int Top { get; set; }
+
+		public int Right { get; set; }
+
+		public int Bottom { get; set; }
 
 		public int X
 		{
-			get => _Left;
-			set => _Left = value;
+			get => Left;
+			set => Left = value;
 		}
 
 		public int Y
 		{
-			get => _Top;
-			set => _Top = value;
-		}
-
-		public int Left
-		{
-			get => _Left;
-			set => _Left = value;
-		}
-
-		public int Top
-		{
-			get => _Top;
-			set => _Top = value;
-		}
-
-		public int Right
-		{
-			get => _Right;
-			set => _Right = value;
-		}
-
-		public int Bottom
-		{
-			get => _Bottom;
-			set => _Bottom = value;
+			get => Top;
+			set => Top = value;
 		}
 
 		public int Height
 		{
-			get => _Bottom - _Top;
-			set => _Bottom = value + _Top;
+			get => Bottom - Top;
+			set => Bottom = value + Top;
 		}
 
 		public int Width
 		{
-			get => _Right - _Left;
-			set => _Right = value + _Left;
+			get => Right - Left;
+			set => Right = value + Left;
 		}
 
 		public Point Location
@@ -76,8 +57,8 @@ namespace InventoryKamera
 			get => new Point(Left, Top);
 			set
 			{
-				_Left = value.X;
-				_Top = value.Y;
+				Left = value.X;
+				Top = value.Y;
 			}
 		}
 
@@ -86,22 +67,22 @@ namespace InventoryKamera
 			get => new Size(Width, Height);
 			set
 			{
-				_Right = value.Width + _Left;
-				_Bottom = value.Height + _Top;
+				Right = value.Width + Left;
+				Bottom = value.Height + Top;
 			}
 		}
 
-		public static implicit operator Rectangle(RECT Rectangle) => new Rectangle(Rectangle.Left, Rectangle.Top, Rectangle.Width, Rectangle.Height);
+		public static implicit operator Rectangle(Rect Rectangle) => new Rectangle(Rectangle.Left, Rectangle.Top, Rectangle.Width, Rectangle.Height);
 
-		public static implicit operator RECT(Rectangle Rectangle) => new RECT(Rectangle.Left, Rectangle.Top, Rectangle.Right, Rectangle.Bottom);
+		public static implicit operator Rect(Rectangle Rectangle) => new Rect(Rectangle.Left, Rectangle.Top, Rectangle.Right, Rectangle.Bottom);
 
-		public static bool operator ==(RECT Rectangle1, RECT Rectangle2) => Rectangle1.Equals(Rectangle2);
+		public static bool operator ==(Rect Rectangle1, Rect Rectangle2) => Rectangle1.Equals(Rectangle2);
 
-		public static bool operator !=(RECT Rectangle1, RECT Rectangle2) => !Rectangle1.Equals(Rectangle2);
+		public static bool operator !=(Rect Rectangle1, Rect Rectangle2) => !Rectangle1.Equals(Rectangle2);
 
 		public override string ToString()
 		{
-			return "{Left: " + _Left + "; " + "Top: " + _Top + "; Right: " + _Right + "; Bottom: " + _Bottom + "}";
+			return "{Left: " + Left + "; " + "Top: " + Top + "; Right: " + Right + "; Bottom: " + Bottom + "}";
 		}
 
 		public override int GetHashCode()
@@ -109,20 +90,20 @@ namespace InventoryKamera
 			return ToString().GetHashCode();
 		}
 
-		public bool Equals(RECT Rectangle)
+		public bool Equals(Rect Rectangle)
 		{
-			return Rectangle.Left == _Left && Rectangle.Top == _Top && Rectangle.Right == _Right && Rectangle.Bottom == _Bottom;
+			return Rectangle.Left == Left && Rectangle.Top == Top && Rectangle.Right == Right && Rectangle.Bottom == Bottom;
 		}
 
 		public override bool Equals(object obj)
 		{
 			switch (obj)
 			{
-				case RECT rect:
+				case Rect rect:
 					return Equals(rect);
 
 				case Rectangle rectangle:
-					return Equals(new RECT(rectangle));
+					return Equals(new Rect(rectangle));
 			}
 
 			return false;

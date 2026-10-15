@@ -15,10 +15,10 @@ namespace InventoryKamera
 		private static NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
 
 		[JsonProperty]
-		public List<Character> Characters;
+		public List<Character> Characters { get; set; }
 
 		[JsonProperty]
-		public Inventory Inventory;
+		public Inventory Inventory { get; set; }
 
         public AchievementScanResult Achievements { get; private set; }
         public AchievementCatalog AchievementCatalog { get; set; }
@@ -35,7 +35,7 @@ namespace InventoryKamera
 
 		private readonly List<Artifact> equippedArtifacts;
 		private readonly List<Weapon> equippedWeapons;
-		public static Queue<OCRImageCollection> workerQueue = new Queue<OCRImageCollection>();
+		public static Queue<OcrImageCollection> workerQueue { get; set; } = new Queue<OcrImageCollection>();
 		private readonly List<Thread> ImageProcessors;
 
 		private readonly WeaponScraper weaponScraper;
@@ -109,7 +109,7 @@ namespace InventoryKamera
 		{
 			b_threadCancel = true;
 			AwaitProcessors();
-			workerQueue = new Queue<OCRImageCollection>();
+			workerQueue = new Queue<OcrImageCollection>();
 		}
 
 		private bool disposed;
@@ -132,8 +132,7 @@ namespace InventoryKamera
 
 		public void GatherData()
 		{
-			Logger.Info("Starting inventory scan");
-			Logger.Info("    Preparing diagnostic logs and OCR data...");
+			Logger.Info("Starting inventory scan; preparing diagnostic logs and OCR data...");
 			ResetLogging();
 
             if (!Properties.Settings.Default.ScanWeapons && !Properties.Settings.Default.ScanArtifacts &&
@@ -220,7 +219,7 @@ namespace InventoryKamera
 				Logger.Info("Finished capturing artifact inventory cards");
 			}
 
-			workerQueue.Enqueue(new OCRImageCollection(null, "END", 0));
+			workerQueue.Enqueue(new OcrImageCollection(null, "END", 0));
 
 			if (Properties.Settings.Default.ScanCharacters)
 			{
@@ -233,7 +232,7 @@ namespace InventoryKamera
 				try
 				{
 					CharacterNavigation.OpenCharacterScreen("start character roster scan", true);
-					CharacterScraper.ScanCharacters(ref Characters);
+					CharacterScraper.ScanCharacters(Characters);
 					CharacterScanComplete = CharacterScraper.LastScanComplete;
 					characterTalentsCorrected = true;
 					CharacterNavigation.Require(CharacterScreenState.CharacterMenu, "finish character roster scan");
@@ -256,7 +255,7 @@ namespace InventoryKamera
 			}
 
 			// Wait for Image Processors to finish
-			Logger.Info("Waiting for remaining weapon and artifact scans...");
+			Logger.Debug("Waiting for remaining weapon and artifact scans...");
             if (Volatile.Read(ref equipmentProcessed) < Volatile.Read(ref equipmentEnqueued))
             {
                 UserInterface.BeginScanPhase(ScanPhase.EquipmentProcessing, Volatile.Read(ref equipmentEnqueued));
@@ -276,7 +275,7 @@ namespace InventoryKamera
                         "Some queued cards were not processed");
             }
             else AwaitProcessors();
-			Logger.Info("    Equipment processing finished");
+			Logger.Debug("    Equipment processing finished");
 
 			if (Properties.Settings.Default.ScanCharacters)
 			{
@@ -295,11 +294,10 @@ namespace InventoryKamera
 				// Get Materials
 				Navigation.InventoryScreen();
 				Navigation.SelectCharacterDevelopmentInventory();
-				HashSet<Material> devItems = new HashSet<Material>();
 				try
 				{
 					materialScraper.SetInventoryPage(InventoryPage.CharacterDevelopmentItems);
-					materialScraper.Scan_Materials(ref Inventory);
+					materialScraper.Scan_Materials(Inventory);
 				}
 				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Character development material scan: " + ex.Message); }
 				catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
@@ -320,11 +318,10 @@ namespace InventoryKamera
 				// Get Materials
 				Navigation.InventoryScreen();
 				Navigation.SelectMaterialInventory();
-				HashSet<Material> materials = new HashSet<Material>();
 				try
 				{
 					materialScraper.SetInventoryPage(InventoryPage.Materials);
-					materialScraper.Scan_Materials(ref Inventory);
+					materialScraper.Scan_Materials(Inventory);
 				}
 				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Material inventory scan: " + ex.Message); }
 				catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
@@ -382,7 +379,7 @@ namespace InventoryKamera
 					break;
 				}
 
-				if (workerQueue.TryDequeue(out OCRImageCollection imageCollection))
+				if (workerQueue.TryDequeue(out OcrImageCollection imageCollection))
 				{
 					// A single unrecognized or malformed item must never kill this worker
 					// thread; log it and keep processing the rest of the queue.

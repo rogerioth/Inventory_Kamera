@@ -54,7 +54,7 @@ namespace InventoryKamera
                 // The real cause sits in the inner exception thrown by the
                 // static constructor, including the fix-it instructions.
                 var cause = ex.InnerException ?? ex;
-                Logger.Fatal(cause, "Tesseract initialization failed; exiting");
+                Logger.Fatal(ex, "Tesseract initialization failed; exiting");
                 MessageBox.Show($"{cause.Message}\n\nInventory Kamera will now close. See the 'logging' folder for details.",
                     "OCR Initialization Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Close();
@@ -433,10 +433,10 @@ namespace InventoryKamera
                         // Scanning is finished. Enter must not abort the thread while files are being saved.
                         Invoke((MethodInvoker)RemoveHotkey);
 
-                        GOOD good = null;
+                        Good good = null;
                         if (data.HasInventoryData)
                         {
-                            good = new GOOD(data);
+                            good = new Good(data);
                             good.WriteToJSON(outputDirectory);
                         }
                         bool exportSucceeded = !scanAchievements || ExportAchievements(outputDirectory);
@@ -450,13 +450,13 @@ namespace InventoryKamera
                         UserInterface.SetProgramStatus(status, ok: exportSucceeded && scansComplete);
                         if (good != null && !data.Achievements.Cancelled) OpenOptimizerDialog(good);
                     }
-                    catch (ThreadAbortException)
+                    catch (ThreadAbortException ex)
                     {
                         // Workers can get stuck if the thread is aborted or an exception is raised
                         data?.StopImageProcessorWorkers();
                         if (data == null)
                         {
-                            Logger.Warn("Scan thread aborted before scan data was created; nothing to export");
+                            Logger.Warn(ex, "Scan thread aborted before scan data was created; nothing to export");
                             UserInterface.SetProgramStatus("Scan stopped");
                             return;
                         }
@@ -473,8 +473,8 @@ namespace InventoryKamera
                         data?.StopImageProcessorWorkers();
                         if (data != null && data.HasInventoryData)
                         {
-                            new GOOD(data).WriteToJSON(outputDirectory);
-                            Logger.Warn("Saved partial inventory after character navigation stopped; no further game input was sent");
+                            new Good(data).WriteToJSON(outputDirectory);
+                            Logger.Warn(ex, "Saved partial inventory after character navigation stopped; no further game input was sent");
                         }
                         RecordAchievementFailure(scanAchievements, outputDirectory, ex);
                         UserInterface.AddError("    [FAILURE] Character navigation stopped: " + ex.Message);
@@ -520,7 +520,7 @@ namespace InventoryKamera
             }
         }
 
-        private void OpenOptimizerDialog(GOOD data, bool skip = false)
+        private void OpenOptimizerDialog(Good data, bool skip = false)
         {
             // Issue #530: while the global "Stop" hotkey (Enter) is registered
             // it consumes Enter system-wide, so a modal dialog can never be
@@ -546,23 +546,27 @@ namespace InventoryKamera
             t.Start();
             t.Join();
             MessageBox.Show("Content copied to your clipboard! Paste the content into the textbox when prompted.", "Data Copied", MessageBoxButtons.OK);
-            Process.Start(new ProcessStartInfo("https://frzyc.github.io/genshin-optimizer/#/setting") { UseShellExecute = true });
+            var optimizerHome = "https://frzyc.github.io/genshin-optimizer/#/setting";
+            Process.Start(new ProcessStartInfo(optimizerHome) { UseShellExecute = true });
 
         }
 
         private void Github_Label_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
-            Process.Start("https://github.com/rogerioth/Inventory_Kamera/");
+            var projectHome = "https://github.com/rogerioth/Inventory_Kamera/";
+            Process.Start(projectHome);
         }
 
         private void Releases_Label_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
-            Process.Start("https://github.com/rogerioth/Inventory_Kamera/releases/latest");
+            var releasePage = "https://github.com/rogerioth/Inventory_Kamera/releases/latest";
+            Process.Start(releasePage);
         }
 
         private void IssuesPage_Label_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
-            Process.Start("https://github.com/rogerioth/Inventory_Kamera/issues");
+            var issuesPage = "https://github.com/rogerioth/Inventory_Kamera/issues";
+            Process.Start(issuesPage);
         }
 
         private void FileSelectButton_Click(object sender, EventArgs e)
@@ -865,11 +869,11 @@ namespace InventoryKamera
             {
                 if (!ValidateOutputDirectory(OutputPath_TextBox.Text)) return;
                 if (!ExportAchievements(OutputPath_TextBox.Text)) return;
-                if (data.HasInventoryData) new GOOD(data).WriteToJSON(OutputPath_TextBox.Text);
+                if (data.HasInventoryData) new Good(data).WriteToJSON(OutputPath_TextBox.Text);
                 MessageBox.Show("Scan files saved to:\n" + OutputPath_TextBox.Text,
                     "Export Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
-            else if (data.HasInventoryData) OpenOptimizerDialog(new GOOD(data), true);
+            else if (data.HasInventoryData) OpenOptimizerDialog(new Good(data), true);
         }
 
         private void MainForm_Activate()

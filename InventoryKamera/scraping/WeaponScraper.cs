@@ -203,7 +203,7 @@ namespace InventoryKamera
             }
 
             // Send images to worker queue
-            InventoryKamera.workerQueue.Enqueue(new OCRImageCollection(weaponImages, "weapon", id));
+            InventoryKamera.workerQueue.Enqueue(new OcrImageCollection(weaponImages, "weapon", id));
             ItemQueued?.Invoke();
         }
 

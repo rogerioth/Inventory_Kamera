@@ -16,24 +16,24 @@ namespace InventoryKamera
 		private static NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
 
 		internal static InputSimulator sim = new InputSimulator();
-		private static RECT WindowSize;
-		private static RECT WindowPosition;
+		private static Rect WindowSize;
+		private static Rect WindowPosition;
 		private static Size AspectRatio;
 		private static IntPtr GameWindowHandle;
 		public static bool IsNormal { get; private set; }
 
         private static double delay = 1;
 
-		public static VirtualKeyCode escapeKey = VirtualKeyCode.ESCAPE;
-		public static VirtualKeyCode characterKey = VirtualKeyCode.VK_C;
-		public static VirtualKeyCode inventoryKey = VirtualKeyCode.VK_B;
-		public static VirtualKeyCode slotOneKey = VirtualKeyCode.VK_1;
+		public static VirtualKeyCode escapeKey { get; set; } = VirtualKeyCode.ESCAPE;
+		public static VirtualKeyCode characterKey { get; set; } = VirtualKeyCode.VK_C;
+		public static VirtualKeyCode inventoryKey { get; set; } = VirtualKeyCode.VK_B;
+		public static VirtualKeyCode slotOneKey { get; set; } = VirtualKeyCode.VK_1;
 
 		[DllImport("user32.dll", SetLastError = true)]
-		private static extern bool GetClientRect(IntPtr hWnd, ref RECT Rect);
+		private static extern bool GetClientRect(IntPtr hWnd, ref Rect Rect);
 
 		[DllImport("user32.dll", SetLastError = true)]
-		private static extern bool ClientToScreen(IntPtr hWnd, ref RECT Rect);
+		private static extern bool ClientToScreen(IntPtr hWnd, ref Rect Rect);
 
 		public static void Initialize()
 		{
@@ -45,7 +45,7 @@ namespace InventoryKamera
 				{
 					// Get area and position
 					GameWindowHandle = handle;
-					WindowPosition = new RECT();
+					WindowPosition = new Rect();
 					ClientToScreen(handle, ref WindowPosition);
 					GetClientRect(handle, ref WindowSize);
 					AspectRatio = new Size();
@@ -58,11 +58,6 @@ namespace InventoryKamera
 					{
 						throw new NotImplementedException("Genshin window could not be focused. Please make sure the game is visible.");
 					}
-					catch (Exception)
-					{
-						throw;
-					}
-
 					Logger.Debug("Found {0}.exe", processName);
 					Logger.Debug("Window location ({0}x{1}): x={2}, y={3}", WindowSize.Width, WindowSize.Height, WindowPosition.Left, WindowPosition.Top);
 					return;
@@ -75,8 +70,8 @@ namespace InventoryKamera
 
 		public static void Reset()
 		{
-			WindowSize = new RECT();
-			WindowPosition = new RECT();
+			WindowSize = new Rect();
+			WindowPosition = new Rect();
 			AspectRatio = new Size();
 			GameWindowHandle = IntPtr.Zero;
 			CharacterNavigation.EndScan();
@@ -105,7 +100,7 @@ namespace InventoryKamera
 				{
 					gfxBmp.CopyFromScreen(GetPosition().Left, GetPosition().Top, 0, 0, bmp.Size);
 
-					var uidRegion = new RECT(
+					var uidRegion = new Rect(
 						Left: (int)( 1070 / 1280.0 * bmp.Width ),
 						Top: (int)( 695 / 720.0 * bmp.Height ),
 						Right: bmp.Width,
@@ -121,7 +116,7 @@ namespace InventoryKamera
 			}
 		}
 
-		public static Bitmap CaptureRegion(RECT region, PixelFormat format = PixelFormat.Format24bppRgb)
+		public static Bitmap CaptureRegion(Rect region, PixelFormat format = PixelFormat.Format24bppRgb)
 		{
 			ValidateWindowForCapture();
 			try
@@ -311,7 +306,7 @@ namespace InventoryKamera
 			return WindowSize.Height;
 		}
 
-		public static RECT GetPosition()
+		public static Rect GetPosition()
 		{
 			return WindowPosition;
 		}
@@ -349,8 +344,8 @@ namespace InventoryKamera
 					reason = "Windows did not focus the game window.";
 					return false;
 				}
-				var origin = new RECT();
-				var client = new RECT();
+				var origin = new Rect();
+				var client = new Rect();
 				if (!ClientToScreen(GameWindowHandle, ref origin) || !GetClientRect(GameWindowHandle, ref client)
 					|| client.Width <= 0 || client.Height <= 0)
 				{
@@ -377,13 +372,13 @@ namespace InventoryKamera
 		{
 			public int length;
 			public int flags;
-			public ShowWindowEnum showCmd;
+			public ShowWindowCommand showCmd;
 			public Point ptMinPosition;
 			public Point ptMaxPosition;
 			public Rectangle rcNormalPosition;
 		}
 		
-		private enum ShowWindowEnum
+		private enum ShowWindowCommand
 		{
 			Hide = 0,
 			ShowNormal = 1, ShowMinimized = 2, ShowMaximized = 3,
@@ -408,9 +403,9 @@ namespace InventoryKamera
 					GetWindowPlacement(handle, ref windowPlacement);
 
 					// Check if minimized
-					if (windowPlacement.showCmd == ShowWindowEnum.ShowMinimized)
+					if (windowPlacement.showCmd == ShowWindowCommand.ShowMinimized)
 					{
-						windowPlacement.showCmd = ShowWindowEnum.ShowNormal;
+						windowPlacement.showCmd = ShowWindowCommand.ShowNormal;
 						SetWindowPlacement(handle, ref windowPlacement);
 					}
 

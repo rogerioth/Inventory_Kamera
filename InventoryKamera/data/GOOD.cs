@@ -8,7 +8,7 @@ using System.Text.RegularExpressions;
 
 namespace InventoryKamera
 {
-    public class GOOD
+    public class Good
     {
         private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
 
@@ -36,14 +36,14 @@ namespace InventoryKamera
         [JsonProperty("materials", DefaultValueHandling = DefaultValueHandling.Ignore)]
         public Dictionary<string, int> Materials { get; private set; }
 
-        public GOOD()
+        public Good()
         {
             Format = "EMPTY";
             Version = 0;
             Source = "NOT FILLED";
         }
 
-        public GOOD(InventoryKamera genshinData) : this()
+        public Good(InventoryKamera genshinData) : this()
         {
             // Get rid of VS warning since we are converting this class to JSON
             Format = "GOOD";

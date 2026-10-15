@@ -233,7 +233,7 @@ namespace InventoryKamera
 			}
 
             // Send images to Worker Queue
-            InventoryKamera.workerQueue.Enqueue(new OCRImageCollection(artifactImages, "artifact", id));
+            InventoryKamera.workerQueue.Enqueue(new OcrImageCollection(artifactImages, "artifact", id));
             ItemQueued?.Invoke();
 			return true;
 		}
@@ -374,9 +374,9 @@ namespace InventoryKamera
 
 		public static bool IsEnhancementMaterial(Bitmap card)
 		{
-			RECT reference = Navigation.GetAspectRatio() == new Size(16, 9) ?
-				new RECT(new Rectangle(862, 80, 327, 560)) : (RECT)new Rectangle(862, 80, 328, 640);
-			Bitmap nameBitmap = card.Clone(new RECT(
+			Rect reference = Navigation.GetAspectRatio() == new Size(16, 9) ?
+				new Rect(new Rectangle(862, 80, 327, 560)) : (Rect)new Rectangle(862, 80, 328, 640);
+			Bitmap nameBitmap = card.Clone(new Rect(
 				Left: 0,
 				Top: 0,
 				Right: card.Width,

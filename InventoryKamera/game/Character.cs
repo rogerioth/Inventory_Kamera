@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Text;
 using Newtonsoft.Json;
 
 namespace InventoryKamera
@@ -182,17 +183,17 @@ namespace InventoryKamera
 
         public override string ToString()
         {
-            string output = "Character\n";
-            output += $"Name: {NameGOOD}\n";
-            output += $"Element: {Element}\n";
-            output += $"Level: {Level}{(Ascended ? "+" : "")}\n";
-            output += $"Ascension Level: {Ascension}\n";
-            output += $"Constellation: {Constellation}\n";
+            var output = new StringBuilder("Character\n");
+            output.Append($"Name: {NameGOOD}\n");
+            output.Append($"Element: {Element}\n");
+            output.Append($"Level: {Level}{(Ascended ? "+" : "")}\n");
+            output.Append($"Ascension Level: {Ascension}\n");
+            output.Append($"Constellation: {Constellation}\n");
             foreach (var item in Talents)
             {
-                output += $"{item.Key.ToUpper()} : {item.Value}\n";
+                output.Append($"{item.Key.ToUpper()} : {item.Value}\n");
             }
-            return output;
+            return output.ToString();
         }
     }
 }

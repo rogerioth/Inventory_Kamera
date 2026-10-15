@@ -204,7 +204,8 @@ namespace InventoryKamera
                         height: (int)(40.0 / 720.0 * Navigation.GetHeight()));
                     break;
                 case InventoryPage.Artifacts:
-                    // TODO: Update this
+                    // Same sort-button row as the weapons page; the active sort
+                    // mode is read back from the screenshot below.
                     region = new Rectangle(
                         x: (int)(140.0 / 1280.0 * Navigation.GetWidth()),
                         y: (int)(660.0 / 720.0 * Navigation.GetHeight()),
@@ -438,8 +439,7 @@ namespace InventoryKamera
                         // could stall the scan.
                         if (itemCount != itemPerPage && !(acceptLess && itemCount > 0))
                         {
-                            Logger.Warn("Unable to locate full page of weapons with weight {0}", weight);
-                            Logger.Warn("Detected {0} rows and {1} columns of items", rows, cols);
+                            Logger.Warn("Unable to locate full page of weapons with weight {0}; detected {1} rows and {2} columns of items", weight, rows, cols);
 
                             // Generate rectangles
                             using (Bitmap copy = (Bitmap)screenshot.Clone())
@@ -566,27 +566,25 @@ namespace InventoryKamera
             return GenshinProcesor.CopyBitmap(card,
                 new Rectangle(
                     x: (int)(card.Width * 0.15),
-                    y: (int)(double)(card.Height * (double)(Navigation.IsNormal ? 0.938 : 0.943)),
+                    y: (int)(card.Height * (Navigation.IsNormal ? 0.938 : 0.943)),
                     width: card.Width,
                     height: card.Height));
         }
 
         internal void SaveInventoryBitmap(Bitmap image, string filename)
         {
-            var path = "./logging/";
-
-            if (materialPages.Contains(inventoryPage))
-                path += "Materials/";
-            else path += inventoryPage.ToString() + "/";
+            string directory = materialPages.Contains(inventoryPage)
+                ? "./logging/Materials"
+                : Path.Combine("./logging", inventoryPage.ToString());
 
             // Diagnostic saves must never abort a scan (GDI+ generic errors,
             // missing directories, disconnected or full drives). Make sure the
             // directory exists, retry once on failure, and warn instead of
             // throwing.
-            string file = path + filename;
+            string file = Path.Combine(directory, filename);
             try
             {
-                Directory.CreateDirectory(path);
+                Directory.CreateDirectory(directory);
                 try
                 {
                     image.Save(file);

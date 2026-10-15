@@ -77,25 +77,25 @@ namespace InventoryKamera
 
         // GitLab's REST API rejects unauthenticated clients, so update checks read the
         // project's public Atom commit feed instead. Raw file URLs are unaffected.
-        private const string commitsFeedURL = "https://gitlab.com/Dimbreath/animegamedata2/-/commits/main.atom";
-        private const string repoBaseURL = "https://gitlab.com/Dimbreath/animegamedata2/-/raw/main/";
-        private const string TextMapURL = repoBaseURL + "TextMap/TextMap_MediumEN.json";
-        private const string CharactersURL = repoBaseURL + "ExcelBinOutput/AvatarExcelConfigData.json";
-        private const string ConstellationsURL = repoBaseURL + "ExcelBinOutput/FetterInfoExcelConfigData.json";
-        private const string TalentsURL = repoBaseURL + "ExcelBinOutput/AvatarTalentExcelConfigData.json";
-        private const string SkillsURL = repoBaseURL + "ExcelBinOutput/AvatarSkillExcelConfigData.json";
-        private const string SkillDepotsURL = repoBaseURL + "ExcelBinOutput/AvatarSkillDepotExcelConfigData.json";
+        private const string commitsFeedAddress = "https://gitlab.com/Dimbreath/animegamedata2/-/commits/main.atom";
+        private const string repoBaseAddress = "https://gitlab.com/Dimbreath/animegamedata2/-/raw/main/";
+        private const string TextMapURL = repoBaseAddress + "TextMap/TextMap_MediumEN.json";
+        private const string CharactersURL = repoBaseAddress + "ExcelBinOutput/AvatarExcelConfigData.json";
+        private const string ConstellationsURL = repoBaseAddress + "ExcelBinOutput/FetterInfoExcelConfigData.json";
+        private const string TalentsURL = repoBaseAddress + "ExcelBinOutput/AvatarTalentExcelConfigData.json";
+        private const string SkillsURL = repoBaseAddress + "ExcelBinOutput/AvatarSkillExcelConfigData.json";
+        private const string SkillDepotsURL = repoBaseAddress + "ExcelBinOutput/AvatarSkillDepotExcelConfigData.json";
 
-        private const string ArtifactSetsURL = repoBaseURL + "ExcelBinOutput/ReliquarySetExcelConfigData.json";
-        private const string ArtifactAffixesURL = repoBaseURL + "ExcelBinOutput/EquipAffixExcelConfigData.json";
-        private const string ArtifactSetConfig = repoBaseURL + "ExcelBinOutput/ReliquaryExcelConfigData.json";
+        private const string ArtifactSetsURL = repoBaseAddress + "ExcelBinOutput/ReliquarySetExcelConfigData.json";
+        private const string ArtifactAffixesURL = repoBaseAddress + "ExcelBinOutput/EquipAffixExcelConfigData.json";
+        private const string ArtifactSetConfig = repoBaseAddress + "ExcelBinOutput/ReliquaryExcelConfigData.json";
 
-        private const string WeaponsURL = repoBaseURL + "ExcelBinOutput/WeaponExcelConfigData.json";
-        private const string MaterialsURL = repoBaseURL + "ExcelBinOutput/MaterialExcelConfigData.json";
+        private const string WeaponsURL = repoBaseAddress + "ExcelBinOutput/WeaponExcelConfigData.json";
+        private const string MaterialsURL = repoBaseAddress + "ExcelBinOutput/MaterialExcelConfigData.json";
 
         private ConcurrentDictionary<string, string> Mappings = new ConcurrentDictionary<string, string>();
 
-        internal Version LocalVersion = new Version();
+        internal Version LocalVersion;
         internal Version RemoteVersion = new Version();
 
         private static readonly List<string> elements = new List<string>
@@ -136,7 +136,7 @@ namespace InventoryKamera
             // numeric triple found in the newest entry is the game version.
             string pattern = @"(\d+\.\d+\.\d+)";
 
-            using (var response = new HttpClient().GetAsync(commitsFeedURL))
+            using (var response = new HttpClient().GetAsync(commitsFeedAddress))
             {
                 string body = response.Result.Content.ReadAsStringAsync().Result;
                 var feed = XDocument.Parse(body);
@@ -584,23 +584,11 @@ namespace InventoryKamera
 
         private static string LoadJsonFromURLAsync(string url)
         {
-            string json = "";
-
-            try
+            using (WebClient client = new WebClient())
             {
-                using (WebClient client = new WebClient())
-                {
-                    client.Encoding = System.Text.Encoding.UTF8;
-                    json = client.DownloadString(url);
-                }
+                client.Encoding = System.Text.Encoding.UTF8;
+                return client.DownloadString(url);
             }
-            catch (Exception)
-            {
-
-                throw;
-            }
-            
-            return json;
         }
 
         private UpdateStatus UpdateList(ListType list, bool force = false)
@@ -636,8 +624,7 @@ namespace InventoryKamera
             }
             catch (Exception e)
             {
-                Logger.Error("Failed to update {0} data", list);
-                Logger.Error(e);
+                Logger.Error(e, "Failed to update {0} data", list);
                 return UpdateStatus.Fail;
             }
 
@@ -719,68 +706,66 @@ namespace InventoryKamera
                             name = iconParts[iconParts.Length - 1];
 
                             // Traveler was rebuilt once above from explicit source-ID joins.
+                            // Not every avatar has a Skill_S_ entry (e.g. test ones),
+                            // so look it up tolerantly instead of throwing.
+                            // Ported from taiwenlee/Inventory_Kamera (MIT): 480222b9
+                            var characterSkill = skills.FirstOrDefault(entry => entry["skillIcon"]?.ToString().Contains($"Skill_S_{name}") == true);
+
+                            if (characterSkill == null)
                             {
-                                // Not every avatar has a Skill_S_ entry (e.g. test ones),
-                                // so look it up tolerantly instead of throwing.
-                                // Ported from taiwenlee/Inventory_Kamera (MIT): 480222b9
-                                var characterSkill = skills.FirstOrDefault(entry => entry["skillIcon"]?.ToString().Contains($"Skill_S_{name}") == true);
-
-                                if (characterSkill == null)
-                                {
-                                    Logger.Debug("Skipping {0} - no skill data available", name);
-                                    return;
-                                }
-
-                                skill = Mappings[characterSkill[NameTextMapHashKey].ToString()].ToString();
-
-
-                                value.Add("ConstellationName", new JArray
-                                {
-                                    GetConstellationNameFromId(characterID)
-                                });
-
-                                var constellationOrder = new JArray();
-
-                                // The skill/burst name is always mentioned in the constellation's description
-                                // so we'll check for it. C3 and C5 can also level the normal attack for
-                                // characters such as Freminet, Sethos, Arlecchino or Neuvillette.
-                                // Ported from taiwenlee/Inventory_Kamera (MIT): 191fa8f2
-                                const3Description = talents.Where(entry => entry["icon"]?.ToString().Contains(name) == true).ElementAt(2)["descTextMapHash"].ToString();
-                                const3Description = Mappings[const3Description].ToString();
-
-                                if (const3Description.Contains(auto))
-                                {
-                                    constellationOrder.Add(TalentAuto);
-                                }
-                                else if (const3Description.Contains(skill))
-                                {
-                                    constellationOrder.Add(TalentSkill);
-                                }
-                                else
-                                {
-                                    constellationOrder.Add(TalentBurst);
-                                }
-
-                                const5Description = talents.Where(entry => entry["icon"]?.ToString().Contains(name) == true).ElementAt(4)["descTextMapHash"].ToString();
-                                const5Description = Mappings[const5Description].ToString();
-
-                                if (const5Description.Contains(auto))
-                                {
-                                    constellationOrder.Add(TalentAuto);
-                                }
-                                else if (const5Description.Contains(skill))
-                                {
-                                    constellationOrder.Add(TalentSkill);
-                                }
-                                else
-                                {
-                                    constellationOrder.Add(TalentBurst);
-                                }
-
-                                value.Add("ConstellationOrder", constellationOrder);
-
-                                value.Add("Element", new JArray(GetElementFromID(characterID)));
+                                Logger.Debug("Skipping {0} - no skill data available", name);
+                                return;
                             }
+
+                            skill = Mappings[characterSkill[NameTextMapHashKey].ToString()].ToString();
+
+
+                            value.Add("ConstellationName", new JArray
+                            {
+                                GetConstellationNameFromId(characterID)
+                            });
+
+                            var constellationOrder = new JArray();
+
+                            // The skill/burst name is always mentioned in the constellation's description
+                            // so we'll check for it. C3 and C5 can also level the normal attack for
+                            // characters such as Freminet, Sethos, Arlecchino or Neuvillette.
+                            // Ported from taiwenlee/Inventory_Kamera (MIT): 191fa8f2
+                            const3Description = talents.Where(entry => entry["icon"]?.ToString().Contains(name) == true).ElementAt(2)["descTextMapHash"].ToString();
+                            const3Description = Mappings[const3Description].ToString();
+
+                            if (const3Description.Contains(auto))
+                            {
+                                constellationOrder.Add(TalentAuto);
+                            }
+                            else if (const3Description.Contains(skill))
+                            {
+                                constellationOrder.Add(TalentSkill);
+                            }
+                            else
+                            {
+                                constellationOrder.Add(TalentBurst);
+                            }
+
+                            const5Description = talents.Where(entry => entry["icon"]?.ToString().Contains(name) == true).ElementAt(4)["descTextMapHash"].ToString();
+                            const5Description = Mappings[const5Description].ToString();
+
+                            if (const5Description.Contains(auto))
+                            {
+                                constellationOrder.Add(TalentAuto);
+                            }
+                            else if (const5Description.Contains(skill))
+                            {
+                                constellationOrder.Add(TalentSkill);
+                            }
+                            else
+                            {
+                                constellationOrder.Add(TalentBurst);
+                            }
+
+                            value.Add("ConstellationOrder", constellationOrder);
+
+                            value.Add("Element", new JArray(GetElementFromID(characterID)));
 
                             var weaponArchetype = character["weaponType"].ToString();
                             WeaponType weaponType;
@@ -799,8 +784,7 @@ namespace InventoryKamera
                     }
                     catch (Exception ex)
                     {
-                        Logger.Warn("Problem when generating character information for {0}", name);
-                        Logger.Warn(ex);
+                        Logger.Warn(ex, "Problem when generating character information for {0}", name);
                     }
                 });
 

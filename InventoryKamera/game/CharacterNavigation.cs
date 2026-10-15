@@ -235,7 +235,6 @@ namespace InventoryKamera
                 OpenCharacterScreen(context + " recovery");
                 return true;
             }
-            catch (ThreadAbortException) { throw; }
             catch (CharacterNavigationException ex)
             {
                 Logger.Error(ex, "Character screen recovery failed during {0}; no further character actions will be sent", context);

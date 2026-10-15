@@ -16,14 +16,14 @@ namespace InventoryKamera
     /// <summary>Canonical IDs and tier descriptions, independent of the game's visible list order.</summary>
     public sealed class AchievementCatalog
     {
-        public const string CatalogUrl = "https://raw.githubusercontent.com/MadeBaruna/paimon-moe/main/src/data/achievement/en.json";
+        public const string CatalogFeed = "https://raw.githubusercontent.com/MadeBaruna/paimon-moe/main/src/data/achievement/en.json";
         private static readonly object LoadLock = new object();
         private static AchievementCatalog current;
         private static readonly Regex Markup = new Regex("<[^>]+>", RegexOptions.Compiled, RegexTimeouts.RegexTimeout);
         private static readonly Regex Numbers = new Regex(@"\b\d+(?:\.\d+)?\b", RegexOptions.Compiled, RegexTimeouts.RegexTimeout);
 
         public List<AchievementCategory> Categories { get; private set; } = new List<AchievementCategory>();
-        public string SourceUrl { get; private set; } = CatalogUrl;
+        public string SourceUrl { get; private set; } = CatalogFeed;
         public DateTime? FetchedAtUtc { get; private set; }
         public string SourceContentHash { get; private set; }
         public string LatestVersion { get; private set; }
@@ -78,7 +78,7 @@ namespace InventoryKamera
                     using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) })
                     {
                         client.DefaultRequestHeaders.UserAgent.ParseAdd("InventoryKamera/1.0");
-                        json = client.GetStringAsync(CatalogUrl).GetAwaiter().GetResult();
+                        json = client.GetStringAsync(CatalogFeed).GetAwaiter().GetResult();
                     }
                     var downloaded = FromJson(json);
                     ValidateDownload(downloaded);
@@ -88,7 +88,7 @@ namespace InventoryKamera
                         WriteAtomic(cachePath, json);
                         WriteAtomic(metadataPath, new JObject
                         {
-                            ["SourceUrl"] = CatalogUrl,
+                            ["SourceUrl"] = CatalogFeed,
                             ["FetchedAtUtc"] = downloaded.FetchedAtUtc.Value,
                             ["SourceContentHash"] = downloaded.SourceContentHash,
                             ["LatestVersion"] = downloaded.LatestVersion,
@@ -325,7 +325,7 @@ namespace InventoryKamera
             try
             {
                 var metadata = JObject.Parse(File.ReadAllText(path));
-                if ((string)metadata["SourceUrl"] == CatalogUrl && (string)metadata["SourceContentHash"] == catalog.SourceContentHash)
+                if ((string)metadata["SourceUrl"] == CatalogFeed && (string)metadata["SourceContentHash"] == catalog.SourceContentHash)
                 {
                     var fetched = metadata["FetchedAtUtc"];
                     if (fetched != null && fetched.Type != JTokenType.Null) catalog.FetchedAtUtc = fetched.ToObject<DateTime>().ToUniversalTime();

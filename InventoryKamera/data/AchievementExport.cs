@@ -64,7 +64,7 @@ namespace InventoryKamera
             {
                 ["format"] = "InventoryKameraAchievements",
                 ["version"] = 1,
-                ["catalogSource"] = AchievementCatalog.CatalogUrl,
+                ["catalogSource"] = AchievementCatalog.CatalogFeed,
                 ["completedCount"] = result.Completed.Count,
                 ["scan"] = JObject.FromObject(result)
             };
