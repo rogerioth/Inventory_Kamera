@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using WindowsInput.Native;
 
 namespace InventoryKamera.Tests
@@ -14,20 +17,23 @@ namespace InventoryKamera.Tests
 
         private static int Main(string[] args)
         {
-            string captures = null, navigationCaptures = null, paneCaptures = null, countCaptures = null, paimon = null;
+            string captures = null, navigationCaptures = null, paneCaptures = null, countCaptures = null, paimon = null,
+                characterOcrCaptures = null;
             for (int index = 0; index < args.Length; ++index)
             {
                 if (index + 1 >= args.Length ||
                     (args[index] != "--capture-directory" && args[index] != "--navigation-capture-directory"
-                    && args[index] != "--pane-capture-directory" && args[index] != "--count-capture-directory" && args[index] != "--paimon-screenshot"))
+                    && args[index] != "--pane-capture-directory" && args[index] != "--count-capture-directory"
+                    && args[index] != "--character-ocr-capture-directory" && args[index] != "--paimon-screenshot"))
                 {
-                    Console.Error.WriteLine("Usage: CharacterNavigationTests.exe [--capture-directory <saved character screenshots>] [--navigation-capture-directory <saved entry failure frames>] [--pane-capture-directory <saved constellation pane and detail frames>] [--count-capture-directory <saved roster-count failure frames>] [--paimon-screenshot <saved Paimon image>]");
+                    Console.Error.WriteLine("Usage: CharacterNavigationTests.exe [--capture-directory <saved character screenshots>] [--navigation-capture-directory <saved entry failure frames>] [--pane-capture-directory <saved constellation pane and detail frames>] [--count-capture-directory <saved roster-count failure frames>] [--character-ocr-capture-directory <saved header and talent OCR failure frames>] [--paimon-screenshot <saved Paimon image>]");
                     return 2;
                 }
                 if (args[index] == "--capture-directory") captures = args[++index];
                 else if (args[index] == "--navigation-capture-directory") navigationCaptures = args[++index];
                 else if (args[index] == "--pane-capture-directory") paneCaptures = args[++index];
                 else if (args[index] == "--count-capture-directory") countCaptures = args[++index];
+                else if (args[index] == "--character-ocr-capture-directory") characterOcrCaptures = args[++index];
                 else paimon = args[++index];
             }
             Run("Detail cleanup cannot Escape from gameplay or a closed panel", DetailCleanup);
@@ -48,6 +54,11 @@ namespace InventoryKamera.Tests
                 Run("Glowing constellation pane replay avoids repeated clicks and preserves detail overlays", () => PaneCaptureReplay(paneCaptures));
             if (countCaptures != null)
                 Run("Actual roster-count Attributes frames verify before any roster input", () => CountCaptureReplay(countCaptures));
+            if (characterOcrCaptures != null)
+            {
+                Run("Character header replay retains identity across numeric and achievement OCR", () => CharacterHeaderCaptureReplay(characterOcrCaptures));
+                Run("Saved talent pane and detail failures retain their exact screen identity", () => CharacterTalentCaptureReplay(characterOcrCaptures));
+            }
             Console.WriteLine("Character navigation regressions: {0} passed, {1} failed.", passed, failed);
             return failed == 0 ? 0 : 1;
         }
@@ -1098,6 +1109,258 @@ namespace InventoryKamera.Tests
             Console.WriteLine("  Saved count coverage: {0} Attributes frames, {1} Paimon guard frames.", attributes.Length, paimon.Length);
         }
 
+        private static void CharacterTalentCaptureReplay(string captures)
+        {
+            Check(CharacterScreenRecognizer.HasTalentDetailTabs("Talent Info Skill Attributes")
+                && CharacterScreenRecognizer.HasTalentDetailTabs("Talent Info Skill Attribute"),
+                "The two exact independent talent detail tabs support a sparse detail overlay.");
+            Check(!CharacterScreenRecognizer.HasTalentDetailTabs("Talent Info")
+                && !CharacterScreenRecognizer.HasTalentDetailTabs("Skill Attributes")
+                && !CharacterScreenRecognizer.HasTalentDetailTabs("Talent Information Skill Attr"),
+                "One tab or partial text cannot establish a talent detail overlay.");
+            foreach (string character in new[] { "Linnea", "Chiori", "Jean" })
+            {
+                string path = Directory.GetFiles(captures, "*" + character + "*.png")
+                    .OrderBy(value => Path.GetFileName(value), StringComparer.Ordinal).FirstOrDefault();
+                Check(path != null, "The saved " + character + " talent failure frame is missing.");
+                CharacterScreenState expected = character == "Linnea" ? CharacterScreenState.Talents : CharacterScreenState.TalentDetails;
+                using (var input = new SavedPaneInput(path))
+                {
+                    CharacterNavigation.BeginScan(input, input.Read, input.ReadTolerant);
+                    CharacterScreenRecognition recognition;
+                    try { recognition = CharacterNavigation.Require(expected, "saved " + character + " talent OCR failure"); }
+                    catch
+                    {
+                        Console.Error.WriteLine("  FAILED saved talent {0}: expected {1}; {2} strict captures, {3} tolerant reads",
+                            Path.GetFileName(path), expected, input.Reads, input.TolerantFrames.Count);
+                        foreach (string evidence in input.ReadEvidence) Console.Error.WriteLine("    " + evidence);
+                        throw;
+                    }
+                    Equal(expected, recognition.State, "The real saved talent frame must retain its exact state: " + recognition.Evidence);
+                    Equal(0, input.Clicks + input.Keys.Count, "Saved talent verification cannot issue detail clicks, Escape or recovery input");
+                    Check(input.Reads <= 6, "Saved talent verification must remain bounded.");
+                    using (var frame = new Bitmap(path))
+                        TolerantRejects(frame, CharacterScreenRecognizer.Read(frame),
+                            expected == CharacterScreenState.Talents ? CharacterScreenState.TalentDetails : CharacterScreenState.Talents,
+                            "A real talent detail and its base pane must remain distinct");
+                    Console.WriteLine("  REPLAY {0}: {1}; no input", Path.GetFileName(path), recognition.State);
+                    CharacterNavigation.EndScan();
+                }
+            }
+            foreach (CharacterScreenState expected in new[] { CharacterScreenState.Gameplay, CharacterScreenState.PaimonMenu,
+                CharacterScreenState.Attributes, CharacterScreenState.Constellation, CharacterScreenState.ConstellationDetails })
+            {
+                string path = Path.Combine(captures, "negative_" + expected + ".png");
+                Check(File.Exists(path), "The saved negative talent reference is missing: " + path);
+                using (var frame = new Bitmap(path))
+                {
+                    var strict = CharacterScreenRecognizer.Read(frame);
+                    Equal(expected, strict.State, "Negative saved talent reference retains its original state: " + strict.Evidence);
+                    TolerantRejects(frame, strict, CharacterScreenState.Talents, "A different saved screen cannot establish the Talents pane");
+                    TolerantRejects(frame, strict, CharacterScreenState.TalentDetails, "A different saved screen cannot establish a talent detail");
+                    Console.WriteLine("  REPLAY {0}: {1}; talent promotion rejected", Path.GetFileName(path), strict.State);
+                }
+            }
+            string chioriPath = Directory.GetFiles(captures, "*Chiori*.png").Single();
+            using (var source = new Bitmap(chioriPath))
+            using (var incomplete = (Bitmap)source.Clone())
+            {
+                // Retain the actual panel edge and right-hand talent list while
+                // removing only the existing detail-header evidence crop.
+                using (var graphics = Graphics.FromImage(incomplete))
+                using (var brush = new SolidBrush(Color.FromArgb(30, 35, 45)))
+                    graphics.FillRectangle(brush, new Rectangle(
+                        (int)Math.Round(20 * incomplete.Width / 1920.0), (int)Math.Round(130 * incomplete.Height / 1080.0),
+                        (int)Math.Round(480 * incomplete.Width / 1920.0), (int)Math.Round(260 * incomplete.Height / 1080.0)));
+                var recognition = CharacterScreenRecognizer.Read(incomplete);
+                Equal(CharacterScreenState.Unknown, recognition.State,
+                    "An incomplete real talent overlay cannot fall through into a base pane: " + recognition.Evidence);
+                Check(recognition.Evidence.Contains("strict overlay evidence incomplete; base-pane promotion forbidden")
+                    && !recognition.Evidence.Contains("sidebar="),
+                    "A retained strict overlay edge stops classification before reading the underlying sidebar.");
+                TolerantRejects(incomplete, recognition, CharacterScreenState.Talents,
+                    "An incomplete overlay cannot authorize the underlying Talents pane");
+                Console.WriteLine("  REPLAY incomplete Chiori detail: Unknown; base-pane fall-through blocked");
+            }
+        }
+
+        private static void CharacterHeaderCaptureReplay(string captures)
+        {
+            string catalogPath = Path.Combine(captures, "inventorylists", "characters.json");
+            Check(File.Exists(catalogPath), "The header replay requires the real saved character catalog.");
+            var previousCharacters = GenshinProcesor.Characters;
+            GenshinProcesor.Characters = JsonConvert.DeserializeObject<Dictionary<string, JObject>>(File.ReadAllText(catalogPath));
+            try
+            {
+                string[] filenames = { "unknown_kaedeharakazul.png", "unknown_anemo.png", "18660218.png", "48111548.png",
+                    "unknown_yumemizuki.png" };
+                string[] names = { "KaedeharaKazuha", "Wanderer", "Skirk", "Skirk", "YumemizukiMizuki" };
+                string[] elements = { "Anemo", "Anemo", "Cryo", "Cryo", "Anemo" };
+                for (int index = 0; index < filenames.Length; ++index)
+                {
+                    string path = Path.Combine(captures, filenames[index]);
+                    Check(File.Exists(path), "The saved header failure is missing: " + path);
+                    using (var frame = new Bitmap(path))
+                    {
+                        string name, element, rawName, rawText;
+                        Check(CharacterScraper.TryReadCharacterHeader(frame, out name, out element, out rawName, out rawText),
+                            "The actual saved header must resolve without lowering catalog identity guards: " + filenames[index] + ": " + rawText);
+                        Equal(names[index], name, "Saved header canonical name");
+                        Equal(elements[index], element, "Saved header canonical element");
+                        Console.WriteLine("  REPLAY {0}: {1}/{2}; raw {3}", filenames[index], name, element, rawText);
+                    }
+                }
+
+                foreach (string character in new[] { "Linnea", "Kachina" })
+                {
+                    string filename = character == "Linnea" ? "Linnea_full_frame.png" : "Kachina_attributes_full_frame.png";
+                    string path = Path.Combine(captures, filename);
+                    Check(File.Exists(path), "The full-frame production header reference is missing: " + path);
+                    using (var frame = new Bitmap(path))
+                    {
+                        var region = CharacterScraper.GetCharacterHeaderRegion(frame.Size);
+                        Check(region.Left >= 0 && region.Top >= 0 && region.Right <= frame.Width && region.Bottom <= frame.Height
+                            && region.Right < frame.Width * 477.0 / 1920,
+                            "The production header crop excludes the roster Q control and character portraits.");
+                        using (var header = frame.Clone(region, System.Drawing.Imaging.PixelFormat.Format24bppRgb))
+                        {
+                            string name, element, rawName, rawText;
+                            Check(CharacterScraper.TryReadCharacterHeader(header, out name, out element, out rawName, out rawText),
+                                "The production crop of the real full frame must resolve: " + filename + ": " + rawText);
+                            Equal(character, name, "Full-frame live header crop preserves its own canonical identity");
+                            Equal("Geo", element, "Full-frame live header crop preserves the observed element");
+                            Console.WriteLine("  REPLAY production ROI {0}: {1} -> {2}/{3}; raw {4}", filename, region, name, element, rawText);
+                        }
+                    }
+                }
+
+                string resolved, observedElement, observedName;
+                foreach (string wrapped in new[] { "Anemo / Yumemizuki\nMizuki", "Yumemizuki\nAnemo / Wizuki" })
+                {
+                    Check(CharacterScraper.TryResolveCharacterHeader(wrapped, false,
+                        out resolved, out observedElement, out observedName),
+                        "Wrapped header text must retain the name on both sides of the element line: " + wrapped);
+                    Equal("YumemizukiMizuki", resolved, "Wrapped header resolves the complete canonical identity");
+                    Equal("Anemo", observedElement, "Reordered wrapped header retains its observed element");
+                }
+                foreach (string invalidWrapped in new[] { "Yumemizuki\nCryo / Mizuki", "UnknownFuture\nAnemo / Avatar" })
+                    Check(!CharacterScraper.TryResolveCharacterHeader(invalidWrapped, false,
+                        out resolved, out observedElement, out observedName),
+                        "Wrapped layout cannot override the element or invent an unknown canonical identity: " + invalidWrapped);
+                string headerEvidence;
+                foreach (string[] readings in new[] {
+                    new[] { "yumemizuki\nanemo / wizuki", "anemo / yumemizuki" },
+                    new[] { "anemo / yumemizuki\nmizuki", "anemo / yumemizuki" }
+                })
+                {
+                    Check(CharacterScraper.TryResolveCharacterHeaderReadings(readings[0], readings[1], false,
+                        out resolved, out observedElement, out observedName, out headerEvidence),
+                        "A full wrapped name must survive a weaker truncated secondary reading: " + headerEvidence);
+                    Equal("YumemizukiMizuki", resolved, "Secondary prefix evidence cannot replace the full resolved identity");
+                    Equal("Anemo", observedElement, "The reconciled wrapped header retains the observed element");
+                }
+                foreach (string[] readings in new[] {
+                    new[] { "anemo / yumemizuki mizuki", "anemo / wanderer" },
+                    new[] { "anemo / yumemizuki mizuki", "cryo / yumemizuki mizuki" },
+                    new[] { "anemo / yumemizuki mizuki", "geo / linnea" },
+                    new[] { "cryo / kamisato ayaka", "cryo / kamisato ayato" },
+                    new[] { "anemo / yumemizuki", "anemo / yumemizuki" },
+                    new[] { "UnknownFuture\nAnemo / Avatar", "Anemo / UnknownFutureAvatar" }
+                })
+                    Check(!CharacterScraper.TryResolveCharacterHeaderReadings(readings[0], readings[1], false,
+                        out resolved, out observedElement, out observedName, out headerEvidence),
+                        "Conflicting positive names/elements or unsupported fragments cannot establish a character: " + headerEvidence);
+                Check(!CharacterScraper.TryResolveCharacterHeader("Anemo / kaedeharakazul", false,
+                    out resolved, out observedElement, out observedName), "An unclipped incomplete title cannot request the bounded tail repair.");
+                Check(!CharacterScraper.TryResolveCharacterHeader("Cryo / Kaedehara Kazuha", true,
+                    out resolved, out observedElement, out observedName), "A clipped name repair cannot override a different observed element.");
+                foreach (string unknown in new[] { "Cryo / Lucy", "Cryo / Roger", "Cryo / FutureAvatar" })
+                    Check(!CharacterScraper.TryResolveCharacterHeader(unknown, true,
+                        out resolved, out observedElement, out observedName), "A known element cannot turn an unknown avatar into Traveler: " + unknown);
+                Check(CharacterScraper.TryResolveCharacterHeader("/anemo / wanderer ®", false,
+                    out resolved, out observedElement, out observedName), "An extra leading separator must retain the real element/name fields.");
+                Equal("Wanderer", resolved, "Leading separator header resolves the actual character");
+                Check(CharacterScraper.TryResolveCharacterHeader("- cryo / skirk", false,
+                    out resolved, out observedElement, out observedName), "A decorative leading glyph must not replace the known element.");
+                Equal("Skirk", resolved, "Decorative glyph header resolves the actual character");
+                GenshinProcesor.UpdateCharacterName("Traveler", "Wanderer");
+                Check(!CharacterScraper.TryResolveCharacterHeader("Cryo / Wanderer", false,
+                    out resolved, out observedElement, out observedName), "A custom Traveler alias cannot steal a different canonical character's name.");
+                GenshinProcesor.UpdateCharacterName("Traveler", "Layca");
+                Check(CharacterScraper.TryResolveCharacterHeader("Cryo / Layca", false,
+                    out resolved, out observedElement, out observedName), "The exact stored Traveler alias must remain supported.");
+                Equal("Traveler", resolved, "Custom Traveler alias remains catalog-backed");
+                Equal("Cryo", observedElement, "Custom Traveler alias retains the observed supported element");
+
+                using (var header = new Bitmap(Path.Combine(captures, filenames[0])))
+                    CharacterOcrSequenceIsolation(captures, header);
+            }
+            finally { GenshinProcesor.Characters = previousCharacters; }
+        }
+
+        private static void CharacterOcrSequenceIsolation(string captures, Bitmap header)
+        {
+            var originalPool = GenshinProcesor.engines;
+            Tesseract.TesseractEngine engine;
+            Check(originalPool.TryTake(out engine), "An OCR engine is required for deterministic sequence isolation.");
+            string originalWhitelist;
+            engine.TryGetStringVariable("tessedit_char_whitelist", out originalWhitelist);
+            originalWhitelist = originalWhitelist ?? string.Empty;
+            GenshinProcesor.engines = new ConcurrentBag<Tesseract.TesseractEngine>(new[] { engine });
+            try
+            {
+                string beforeName, beforeElement, rawName, rawText;
+                Check(CharacterScraper.TryReadCharacterHeader(header, out beforeName, out beforeElement, out rawName, out rawText),
+                    "The real saved character header must resolve before the mixed OCR sequence: " + rawText);
+                GenshinProcesor.AnalyzeText(header, Tesseract.PageSegMode.SingleLine, true);
+                AssertWhitelist(engine, originalWhitelist, "Numeric OCR restores the prior whitelist");
+                string achievementCatalogPath = Path.Combine(captures, "inventorylists", "achievements.json");
+                string achievementPath = Path.Combine(captures, "achievement_scope_page_47.png");
+                Check(File.Exists(achievementCatalogPath) && File.Exists(achievementPath),
+                    "The isolation replay requires a saved full achievement page and its catalog.");
+                var catalog = AchievementCatalog.FromJson(File.ReadAllText(achievementCatalogPath));
+                using (var frame = new Bitmap(achievementPath))
+                {
+                    var rows = new AchievementRecognizer(catalog).ReadPage(frame, catalog.Categories.Single(category => category.Id == 0), 47);
+                    Check(rows.Any(row => row.MatchedId == 81323 && row.Reward == 5),
+                        "The real achievement replay must read its numeric reward through the shared OCR engine.");
+                }
+                AssertWhitelist(engine, originalWhitelist, "Achievement reward OCR restores the prior whitelist");
+                string afterName, afterElement;
+                Check(CharacterScraper.TryReadCharacterHeader(header, out afterName, out afterElement, out rawName, out rawText),
+                    "The saved character header must still resolve after numeric and achievement OCR: " + rawText);
+                Equal(beforeName, afterName, "Mixed OCR reads cannot change the parsed character identity");
+                Equal(beforeElement, afterElement, "Mixed OCR reads cannot change the parsed character element");
+
+                // Test a nondefault setting separately, without applying its restrictions
+                // to the character baseline. A failed numeric OCR must also return the engine.
+                const string customWhitelist = "ABC123";
+                engine.SetVariable("tessedit_char_whitelist", customWhitelist);
+                GenshinProcesor.AnalyzeText(header, Tesseract.PageSegMode.SingleLine, true);
+                AssertWhitelist(engine, customWhitelist, "Numeric OCR preserves a nondefault prior whitelist");
+                bool threw = false;
+                try { GenshinProcesor.AnalyzeText(null, Tesseract.PageSegMode.SingleLine, true); }
+                catch (Exception) { threw = true; }
+                Check(threw, "Invalid numeric input must exercise the OCR exception path.");
+                AssertWhitelist(engine, customWhitelist, "Failed numeric OCR restores the prior whitelist");
+                Equal(1, GenshinProcesor.engines.Count, "Failed numeric OCR returns the borrowed engine to the pool");
+                Console.WriteLine("  ISOLATION character -> numeric -> achievement reward -> character: {0}/{1}; settings and exception cleanup preserved", afterName, afterElement);
+            }
+            finally
+            {
+                engine.SetVariable("tessedit_char_whitelist", originalWhitelist);
+                GenshinProcesor.engines = originalPool;
+                originalPool.Add(engine);
+            }
+        }
+
+        private static void AssertWhitelist(Tesseract.TesseractEngine engine, string expected, string description)
+        {
+            string actual;
+            Check(engine.TryGetStringVariable("tessedit_char_whitelist", out actual), "The engine whitelist must remain readable.");
+            Equal(expected, actual ?? string.Empty, description);
+        }
+
         private static void TolerantRejects(Bitmap frame, CharacterScreenRecognition strict, CharacterScreenState expected, string description)
         {
             var tolerant = CharacterScreenRecognizer.ReadTolerant(frame, expected, strict);
@@ -1114,6 +1377,8 @@ namespace InventoryKamera.Tests
             internal CharacterScreenState? TolerantRejectedExpected;
             internal readonly List<int> TolerantFrames = new List<int>();
             internal readonly List<CharacterScreenState> TolerantStates = new List<CharacterScreenState>();
+            internal readonly List<string> ReadEvidence = new List<string>();
+            internal CharacterScreenRecognition LastTolerantRecognition;
             internal readonly List<VirtualKeyCode> Keys = new List<VirtualKeyCode>();
 
             internal SavedPaneInput(string path) { image = new Bitmap(path); }
@@ -1135,6 +1400,7 @@ namespace InventoryKamera.Tests
             {
                 ++Reads;
                 LastRecognition = CharacterScreenRecognizer.Read(frame);
+                ReadEvidence.Add("capture " + Reads + " strict " + LastRecognition.State + ": " + LastRecognition.Evidence);
                 if (TolerantRejectedExpected.HasValue)
                     TolerantRejects(frame, LastRecognition, TolerantRejectedExpected.Value, "Wrong expected pane for saved " + LastRecognition.State);
                 return LastRecognition;
@@ -1143,6 +1409,9 @@ namespace InventoryKamera.Tests
             {
                 TolerantFrames.Add(Reads);
                 var result = CharacterScreenRecognizer.ReadTolerant(frame, expected, strict);
+                LastTolerantRecognition = result;
+                ReadEvidence.Add("capture " + Reads + " tolerant expected " + expected + " => "
+                    + (result == null ? "null" : result.State + ": " + result.Evidence));
                 TolerantStates.Add(result?.State ?? CharacterScreenState.Unknown);
                 return result;
             }

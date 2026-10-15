@@ -21,8 +21,10 @@ namespace InventoryKamera
         public string Detail { get; }
         public bool Starting { get; }
         public bool Finished { get; }
+        public bool TotalIsProvisional { get; }
 
-        public ScanProgressUpdate(ScanPhase phase, int current, int? total, string detail, bool starting, bool finished)
+        public ScanProgressUpdate(ScanPhase phase, int current, int? total, string detail, bool starting, bool finished,
+            bool totalIsProvisional = false)
         {
             Phase = phase;
             Current = Math.Max(0, current);
@@ -30,9 +32,10 @@ namespace InventoryKamera
             Detail = detail;
             Starting = starting;
             Finished = finished;
+            TotalIsProvisional = totalIsProvisional;
         }
 
-        public int Percentage => Total.HasValue && Total.Value > 0
+        public int Percentage => TotalIsProvisional ? 0 : Total.HasValue && Total.Value > 0
             ? (int)Math.Min(100, 100L * Current / Total.Value)
             : Finished && Total == 0 ? 100 : 0;
 

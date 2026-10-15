@@ -261,9 +261,10 @@ namespace InventoryKamera
             PublishScanProgress(new ScanProgressUpdate(phase, 0, total, detail, true, false));
         }
 
-        public static void ReportScanProgress(ScanPhase phase, int current, int? total = null, string detail = null)
+        public static void ReportScanProgress(ScanPhase phase, int current, int? total = null, string detail = null,
+            bool totalIsProvisional = false)
         {
-            PublishScanProgress(new ScanProgressUpdate(phase, current, total, detail, false, false));
+            PublishScanProgress(new ScanProgressUpdate(phase, current, total, detail, false, false, totalIsProvisional));
         }
 
         public static void FinishScanPhase(ScanPhase phase, int current, int? total = null, string detail = null)

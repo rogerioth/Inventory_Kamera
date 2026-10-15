@@ -299,9 +299,6 @@ namespace InventoryKamera
             counts.Controls.Add(characterPill, 0, 1);
             counts.Controls.Add(achievementPill, 1, 1);
             achievementCountLabel = new Label { Name = "AchievementsScannedLabel", Text = "0 / ?" };
-            var counterHelp = new ToolTip(components);
-            foreach (var pill in new[] { weaponPill, artifactPill, characterPill, achievementPill })
-                counterHelp.SetToolTip(pill, "Confirmed scan results / total. The progress bar above measures the current phase's work.");
             grid.Controls.Add(counts, 0, 5);
             grid.SetColumnSpan(counts, 2);
             var navigation = Grid("NavigationPreview", 1, 2);

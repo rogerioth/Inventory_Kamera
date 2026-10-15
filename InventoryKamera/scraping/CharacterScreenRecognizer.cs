@@ -102,7 +102,19 @@ namespace InventoryKamera
                         evidence.Add("right-list='" + right + "'");
                         if (CountLevelLabels(right) >= 2)
                             return Finish(result, CharacterScreenState.TalentDetails, evidence);
+                        int levels = Math.Max(CountLevelLabels(right), ReadLightTalentLevelRows(frame, geometry, evidence));
+                        if (levels >= 2 || levels >= 1 && ReadTalentDetailTabs(frame, geometry, evidence))
+                        {
+                            evidence.Add("talent detail established by panel edge, left Lv and " + levels +
+                                " independent right Lv rows; one-row fallback additionally requires both detail tabs");
+                            return Finish(result, CharacterScreenState.TalentDetails, evidence);
+                        }
                     }
+                    // A drawer can retain readable controls from the base pane
+                    // during animation. Its edge blocks base-pane recognition
+                    // until independent detail controls identify the overlay.
+                    evidence.Add("strict overlay evidence incomplete; base-pane promotion forbidden");
+                    return Finish(result, CharacterScreenState.Unknown, evidence);
                 }
 
                 Rectangle sidebarRegion = geometry.TopRect(88, 128, 410, 435);
@@ -113,6 +125,8 @@ namespace InventoryKamera
                     sidebar = ReadRawText(frame, sidebarRegion);
                     evidence.Add("sidebar-raw='" + sidebar + "'");
                 }
+                if (!HasCharacterSidebar(sidebar))
+                    sidebar = ReadLightSidebarRows(frame, geometry, evidence);
                 evidence.Add($"sidebar exact controls={CountExactSidebarLabels(sidebar)}, required>=4 including Constellation/Talents; Attributes word={HasExactLabel(sidebar, "attributes")}");
                 if (HasCharacterSidebar(sidebar))
                 {
@@ -128,6 +142,16 @@ namespace InventoryKamera
                         return Finish(result, CharacterScreenState.Attributes, evidence);
                     if (CountLevelLabels(right) >= 3)
                         return Finish(result, CharacterScreenState.Talents, evidence);
+                    if (HasUniqueSelectedTalentsMarker(frame, geometry))
+                    {
+                        int levels = Math.Max(CountLevelLabels(right), ReadLightTalentLevelRows(frame, geometry, evidence));
+                        if (levels >= 3 || levels >= 1 && ReadTalentDemoControl(frame, geometry, evidence))
+                        {
+                            evidence.Add("Talents established by verified sidebar, unique selected Talents marker and " + levels +
+                                " right Lv rows; fewer-than-three-row alternative additionally requires Talent Demo");
+                            return Finish(result, CharacterScreenState.Talents, evidence);
+                        }
+                    }
                     bool constellationSelected = HasSelectedConstellationMarker(frame, geometry);
                     int circles = CountConstellationCircles(frame, geometry, constellationSelected);
                     evidence.Add("constellation selected-marker=" + constellationSelected + ", medallions=" + circles);
@@ -256,11 +280,14 @@ namespace InventoryKamera
                         Math.Max(CountLevelLabels(detailGray), CountLevelLabels(detailRaw)) >= 1)
                     {
                         string right = ReadTolerantPaneText(frame, geometry.TopRect(1400, 100, 485, 815),
-                            text => CountLevelLabels(text) >= 2, evidence, "detail right-list");
-                        int levels = CountLevelLabels(right);
-                        evidence.Add($"detail left Lv>=1 plus independent right Lv labels={levels}, required>=2");
-                        if (levels >= 2)
+                            text => CountLevelLabels(text) >= 2, evidence, "detail right-list", CountLevelLabels);
+                        int levels = Math.Max(CountLevelLabels(right), ReadLightTalentLevelRows(frame, geometry, evidence));
+                        evidence.Add($"detail left Lv>=1 plus independent right Lv labels={levels}; requires >=2, or >=1 plus both exact detail tabs");
+                        if (levels >= 2 || levels >= 1 && ReadTalentDetailTabs(frame, geometry, evidence))
+                        {
+                            if (levels < 2) evidence.Add("one right Lv row independently corroborated by both Talent Info and Skill Attributes tabs");
                             return Finish(result, CharacterScreenState.TalentDetails, evidence);
+                        }
                     }
                     // An overlay-shaped frame must retain its uncertainty. In
                     // particular, it cannot become a generic/base menu merely
@@ -280,6 +307,11 @@ namespace InventoryKamera
                     string sidebar = ReadTolerantPaneText(frame, geometry.TopRect(84, 110, 430, 485),
                         HasTolerantCharacterSidebar, evidence, "sidebar");
                     menu = HasTolerantCharacterSidebar(sidebar);
+                    if (!menu)
+                    {
+                        sidebar = ReadLightSidebarRows(frame, geometry, evidence);
+                        menu = HasTolerantCharacterSidebar(sidebar);
+                    }
                     evidence.Add($"relaxed sidebar exact labels={CountExactSidebarLabels(sidebar)}, required>=3 including Constellation/Talents; Attributes word={HasExactLabel(sidebar, "attributes")}; selected marker plus independent pane content still required");
                 }
                 else evidence.Add("same-frame strict generic menu supplies verified sidebar evidence");
@@ -313,11 +345,14 @@ namespace InventoryKamera
                 else if (talents && (anyPane || expected == CharacterScreenState.Talents))
                 {
                     string right = ReadTolerantPaneText(frame, geometry.TopRect(1400, 100, 485, 815),
-                        text => CountLevelLabels(text) >= 2, evidence, "talent right-pane");
-                    int levels = CountLevelLabels(right);
-                    evidence.Add($"relaxed talent Lv labels={levels}, required>=2 (strict requires3)");
-                    if (levels >= 2)
+                        text => CountLevelLabels(text) >= 2, evidence, "talent right-pane", CountLevelLabels);
+                    int levels = Math.Max(CountLevelLabels(right), ReadLightTalentLevelRows(frame, geometry, evidence));
+                    evidence.Add($"relaxed talent Lv labels={levels}; requires >=2, or >=1 plus Talent Demo (strict requires3 or the same control alternative)");
+                    if (levels >= 2 || levels >= 1 && ReadTalentDemoControl(frame, geometry, evidence))
+                    {
+                        if (levels < 2) evidence.Add("one right Lv row independently corroborated by Talent Demo control");
                         return Finish(result, CharacterScreenState.Talents, evidence);
+                    }
                 }
                 evidence.Add("expected pane lacks independent qualification; generic promotion forbidden");
             }
@@ -330,14 +365,85 @@ namespace InventoryKamera
         }
 
         private static string ReadTolerantPaneText(Bitmap frame, Rectangle region, Func<string, bool> qualified,
-            List<string> evidence, string label)
+            List<string> evidence, string label, Func<string, int> evidenceScore = null)
         {
             string gray = ReadText(frame, region, false);
             evidence.Add(label + " grayscale='" + gray + "'");
             if (qualified(gray)) return gray;
             string raw = ReadRawText(frame, region);
             evidence.Add(label + " raw='" + raw + "'");
+            if (!qualified(raw) && evidenceScore != null && evidenceScore(gray) > evidenceScore(raw))
+            {
+                evidence.Add(label + " retains stronger grayscale evidence: " + evidenceScore(gray) + " versus " + evidenceScore(raw));
+                return gray;
+            }
             return raw;
+        }
+
+        private static string ReadLightSidebarRows(Bitmap frame, Geometry geometry, List<string> evidence)
+        {
+            var rows = new List<string>();
+            foreach (int centerY in new[] { 154, 224, 294, 364, 434, 504 })
+                rows.Add(ReadWhiteHudText(frame, geometry.TopRect(143, centerY - 25, 280, 50), PageSegMode.SingleLine, true));
+            string text = string.Join("\n", rows);
+            evidence.Add("sidebar isolated light/gold-glyph rows='" + text + "'");
+            return text;
+        }
+
+        private static int ReadLightTalentLevelRows(Bitmap frame, Geometry geometry, List<string> evidence)
+        {
+            int found = 0;
+            var rows = new List<string>();
+            foreach (var region in new[] { geometry.TopRect(1430, 132, 280, 82),
+                geometry.TopRect(1430, 217, 280, 94), geometry.TopRect(1430, 313, 280, 99) })
+            {
+                string text = ReadWhiteHudText(frame, region, PageSegMode.SparseText, true);
+                rows.Add(text);
+                // Count spatial rows, not repeated readings of the same Lv label.
+                if (CountLevelLabels(text) > 0) found++;
+            }
+            evidence.Add("isolated light/gold-glyph talent rows='" + string.Join(" | ", rows) + "', Lv rows=" + found);
+            return found;
+        }
+
+        internal static bool HasTalentDetailTabs(string text)
+        {
+            return Regex.IsMatch(text ?? string.Empty, @"\btalent\s+info\b", RegexOptions.IgnoreCase)
+                && Regex.IsMatch(text ?? string.Empty, @"\bskill\s+attributes?\b", RegexOptions.IgnoreCase);
+        }
+
+        private static bool ReadTalentDetailTabs(Bitmap frame, Geometry geometry, List<string> evidence)
+        {
+            // Both exact controls belong to a talent overlay. Their presence is
+            // independent of character/talent names and the selected right Lv.
+            Rectangle region = geometry.TopRect(35, 205, 505, 65);
+            string text = ReadText(frame, region, false);
+            evidence.Add("talent detail controls grayscale='" + text + "'");
+            if (HasTalentDetailTabs(text)) return true;
+            text = ReadRawText(frame, region);
+            evidence.Add("talent detail controls raw='" + text + "'");
+            if (HasTalentDetailTabs(text)) return true;
+            text = ReadText(frame, region);
+            evidence.Add("talent detail controls threshold='" + text + "'");
+            return HasTalentDetailTabs(text);
+        }
+
+        private static bool ReadTalentDemoControl(Bitmap frame, Geometry geometry, List<string> evidence)
+        {
+            Rectangle region = geometry.BottomRect(1500, 115, 330, 85);
+            string text = ReadText(frame, region);
+            evidence.Add("talent demo control='" + text + "'");
+            if (Regex.IsMatch(text, @"\btalent\s+demo\b", RegexOptions.IgnoreCase)) return true;
+            text = ReadRawText(frame, region);
+            evidence.Add("talent demo control raw='" + text + "'");
+            return Regex.IsMatch(text, @"\btalent\s+demo\b", RegexOptions.IgnoreCase);
+        }
+
+        private static bool HasUniqueSelectedTalentsMarker(Bitmap frame, Geometry geometry)
+        {
+            return HasTolerantSelectedSidebarMarker(frame, geometry, 434)
+                && !HasTolerantSelectedSidebarMarker(frame, geometry, 154)
+                && !HasTolerantSelectedSidebarMarker(frame, geometry, 364);
         }
 
         private static bool HasConstellationDetailLabel(string text)
@@ -483,24 +589,29 @@ namespace InventoryKamera
                 return GenshinProcesor.AnalyzeText(crop, PageSegMode.SparseText).Trim();
         }
 
-        private static string ReadWhiteHudText(Bitmap frame, Rectangle region)
+        private static string ReadWhiteHudText(Bitmap frame, Rectangle region, PageSegMode mode = PageSegMode.SingleLine,
+            bool characterControls = false)
         {
             region = Rectangle.Intersect(region, new Rectangle(Point.Empty, frame.Size));
             if (region.Width < 2 || region.Height < 2) return string.Empty;
             using (Bitmap glyphs = new Bitmap(region.Width, region.Height))
             {
-                // The white HP glyphs are distinct from the green/yellow fill
-                // and the blue Lunar bar, even over a bright world backdrop.
+                // HP keeps its neutral-white mask. Character controls additionally
+                // use muted gold ink (e.g. RGB210/200/174 on a bright Geo background),
+                // which must not be discarded just because its blue channel is below 185.
                 for (int y = 0; y < glyphs.Height; y++)
                     for (int x = 0; x < glyphs.Width; x++)
                     {
                         Color color = frame.GetPixel(region.X + x, region.Y + y);
                         int low = Math.Min(color.R, Math.Min(color.G, color.B));
                         int high = Math.Max(color.R, Math.Max(color.G, color.B));
-                        glyphs.SetPixel(x, y, low >= 185 && high - low <= 45 ? Color.Black : Color.White);
+                        bool white = low >= 185 && high - low <= 45;
+                        bool gold = characterControls && color.R >= 185 && color.G >= 175 && color.B >= 150
+                            && color.R >= color.G && color.G >= color.B && color.R - color.G <= 30 && color.G - color.B <= 50;
+                        glyphs.SetPixel(x, y, white || gold ? Color.Black : Color.White);
                     }
                 using (Bitmap scaled = GenshinProcesor.ResizeImage(glyphs, glyphs.Width * 3, glyphs.Height * 3))
-                    return GenshinProcesor.AnalyzeText(scaled, PageSegMode.SingleLine).Trim();
+                    return GenshinProcesor.AnalyzeText(scaled, mode).Trim();
             }
         }
 

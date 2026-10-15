@@ -7,6 +7,8 @@ param(
     [string]$PaneCaptureDirectory,
     [Parameter(HelpMessage='Replay the saved roster-count Attributes failure and its Attributes/Paimon entry frames without roster input.')]
     [string]$CountCaptureDirectory,
+    [Parameter(HelpMessage='Replay saved character header and talent screen OCR failures, including pooled OCR isolation, using the saved lookup tables.')]
+    [string]$CharacterOcrCaptureDirectory,
     [string]$PaimonScreenshotPath,
     [string]$DependencyDirectory,
     [string]$CompilerPath
@@ -110,6 +112,7 @@ if ($CaptureDirectory) { $testArguments += @('--capture-directory', (Resolve-Pat
 if ($NavigationCaptureDirectory) { $testArguments += @('--navigation-capture-directory', (Resolve-Path -LiteralPath $NavigationCaptureDirectory).Path) }
 if ($PaneCaptureDirectory) { $testArguments += @('--pane-capture-directory', (Resolve-Path -LiteralPath $PaneCaptureDirectory).Path) }
 if ($CountCaptureDirectory) { $testArguments += @('--count-capture-directory', (Resolve-Path -LiteralPath $CountCaptureDirectory).Path) }
+if ($CharacterOcrCaptureDirectory) { $testArguments += @('--character-ocr-capture-directory', (Resolve-Path -LiteralPath $CharacterOcrCaptureDirectory).Path) }
 if ($PaimonScreenshotPath) { $testArguments += @('--paimon-screenshot', (Resolve-Path -LiteralPath $PaimonScreenshotPath).Path) }
 Push-Location -LiteralPath $outputDirectory
 try {

@@ -63,6 +63,10 @@ inventory total; the colored pills show confirmed results. Pending equipment
 OCR jobs have their own progress when capture finishes. Characters count the
 owned roster in a short name-only pass before reading full details. If that
 count cannot be verified, the total stays `?` until a complete cycle is found.
+During counting, the Characters pill shows `0 / 34...` as the number of unique
+characters found grows. The ellipsis disappears when the complete roster and
+starting position are verified; the accepted count then increases against that
+final total. Interrupted counts discard their provisional total.
 Achievement progress counts categories that reached their verified bottom,
 while its pill shows confirmed completed IDs against the game's global total.
 Material totals remain `?` during discovery. Filter stops, failures and
@@ -162,6 +166,21 @@ signals and confirmation count; successful fallback also saves its screenshot.
 Navigation diagnostics include the action, detected screen, OCR/visual evidence,
 recovery attempt and absolute screenshot path under `logging/characters/navigation`.
 Talent OCR failures also save a full screenshot with the crop and last OCR text.
+Character header parsing ignores leading decorative separators, verifies the
+element against the matched character, and rejects ambiguous names. A clipped
+long name can receive a bounded tail repair only when its text reaches the crop
+edge. Wrapped names are reconstructed around the element/slash line, including
+OCR block readings that put the first name line before the element. A partial
+reading can support a fuller reading of the same canonical name. Prefix/suffix
+support alone cannot establish an identity or override a different resolved
+character or element.
+Talent panes use isolated control and level crops when broad OCR misses
+colored labels; sparse detail overlays additionally require both detail tabs.
+An overlay edge with incomplete detail evidence stays unknown, so controls
+visible behind an opening drawer cannot authorize base-pane navigation.
+Achievement Roman-numeral repairs belong only to `AchievementRecognizer`.
+The shared OCR helper returns raw text and restores an engine's prior whitelist
+after each numeric read, including failures, before returning it to the pool.
 Run `.\tests\run-character-navigation-tests.ps1` for offline controller and
 checkpoint checks. Optional `-CaptureDirectory` replays the saved Xiangling
 constellation frame, Sigewinne's locked constellation with a long title, and
@@ -179,6 +198,13 @@ partial data or losing the next roster position.
 `-CountCaptureDirectory` replays the saved roster-count interruption, its verified
 Attributes entry and Paimon frames. The count checks also inject failures during
 the count and final checkpoint restoration, verifying one recovery and no recount.
+`-CharacterOcrCaptureDirectory` replays saved Kazuha, Wanderer, Skirk and wrapped
+Yumemizuki Mizuki headers, Linnea's Talents pane, Chiori/Jean talent overlays and
+other-screen guards. It
+also reuses one OCR engine for character, numeric and achievement reads, checks
+the character identity again, and verifies settings restoration on exceptions.
+This replay needs the saved character/achievement catalogs and achievement page
+alongside the failure captures; it opens no app and sends no game input.
 
 ## Where to make common changes
 

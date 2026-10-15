@@ -4,11 +4,17 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using WindowsInput.Native;
 
 namespace InventoryKamera
 {
+    internal enum AchievementSelectionFailureKind
+    {
+        None, LabelUnreadable, DetailMissing, SidebarStalled, SelectionUnverified, SearchLimit
+    }
+
     public interface IAchievementNavigation
     {
         Bitmap Capture();
@@ -140,11 +146,14 @@ namespace InventoryKamera
         private readonly AchievementCatalog catalog;
         private readonly AchievementRecognizer recognizer;
         private readonly IAchievementNavigation navigation;
+        private readonly Func<Bitmap, List<AchievementCategoryEntryOnScreen>> sidebarReader;
+        private readonly Func<Bitmap, bool> detailScreenReader;
         private readonly Dictionary<int, string> selectionFailures = new Dictionary<int, string>();
         private CancellationToken cancellation;
         private int sidebarRecoveries, navigationEvidence;
         private bool evidenceLimitLogged;
         private string lastSelectionFailure;
+        internal AchievementSelectionFailureKind LastSelectionFailureKind { get; private set; }
         public Action<AchievementScanResult, AchievementCategory, int> Progress { get; set; }
         public Action<Bitmap, AchievementObservation> RowPreview
         {
@@ -153,10 +162,18 @@ namespace InventoryKamera
         }
 
         public AchievementScraper(AchievementCatalog catalog, IAchievementNavigation navigation = null)
+            : this(catalog, navigation, null, null)
+        {
+        }
+
+        internal AchievementScraper(AchievementCatalog catalog, IAchievementNavigation navigation,
+            Func<Bitmap, List<AchievementCategoryEntryOnScreen>> readSidebar, Func<Bitmap, bool> isDetailScreen)
         {
             this.catalog = catalog;
             recognizer = new AchievementRecognizer(catalog);
             this.navigation = navigation ?? new AchievementNavigation();
+            sidebarReader = readSidebar ?? new Func<Bitmap, List<AchievementCategoryEntryOnScreen>>(recognizer.ReadCategories);
+            detailScreenReader = isDetailScreen ?? new Func<Bitmap, bool>(recognizer.IsDetailScreen);
         }
 
         public void Scan(AchievementScanResult result, CancellationToken cancellationToken)
@@ -184,10 +201,10 @@ namespace InventoryKamera
                     result.Categories.Add(coverage);
                     if (!SelectCategory(category))
                     {
-                        consecutiveSelectionFailures++;
+                        consecutiveSelectionFailures = NextNavigationFailureCount(consecutiveSelectionFailures, LastSelectionFailureKind);
                         if (consecutiveSelectionFailures >= 3)
                         {
-                            Logger.Warn("Achievement sidebar failed for {0} consecutive categories; recovering before continuing", consecutiveSelectionFailures);
+                            Logger.Warn("Achievement sidebar navigation failed for {0} consecutive categories; recovering before continuing", consecutiveSelectionFailures);
                             if (RecoverSidebar("consecutive_selection_failures") && SelectCategory(category))
                             {
                                 consecutiveSelectionFailures = 0;
@@ -318,10 +335,15 @@ namespace InventoryKamera
             throw new InvalidOperationException("Open the Paimon menu or an achievement category, then scan again.");
         }
 
-        private bool SelectCategory(AchievementCategory category)
+        internal bool SelectCategory(AchievementCategory category)
         {
             string last = null;
             int stationary = 0, unreadWithinRange = 0, previousDirection = 0;
+            bool localNudgeUsed = false;
+            List<AchievementCategoryEntryOnScreen> beforeNudge = null;
+            Rectangle nudgeBounds = Rectangle.Empty;
+            int nudgeNotches = 0;
+            LastSelectionFailureKind = AchievementSelectionFailureKind.SearchLimit;
             lastSelectionFailure = "Sidebar search exceeded its bounded attempt limit.";
             Logger.Info("Selecting achievement category {0} '{1}' (order {2})", category.Id, category.Name, category.Order);
             for (int attempt = 0; attempt < 32; attempt++)
@@ -330,19 +352,31 @@ namespace InventoryKamera
                 int direction, step;
                 using (var frame = Capture())
                 {
-                    if (!recognizer.IsDetailScreen(frame))
+                    if (!VerifySelectionDetail(frame, category, "select"))
                     {
-                        lastSelectionFailure = "The achievement detail screen was not visible during sidebar selection.";
-                        SaveNavigationFrame(frame, "category_" + category.Id + "_detail_missing");
-                        Logger.Warn("Achievement category {0}: {1}", category.Id, lastSelectionFailure);
                         return false;
                     }
                     var entries = ReadSidebar(frame, "select", category.Id, attempt + 1);
+                    if (beforeNudge != null)
+                    {
+                        Rectangle shiftedBounds;
+                        if (!SidebarNudgeMoved(beforeNudge, entries, nudgeNotches, frame.Height, nudgeBounds, out shiftedBounds))
+                        {
+                            LastSelectionFailureKind = AchievementSelectionFailureKind.LabelUnreadable;
+                            lastSelectionFailure = "The local sidebar position change could not be verified with a full target tile.";
+                            SaveCategoryFailure(frame, category.Id, "local_nudge_unverified", entries);
+                            return false;
+                        }
+                        Logger.Info("Achievement category {0} local sidebar nudge verified: {1} notches, tile {2} -> {3}",
+                            category.Id, nudgeNotches, nudgeBounds, shiftedBounds);
+                        beforeNudge = null;
+                    }
                     var entry = entries.FirstOrDefault(x => x.Category?.Id == category.Id && IsFullSidebarEntry(x, frame));
                     if (entry != null)
                     {
                         if (entry.Selected)
                         {
+                            LastSelectionFailureKind = AchievementSelectionFailureKind.None;
                             Logger.Info("Achievement category {0} selection verified at {1}", category.Id, entry.Bounds);
                             return true;
                         }
@@ -361,6 +395,27 @@ namespace InventoryKamera
                         // moving away from a category that may already be visible.
                         if (++unreadWithinRange >= 3)
                         {
+                            Rectangle candidateBounds = Rectangle.Empty;
+                            int nudge = !localNudgeUsed
+                                ? SidebarUnreadableNudge(category, entries, frame.Height, out candidateBounds)
+                                : 0;
+                            if (nudge != 0 && !(nudge < 0 ? SidebarAtTop(frame) : SidebarAtBottom(frame)))
+                            {
+                                // Context supplies a safe position change, never a guessed
+                                // category identity or click. Reacquire after verified motion.
+                                beforeNudge = entries;
+                                nudgeBounds = candidateBounds;
+                                nudgeNotches = nudge;
+                                localNudgeUsed = true;
+                                unreadWithinRange = stationary = previousDirection = 0;
+                                last = null;
+                                SaveNavigationFrame(frame, "category_" + category.Id + "_before_local_nudge");
+                                Logger.Info("Achievement category {0} label unreadable after three captures; nudging sidebar {1} notches around full tile {2}",
+                                    category.Id, nudge, candidateBounds);
+                                ScrollSidebar(nudge, "category_" + category.Id + "_local_nudge");
+                                continue;
+                            }
+                            LastSelectionFailureKind = AchievementSelectionFailureKind.LabelUnreadable;
                             lastSelectionFailure = entries.Any(x => x.Category != null)
                                 ? "The requested category was unreadable within the visible sidebar range."
                                 : "No known full sidebar categories could be read.";
@@ -380,6 +435,8 @@ namespace InventoryKamera
                             if (atEnd && stationary < 2) direction = 0;
                             else
                             {
+                                LastSelectionFailureKind = atEnd ? AchievementSelectionFailureKind.LabelUnreadable
+                                    : AchievementSelectionFailureKind.SidebarStalled;
                                 SaveCategoryFailure(frame, category.Id, atEnd ? "endpoint_unreadable" : "scroll_stalled", entries);
                                 return false;
                             }
@@ -401,6 +458,7 @@ namespace InventoryKamera
                 }
             }
             lastSelectionFailure = "Sidebar search exceeded its bounded attempt limit.";
+            LastSelectionFailureKind = AchievementSelectionFailureKind.SearchLimit;
             using (var frame = Capture()) SaveCategoryFailure(frame, category.Id, "search_limit", ReadSidebar(frame, "search_limit", category.Id, 32));
             return false;
         }
@@ -419,6 +477,7 @@ namespace InventoryKamera
                     {
                         using (var frame = Capture())
                         {
+                            if (!VerifySelectionDetail(frame, category, "reacquire")) return false;
                             var entries = ReadSidebar(frame, "reacquire", category.Id, recognitionAttempt + 1);
                             entry = entries.FirstOrDefault(x => x.Category?.Id == category.Id && IsFullSidebarEntry(x, frame));
                             width = frame.Width;
@@ -427,6 +486,7 @@ namespace InventoryKamera
                             if (recognitionAttempt == 2)
                             {
                                 lastSelectionFailure = "The category tile could not be reacquired after clicking.";
+                                LastSelectionFailureKind = AchievementSelectionFailureKind.LabelUnreadable;
                                 SaveCategoryFailure(frame, category.Id, "not_visible", entries);
                             }
                         }
@@ -435,11 +495,13 @@ namespace InventoryKamera
                     if (entry == null)
                     {
                         lastSelectionFailure = "The category tile could not be reacquired after clicking.";
+                        LastSelectionFailureKind = AchievementSelectionFailureKind.LabelUnreadable;
                         return false;
                     }
                 }
                 if (entry.Selected)
                 {
+                    LastSelectionFailureKind = AchievementSelectionFailureKind.None;
                     Logger.Info("Achievement category {0} '{1}' selection verified while reacquiring its tile", category.Id, category.Name);
                     return true;
                 }
@@ -455,15 +517,20 @@ namespace InventoryKamera
                 {
                     using (var selected = Capture())
                     {
+                        if (!VerifySelectionDetail(selected, category, "confirm_click")) return false;
                         var entries = ReadSidebar(selected, "confirm_click_" + (clickAttempt + 1), category.Id, confirmation + 1);
                         if (entries.Any(e => e.Category?.Id == category.Id && e.Selected && IsFullSidebarEntry(e, selected)))
                         {
+                            LastSelectionFailureKind = AchievementSelectionFailureKind.None;
                             Logger.Info("Achievement category {0} '{1}' selection verified after click {2}", category.Id, category.Name, clickAttempt + 1);
                             return true;
                         }
                         if (clickAttempt == 2 && confirmation == 2)
                         {
                             lastSelectionFailure = "Three clicks did not produce a verified selected category tile.";
+                            LastSelectionFailureKind = entries.Any(e => e.Selected && e.Category != null
+                                && e.Category.Id != category.Id && IsFullSidebarEntry(e, selected))
+                                ? AchievementSelectionFailureKind.SelectionUnverified : AchievementSelectionFailureKind.LabelUnreadable;
                             SaveCategoryFailure(selected, category.Id, "selection_failed", entries);
                         }
                     }
@@ -472,6 +539,23 @@ namespace InventoryKamera
             }
             lastSelectionFailure = "Three clicks did not produce a verified selected category tile.";
             return false;
+        }
+
+        private bool VerifySelectionDetail(Bitmap frame, AchievementCategory category, string context)
+        {
+            if (detailScreenReader(frame)) return true;
+            LastSelectionFailureKind = AchievementSelectionFailureKind.DetailMissing;
+            lastSelectionFailure = "The achievement detail screen was not visible during sidebar selection.";
+            SaveNavigationFrame(frame, "category_" + category.Id + "_" + context + "_detail_missing");
+            Logger.Warn("Achievement category {0}: {1}", category.Id, lastSelectionFailure);
+            return false;
+        }
+
+        internal static int NextNavigationFailureCount(int previous, AchievementSelectionFailureKind kind)
+        {
+            return kind == AchievementSelectionFailureKind.DetailMissing || kind == AchievementSelectionFailureKind.SidebarStalled
+                || kind == AchievementSelectionFailureKind.SelectionUnverified || kind == AchievementSelectionFailureKind.SearchLimit
+                ? previous + 1 : 0;
         }
 
         private void SaveCategoryFailure(Bitmap frame, int categoryId, string step,
@@ -718,7 +802,7 @@ namespace InventoryKamera
 
         private List<AchievementCategoryEntryOnScreen> ReadSidebar(Bitmap frame, string context, int? target, int attempt)
         {
-            var entries = recognizer.ReadCategories(frame);
+            var entries = sidebarReader(frame);
             Logger.Debug("Achievement sidebar read ({0}), target {1}, attempt {2}, frame {3}x{4}, thumb {5}, top {6}, bottom {7}: {8}",
                 context, target?.ToString() ?? "none", attempt, frame.Width, frame.Height,
                 SidebarThumbBounds(frame)?.ToString() ?? "unreadable", SidebarAtTop(frame), SidebarAtBottom(frame), FormatSidebar(entries));
@@ -733,9 +817,72 @@ namespace InventoryKamera
 
         private static bool IsFullSidebarEntry(AchievementCategoryEntryOnScreen entry, Bitmap frame)
         {
-            return entry.Bounds.Width > 0 && entry.Bounds.Height > 0
-                && entry.Bounds.Top > (int)(162.0 / 1080 * frame.Height)
-                && entry.Bounds.Bottom < (int)(1018.0 / 1080 * frame.Height);
+            return IsFullSidebarBounds(entry.Bounds, frame.Height);
+        }
+
+        private static bool IsFullSidebarBounds(Rectangle bounds, int frameHeight)
+        {
+            return bounds.Width > 0 && bounds.Height > 0
+                && bounds.Top > (int)(162.0 / 1080 * frameHeight)
+                && bounds.Bottom < (int)(1018.0 / 1080 * frameHeight);
+        }
+
+        internal static int SidebarUnreadableNudge(AchievementCategory target,
+            IList<AchievementCategoryEntryOnScreen> entries, int frameHeight, out Rectangle candidateBounds)
+        {
+            candidateBounds = Rectangle.Empty;
+            if (target == null || entries == null || frameHeight <= 0) return 0;
+            var full = entries.Where(x => IsFullSidebarBounds(x.Bounds, frameHeight)).OrderBy(x => x.Bounds.Top).ToList();
+            var known = full.Where(x => x.Category != null).ToList();
+            for (int index = 1; index < known.Count; index++)
+                if (known[index - 1].Category.Order >= known[index].Category.Order) return 0;
+            var lower = known.LastOrDefault(x => x.Category.Order < target.Order);
+            var upper = known.FirstOrDefault(x => x.Category.Order > target.Order);
+            if (lower == null || upper == null || lower.Bounds.Bottom > upper.Bounds.Top) return 0;
+            var between = full.Where(x => x.Bounds.Top >= lower.Bounds.Bottom && x.Bounds.Bottom <= upper.Bounds.Top).ToList();
+            int expected = upper.Category.Order - lower.Category.Order - 1;
+            int targetIndex = target.Order - lower.Category.Order - 1;
+            if (between.Count != expected || targetIndex < 0 || targetIndex >= between.Count) return 0;
+            var candidate = between[targetIndex];
+            if (candidate.Category != null) return 0;
+            string prefix = SidebarCategoryPrefix(target.Name);
+            if (prefix.Length == 0 || SidebarCategoryPrefix(candidate.RawText) != prefix) return 0;
+            candidateBounds = candidate.Bounds;
+            // Move the candidate toward the middle, away from either clipping edge.
+            // Verify the resulting movement and full bounds before trusting any reread.
+            return candidate.Bounds.Top + candidate.Bounds.Height / 2 < frameHeight * 590.0 / 1080 ? -3 : 3;
+        }
+
+        private static string SidebarCategoryPrefix(string text)
+        {
+            string prefix = Regex.Replace(text ?? "", @"\s*[\(\[][^\)\]]+[\)\]]\s*$", "");
+            return AchievementCatalog.Normalize(prefix);
+        }
+
+        internal static bool SidebarNudgeMoved(IList<AchievementCategoryEntryOnScreen> before,
+            IList<AchievementCategoryEntryOnScreen> after, int signedNotches, int frameHeight,
+            Rectangle candidateBounds, out Rectangle shiftedBounds)
+        {
+            shiftedBounds = Rectangle.Empty;
+            if (before == null || after == null || signedNotches == 0 || frameHeight <= 0) return false;
+            var movements = new List<int>();
+            foreach (var group in before.Where(x => x.Category != null).GroupBy(x => x.Category.Id))
+            {
+                var matches = after.Where(x => x.Category?.Id == group.Key).Take(2).ToList();
+                if (group.Count() == 1 && matches.Count == 1)
+                    movements.Add(group.First().Bounds.Top - matches[0].Bounds.Top);
+            }
+            // Two distinct canonical labels must move together. A new OCR spelling
+            // or an animated scrollbar alone is not proof of sidebar movement.
+            if (movements.Count < 2) return false;
+            movements.Sort();
+            int movement = movements[movements.Count / 2];
+            int tolerance = Math.Max(3, frameHeight * 8 / 1080);
+            if (movement == 0 || Math.Sign(movement) != Math.Sign(signedNotches)
+                || movements.Any(value => Math.Abs(value - movement) > tolerance)) return false;
+            shiftedBounds = candidateBounds;
+            shiftedBounds.Offset(0, -movement);
+            return IsFullSidebarBounds(shiftedBounds, frameHeight);
         }
 
         private static string SidebarSignature(Bitmap frame, IEnumerable<AchievementCategoryEntryOnScreen> entries)

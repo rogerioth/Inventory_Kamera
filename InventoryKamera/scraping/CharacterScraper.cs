@@ -64,11 +64,19 @@ namespace InventoryKamera
 			string lastInspectedIdentity = null;
 			int stalledSelections = 0;
 			string rosterStart;
-			UserInterface.ReportScanProgress(ScanPhase.Characters, 0, null, "Counting roster");
-			int? rosterTotal = CountOwnedCharacters(out rosterStart);
+			UserInterface.ReportScanProgress(ScanPhase.Characters, 0, null, "Counting roster", totalIsProvisional: true);
+			int? rosterTotal = null;
+			try
+			{
+				rosterTotal = CountOwnedCharacters(out rosterStart);
+			}
+			finally
+			{
+				// An interrupted count must not leave its partial denominator in the pill.
+				UserInterface.ReportScanProgress(ScanPhase.Characters, 0, rosterTotal,
+					rosterTotal.HasValue ? "Scanning roster" : "Scanning roster (total unavailable)");
+			}
 			string first = rosterStart;
-			UserInterface.ReportScanProgress(ScanPhase.Characters, 0, rosterTotal,
-				rosterTotal.HasValue ? "Scanning roster" : "Scanning roster (total unavailable)");
 
 			UserInterface.ResetCharacterDisplay();
 
@@ -232,7 +240,8 @@ namespace InventoryKamera
 					CharacterNavigation.OpenCharacterScreen("recover initial roster checkpoint", true);
 					SelectAttributesAfterDetails("recover initial roster checkpoint Attributes");
 					return true;
-				}, maxRosterPositions, out startingName);
+				}, maxRosterPositions, out startingName,
+				count => UserInterface.ReportScanProgress(ScanPhase.Characters, 0, count, "Counting roster", totalIsProvisional: true));
 			if (total.HasValue) Logger.Info("Verified owned character roster cycle: {0} characters", total.Value);
 			else Logger.Info("Optional roster total unavailable; scanning from verified initial checkpoint {0} without a denominator",
 				startingName ?? "header not yet readable");
@@ -241,7 +250,7 @@ namespace InventoryKamera
 
 		internal static int? CountRosterBestEffort(Action prepareAttributes, Func<string> readIdentity,
 			Action nextCharacter, Func<string, bool> restoreOrigin, Func<string, bool> recoverOrigin,
-			int boundedLimit, out string startingIdentity)
+			int boundedLimit, out string startingIdentity, Action<int> reportCount = null)
 		{
 			if (prepareAttributes == null) throw new ArgumentNullException(nameof(prepareAttributes));
 			if (readIdentity == null) throw new ArgumentNullException(nameof(readIdentity));
@@ -272,7 +281,7 @@ namespace InventoryKamera
 			try
 			{
 				string countedStart;
-				total = CountRosterCycle(readIdentity, nextCharacter, boundedLimit, out countedStart);
+				total = CountRosterCycle(readIdentity, nextCharacter, boundedLimit, out countedStart, reportCount);
 				if (countedStart != startingIdentity) total = null;
 			}
 			catch (ThreadAbortException) { throw; }
@@ -325,7 +334,7 @@ namespace InventoryKamera
 		}
 
 		internal static int? CountRosterCycle(Func<string> readName, Action nextCharacter, int boundedLimit,
-			out string startingName)
+			out string startingName, Action<int> reportCount = null)
 		{
 			if (readName == null) throw new ArgumentNullException(nameof(readName));
 			if (nextCharacter == null) throw new ArgumentNullException(nameof(nextCharacter));
@@ -334,6 +343,7 @@ namespace InventoryKamera
 			string firstName = readName();
 			if (string.IsNullOrWhiteSpace(firstName)) return null;
 			var names = new HashSet<string> { firstName };
+			reportCount?.Invoke(names.Count);
 			for (int position = 1; position < boundedLimit; ++position)
 			{
 				nextCharacter();
@@ -347,6 +357,7 @@ namespace InventoryKamera
 					return names.Count;
 				}
 				if (!names.Add(name)) return null;
+				reportCount?.Invoke(names.Count);
 			}
 			return null;
 		}
@@ -534,10 +545,18 @@ namespace InventoryKamera
 
 		private static Rectangle CharacterHeaderRegion()
 		{
-			return new RECT((int)(85 / 1280.0 * Navigation.GetWidth()),
-				(int)(10 / 720.0 * Navigation.GetHeight()), (int)(305 / 1280.0 * Navigation.GetWidth()),
-				(int)(55 / 720.0 * Navigation.GetHeight()));
+			return GetCharacterHeaderRegion(new Size(Navigation.GetWidth(), Navigation.GetHeight()));
 		}
+
+        internal static Rectangle GetCharacterHeaderRegion(Size clientSize)
+        {
+            // The roster Q key begins at x477 in a 1920-wide client. Preserve
+            // the available header width without admitting that key or portraits.
+            // A longer name still touching this edge uses the bounded tail repair.
+            return Rectangle.FromLTRB((int)(85 / 1280.0 * clientSize.Width),
+                (int)(10 / 720.0 * clientSize.Height), (int)(315 / 1280.0 * clientSize.Width),
+                (int)(55 / 720.0 * clientSize.Height));
+        }
 
 		private static Character ScanCharacter(string firstCharacter, Action<string> checkpoint)
 		{
@@ -730,17 +749,244 @@ namespace InventoryKamera
                 }
             }
             finally { grayscale.Dispose(); }
-            rawText = "block='" + block + "'; line='" + line + "'";
-            // A wrapped header may place the slash on the second line. Prefer
-            // the single-line read when it preserves the separator, as before.
-            string headerText = line.Contains("/") ? line : block;
-            if (!headerText.Contains("/")) return false;
-            var split = headerText.Split('/');
-            string elementText = split[0].Trim();
-            element = GenshinProcesor.FindElementByName(elementText.Split(' ')[0]);
-            rawName = Regex.Replace(split[1], @"[\W]", string.Empty);
-            name = GenshinProcesor.FindClosestCharacterName(rawName);
+            bool clipped = CharacterHeaderTouchesRightEdge(header);
+            bool matched = TryResolveCharacterHeaderReadings(block, line, clipped,
+                out name, out element, out rawName, out string evidence);
+            rawText = "block='" + block + "'; line='" + line + "'; name-clipped=" + clipped + "; resolution=" + evidence;
+            return matched;
+        }
+
+        internal static bool TryResolveCharacterHeaderReadings(string block, string line, bool nameClipped,
+            out string name, out string element, out string rawName, out string evidence)
+        {
+            name = null;
+            element = null;
+            rawName = null;
+            evidence = "no complete catalog name matched";
+            bool lineMatched = TryResolveCharacterHeader(line, nameClipped, out string lineName,
+                out string lineElement, out string lineRawName);
+            bool blockMatched = TryResolveCharacterHeader(block, nameClipped, out string blockName,
+                out string blockElement, out string blockRawName);
+            string resolvedName = lineMatched ? lineName : blockName;
+            string agreement = "no name corroboration";
+            if ((lineMatched || blockMatched) && !string.IsNullOrEmpty(lineElement) && !string.IsNullOrEmpty(blockElement)
+                && (lineElement != blockElement || (lineMatched && blockMatched && lineName != blockName)
+                    || !CharacterHeaderReadingsAgree(lineRawName, blockRawName, nameClipped, resolvedName, out agreement)))
+            {
+                element = lineElement;
+                rawName = lineRawName;
+                evidence = lineElement != blockElement ? "conflicting elements" :
+                    lineMatched && blockMatched && lineName != blockName ? "conflicting canonical characters" :
+                    "unexplained name text; " + agreement;
+                return false;
+            }
+            if (lineMatched || blockMatched)
+            {
+                bool useLine = lineMatched && (!blockMatched || lineRawName.Length >= blockRawName.Length);
+                name = useLine ? lineName : blockName;
+                element = useLine ? lineElement : blockElement;
+                rawName = useLine ? lineRawName : blockRawName;
+                evidence = "matched " + (useLine ? "line" : "block") + "; wrapped-block=" +
+                    ((block ?? "").Contains("\n") || (block ?? "").Contains("\r")) + "; " + agreement;
+                return true;
+            }
+            element = !string.IsNullOrEmpty(lineElement) ? lineElement : blockElement;
+            rawName = !string.IsNullOrEmpty(lineRawName) ? lineRawName : blockRawName;
+            return false;
+        }
+
+        internal static bool TryResolveCharacterHeader(string text, bool nameClipped,
+            out string name, out string element, out string rawName)
+        {
+            name = null;
+            element = null;
+            rawName = null;
+            // Ignore only leading decorative/empty slash fields. The meaningful
+            // pre-slash field must end in a whole element line; preceding name
+            // lines are retained, rather than searching arbitrary words for an element.
+            var fields = (text ?? "").Split('/').Select(value => value.Trim()).ToList();
+            while (fields.Count > 0 && !Regex.IsMatch(fields[0], @"[\p{L}\p{N}]")) fields.RemoveAt(0);
+            if (fields.Count != 2) return false;
+            // Long names wrap above and below the element/slash line. Tesseract
+            // therefore emits "Yumemizuki\nAnemo / Mizuki". The element must
+            // occupy the LAST whole pre-slash line; all preceding text remains
+            // part of the name, in its observed order, rather than being dropped.
+            var beforeSlash = fields[0].Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(value => value.Trim()).Where(value => value.Length > 0).ToList();
+            if (beforeSlash.Count == 0) return false;
+            string observedElement = Regex.Replace(beforeSlash[beforeSlash.Count - 1], @"[^\p{L}]", "").ToLowerInvariant();
+            if (!GenshinProcesor.Elements.TryGetValue(observedElement, out element)) return false;
+            rawName = (string.Join(" ", beforeSlash.Take(beforeSlash.Count - 1)) + " " + fields[1]).FoldToOcrName();
+            name = MatchCharacterHeaderName(rawName, element, nameClipped);
             return GenshinProcesor.CharacterMatchesElement(name, element);
+        }
+
+        internal static string MatchCharacterHeaderName(string rawName, string element, bool nameClipped)
+        {
+            string observed = (rawName ?? "").FoldToOcrName();
+            if (observed.Length == 0 || !GenshinProcesor.IsValidElement(element)) return "";
+            var canonical = GenshinProcesor.Characters.Where(pair => pair.Value?["GOOD"] != null)
+                .Select(pair => new KeyValuePair<string, string>(pair.Key.FoldToOcrName(), (string)pair.Value["GOOD"]))
+                .ToList();
+            var exactCanonical = canonical.Where(candidate => candidate.Key == observed).Select(candidate => candidate.Value).Distinct().ToList();
+            if (exactCanonical.Count > 0)
+                return exactCanonical.Count == 1 && GenshinProcesor.CharacterMatchesElement(exactCanonical[0], element)
+                    ? exactCanonical[0] : "";
+            var matchingCanonical = canonical.Where(candidate => GenshinProcesor.CharacterMatchesElement(candidate.Value, element)).ToList();
+            var aliases = new List<KeyValuePair<string, string>>(matchingCanonical);
+            var reserved = new HashSet<string>(canonical.Select(candidate => candidate.Key), StringComparer.Ordinal);
+            foreach (var pair in GenshinProcesor.Characters)
+            {
+                string alias = ((string)pair.Value?["CustomName"])?.FoldToOcrName();
+                string good = (string)pair.Value?["GOOD"];
+                // Real character names keep priority, including when their element does
+                // not match; custom Traveler/Wanderer aliases cannot steal those names.
+                if (!string.IsNullOrEmpty(alias) && !reserved.Contains(alias) && GenshinProcesor.CharacterMatchesElement(good, element))
+                    aliases.Add(new KeyValuePair<string, string>(alias, good));
+            }
+            var exact = aliases.Where(candidate => candidate.Key == observed).Select(candidate => candidate.Value).Distinct().ToList();
+            if (exact.Count > 0) return exact.Count == 1 ? exact[0] : "";
+            if (observed.Length < 4) return "";
+            var ranked = aliases.GroupBy(candidate => candidate.Value).Select(group => new
+            {
+                Name = group.Key,
+                Score = group.Max(candidate => 100.0 * (1.0 - CharacterHeaderEditDistance(observed, candidate.Key) /
+                    (double)Math.Max(observed.Length, candidate.Key.Length)))
+            }).OrderByDescending(candidate => candidate.Score).ToList();
+            if (ranked.Count > 0 && ranked[0].Score >= 90 &&
+                (ranked.Count == 1 || ranked[0].Score - ranked[1].Score >= 7)) return ranked[0].Name;
+            // Recover only a physically clipped, long canonical prefix. The final
+            // partial glyph may have been substituted; full unknown/future names and
+            // custom aliases never receive this lower-confidence tail repair.
+            if (!nameClipped || observed.Length < 8) return "";
+            var clipped = matchingCanonical.Where(candidate => candidate.Key.Length > observed.Length &&
+                candidate.Key.Length - observed.Length <= 4 && (candidate.Key.StartsWith(observed, StringComparison.Ordinal) ||
+                    candidate.Key.StartsWith(observed.Substring(0, observed.Length - 1), StringComparison.Ordinal)))
+                .Select(candidate => candidate.Value).Distinct().ToList();
+            return clipped.Count == 1 ? clipped[0] : "";
+        }
+
+        private static bool CharacterHeaderTouchesRightEdge(Bitmap header)
+        {
+            int margin = Math.Max(3, (int)Math.Round(header.Height * .06));
+            var textRows = new bool[header.Height];
+            for (int y = header.Height / 6; y < header.Height * 5 / 6; ++y)
+            {
+                int foreground = 0;
+                // Locate the gold header's actual text band from its left-hand
+                // element/name text, independent of any glimmer at the crop edge.
+                for (int x = 0; x < Math.Min(header.Width - margin, header.Width * 2 / 3); ++x)
+                    if (IsCharacterHeaderGoldInk(header.GetPixel(x, y))) ++foreground;
+                textRows[y] = foreground >= 5;
+            }
+            int minimumRun = Math.Max(8, (int)Math.Round(header.Height * .12));
+            for (int x = Math.Max(0, header.Width - margin); x < header.Width; ++x)
+            {
+                int run = 0;
+                for (int y = 0; y < header.Height; ++y)
+                {
+                    // Solid glyph strokes stop a few pixels before an antialiased
+                    // clipped edge. Require a sustained stroke inside the text
+                    // band rather than counting isolated border/glow pixels.
+                    if (textRows[y] && IsCharacterHeaderGoldInk(header.GetPixel(x, y)))
+                    {
+                        if (++run >= minimumRun) return true;
+                    }
+                    else run = 0;
+                }
+            }
+            return false;
+        }
+
+        private static bool IsCharacterHeaderGoldInk(Color color)
+        {
+            return color.R > 170 && color.G > 140 && color.B < 215 && color.R >= color.G && color.G > color.B + 12;
+        }
+
+        private static bool CharacterHeaderReadingsAgree(string left, string right, bool clipped,
+            string resolvedName, out string evidence)
+        {
+            evidence = "no conflicting name evidence";
+            // An absent name is inconclusive, not a conflicting positive identity.
+            if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right)) return true;
+            // An exact known name remains positive conflicting evidence even if
+            // that reading's element made its full match invalid. For example,
+            // Cryo/Ayato must not corroborate Cryo/Ayaka just because they differ
+            // by two letters.
+            foreach (var pair in GenshinProcesor.Characters)
+            {
+                if (pair.Value?["GOOD"] == null || (string)pair.Value["GOOD"] == resolvedName) continue;
+                string knownName = pair.Key.FoldToOcrName();
+                if (knownName == left || knownName == right)
+                {
+                    evidence = "known canonical name '" + knownName + "' conflicts with " + resolvedName;
+                    return false;
+                }
+            }
+            if (CharacterHeaderEditDistance(left, right) <= 2)
+            {
+                evidence = "nearby OCR names";
+                return true;
+            }
+            if (clipped && Math.Abs(left.Length - right.Length) <= 4 &&
+                (left.StartsWith(right, StringComparison.Ordinal) || right.StartsWith(left, StringComparison.Ordinal)))
+            {
+                evidence = "clipped-name prefix corroboration";
+                return true;
+            }
+            // A shorter OCR view can corroborate an independently matched FULL
+            // canonical name. It cannot establish that identity by itself, and
+            // custom aliases do not acquire partial-name matching through this path.
+            string canonical = (resolvedName ?? "").FoldToOcrName();
+            if (CharacterHeaderFragmentFits(left, canonical, out string leftEvidence) &&
+                CharacterHeaderFragmentFits(right, canonical, out string rightEvidence))
+            {
+                evidence = "canonical corroboration: line " + leftEvidence + ", block " + rightEvidence;
+                return true;
+            }
+            evidence = "neither nearby OCR nor compatible canonical fragments";
+            return false;
+        }
+
+        private static bool CharacterHeaderFragmentFits(string fragment, string canonical, out string evidence)
+        {
+            evidence = "unrelated text";
+            if (CharacterHeaderEditDistance(fragment, canonical) <= 2)
+            {
+                evidence = "full name";
+                return true;
+            }
+            if (canonical.Length < 12 || fragment.Length > canonical.Length - 4) return false;
+            if (fragment.Length >= 8 && canonical.StartsWith(fragment, StringComparison.Ordinal))
+            {
+                evidence = "long prefix";
+                return true;
+            }
+            if (fragment.Length >= 5 && CharacterHeaderEditDistance(fragment,
+                canonical.Substring(canonical.Length - fragment.Length)) <= 1)
+            {
+                evidence = "long suffix";
+                return true;
+            }
+            return false;
+        }
+
+        private static int CharacterHeaderEditDistance(string left, string right)
+        {
+            var previous = new int[right.Length + 1];
+            var current = new int[right.Length + 1];
+            for (int index = 0; index <= right.Length; ++index) previous[index] = index;
+            for (int row = 1; row <= left.Length; ++row)
+            {
+                current[0] = row;
+                for (int column = 1; column <= right.Length; ++column)
+                    current[column] = Math.Min(Math.Min(current[column - 1] + 1, previous[column] + 1),
+                        previous[column - 1] + (left[row - 1] == right[column - 1] ? 0 : 1));
+                var swap = previous;
+                previous = current;
+                current = swap;
+            }
+            return previous[right.Length];
         }
 
 		private static void ScanNameAndElement(ref string name, ref string element, int maxAttempts = 75, bool quiet = false,
@@ -826,7 +1072,7 @@ namespace InventoryKamera
 
 					if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(element))
 					{
-						Logger.Debug("Scanned character name as {0} with element {1}", name, element);
+						Logger.Debug("Scanned character name as {0} with element {1}; header OCR {2}", name, element, headerText);
                         if (!quiet) UserInterface.SetCharacter_NameAndElement(bm, name, element);
 						return;
 					}

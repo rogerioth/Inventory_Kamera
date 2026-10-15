@@ -281,7 +281,13 @@ namespace InventoryKamera
                                 : c.R > 195 && c.G > 190 && c.B > 170 && c.R - c.G < 22;
                             if (ink) ++count;
                         }
-                        return count >= Math.Max(8, geometry.X(10));
+                        // A wrapped "(I)" has only 7-9 white pixels on most scanlines.
+                        // Requiring a dense row discarded the entire series suffix and
+                        // made its full-height, visible card ambiguous with (II)/(III).
+                        // Keep sparse glyph strokes; the existing minimum line height
+                        // rejects isolated highlights, and the color gate excludes gold
+                        // completion percentages for both selected and ordinary cards.
+                        return count >= Math.Max(2, geometry.X(3));
                     }, geometry.Y(3), geometry.Y(12));
                     if (names.Count == 0) continue;
                     // Include every title line inside this actual tile; percentages are gold
@@ -303,6 +309,119 @@ namespace InventoryKamera
                         else Logger.Debug("Unmatched achievement category at {0}: raw '{1}', threshold '{2}'",
                             tile.Top, text, retry);
                     }
+                    if (names.Count > 1)
+                    {
+                        // A short, standalone series suffix is easily read as [1], or
+                        // (III) as (II), in a full-width multiline caption. Verify its
+                        // actual glyphs separately even when that caption already matched.
+                        var suffixLine = names[names.Count - 1];
+                        int suffixLeft = geometry.X(isSelected ? 665 : 653), suffixRight = -1;
+                        for (int y = suffixLine.Top; y < suffixLine.Bottom; ++y)
+                            for (int x = geometry.X(124); x < geometry.X(isSelected ? 665 : 653); ++x)
+                            {
+                                var c = pixels.Get(x, y);
+                                bool ink = isSelected ? c.R < 130 && c.G < 135 && c.B < 140
+                                    : c.R > 195 && c.G > 190 && c.B > 170 && c.R - c.G < 22;
+                                if (!ink) continue;
+                                suffixLeft = Math.Min(suffixLeft, x);
+                                suffixRight = Math.Max(suffixRight, x);
+                            }
+                        if (suffixRight >= suffixLeft && suffixRight - suffixLeft <= geometry.X(100))
+                        {
+                            var prefixCrop = geometry.Clip(Rectangle.FromLTRB(geometry.X(122),
+                                names[0].Top - geometry.Y(5), geometry.X(isSelected ? 665 : 655),
+                                Math.Min(suffixLine.Top - geometry.Y(2), names[names.Count - 2].Bottom + geometry.Y(3))));
+                            var prefixMode = names.Count == 2 ? PageSegMode.SingleLine : PageSegMode.SingleBlock;
+                            string prefix = Clean(Read(frame, prefixCrop, prefixMode).Text);
+                            // Exact prefix identity is required for repairing 1/l/| as I.
+                            // Do not choose a series from its position or a fuzzy prefix.
+                            var series = catalog.Categories.Select(candidate => new
+                            {
+                                Category = candidate,
+                                Suffix = Regex.Match(candidate.Name ?? "", @"\s*\(([IVXLCDM]+)\)\s*$")
+                            }).Where(candidate => candidate.Suffix.Success &&
+                                AchievementCatalog.Normalize(candidate.Category.Name.Substring(0, candidate.Suffix.Index)) ==
+                                AchievementCatalog.Normalize(prefix)).ToList();
+                            if (series.Count == 0)
+                            {
+                                string retryPrefix = Clean(Read(frame, prefixCrop, prefixMode, true, !isSelected).Text);
+                                series = catalog.Categories.Select(candidate => new
+                                {
+                                    Category = candidate,
+                                    Suffix = Regex.Match(candidate.Name ?? "", @"\s*\(([IVXLCDM]+)\)\s*$")
+                                }).Where(candidate => candidate.Suffix.Success &&
+                                    AchievementCatalog.Normalize(candidate.Category.Name.Substring(0, candidate.Suffix.Index)) ==
+                                    AchievementCatalog.Normalize(retryPrefix)).ToList();
+                                if (series.Count > 0) prefix = retryPrefix;
+                            }
+                            if (series.Count > 0)
+                            {
+                                string fullText = text;
+                                var suffixCrop = geometry.Clip(Rectangle.FromLTRB(suffixLeft - geometry.X(5),
+                                    suffixLine.Top - geometry.Y(3), suffixRight + 1 + geometry.X(5),
+                                    suffixLine.Bottom + geometry.Y(3)));
+                                string suffixRaw = Clean(Read(frame, suffixCrop, PageSegMode.SingleLine).Text);
+                                string suffixThreshold = Clean(Read(frame, suffixCrop, PageSegMode.SingleLine, true, !isSelected).Text);
+                                var columns = Bands(suffixLeft, suffixRight + 1, x =>
+                                {
+                                    int count = 0;
+                                    for (int y = suffixLine.Top; y < suffixLine.Bottom; ++y)
+                                        if (IsSidebarNameInk(pixels.Get(x, y), isSelected)) ++count;
+                                    return count >= Math.Max(1, geometry.Y(2));
+                                }, 0, Math.Max(1, geometry.X(2)));
+                                string middleRaw = "", middleThreshold = "", verifiedSuffix = "";
+                                int? straightICount = null;
+                                bool brackets = columns.Count >= 3 &&
+                                    IsSidebarBracket(pixels, columns[0], suffixLine, isSelected, true, geometry) &&
+                                    IsSidebarBracket(pixels, columns[columns.Count - 1], suffixLine, isSelected, false, geometry);
+                                if (brackets)
+                                {
+                                    // Parentheses can themselves become extra I strokes in
+                                    // OCR. Separate the curved outer glyphs from the numeral
+                                    // using empty columns, then read only the actual middle.
+                                    int middleLeft = Math.Max(columns[0].Bottom + 1,
+                                        columns[1].Top - geometry.X(2));
+                                    int middleRight = Math.Min(columns[columns.Count - 1].Top - 1,
+                                        columns[columns.Count - 2].Bottom + geometry.X(2));
+                                    var middleCrop = geometry.Clip(Rectangle.FromLTRB(middleLeft,
+                                        suffixLine.Top - geometry.Y(3), middleRight,
+                                        suffixLine.Bottom + geometry.Y(3)));
+                                    middleRaw = Clean(Read(frame, middleCrop, PageSegMode.SingleLine).Text);
+                                    middleThreshold = Clean(Read(frame, middleCrop, PageSegMode.SingleLine, true, !isSelected).Text);
+                                    using (var numeral = frame.Clone(middleCrop, PixelFormat.Format24bppRgb))
+                                        straightICount = ReadSidebarStraightICount(numeral, isSelected);
+                                    // OCR can collapse two or three complete I stems into
+                                    // one digit. Positive stem geometry, not unanimous OCR,
+                                    // preserves the distinction between I, II and III.
+                                    verifiedSuffix = ResolveSidebarRomanEvidence(true, brackets, straightICount,
+                                        series.Select(candidate => candidate.Suffix.Groups[1].Value),
+                                        middleRaw, middleThreshold, suffixThreshold, ExtractSidebarCaptionSuffix(fullText));
+                                }
+                                category = null;
+                                if (verifiedSuffix.Length > 0)
+                                {
+                                    var matching = series.Where(candidate => candidate.Suffix.Groups[1].Value == verifiedSuffix).ToList();
+                                    if (matching.Count == 1)
+                                    {
+                                        category = matching[0].Category;
+                                        text = prefix + " (" + verifiedSuffix + ")";
+                                    }
+                                }
+                                Logger.Debug("Achievement category suffix at {0}: caption '{1}', prefix '{2}', raw '{3}', threshold '{4}', glyph groups {5}, curved brackets {6}, numeral raw '{7}', numeral threshold '{8}', verified '{9}' (category {10}), qualified straight I count {11}",
+                                    tile.Top, fullText, prefix, suffixRaw, suffixThreshold, columns.Count, brackets,
+                                    middleRaw, middleThreshold, text,
+                                    category == null ? "unresolved" : category.Id.ToString(CultureInfo.InvariantCulture),
+                                    straightICount.HasValue ? straightICount.Value.ToString(CultureInfo.InvariantCulture) : "unqualified");
+                            }
+                            else if (category != null && Regex.IsMatch(category.Name ?? "", @"\s*\([IVXLCDM]+\)\s*$"))
+                            {
+                                // A nominal whole-caption series match cannot override an
+                                // unverified independent prefix/suffix pair.
+                                Logger.Debug("Unverified achievement category series at {0}: caption '{1}', prefix '{2}'", tile.Top, text, prefix);
+                                category = null;
+                            }
+                        }
+                    }
                     if (string.IsNullOrEmpty(text)) continue;
                     result.Add(new AchievementCategoryEntryOnScreen
                     {
@@ -317,6 +436,122 @@ namespace InventoryKamera
                 }
             }
             return result;
+        }
+
+        private static bool IsSidebarNameInk(Color color, bool selected)
+        {
+            return selected ? color.R < 130 && color.G < 135 && color.B < 140
+                : color.R > 195 && color.G > 190 && color.B > 170 && color.R - color.G < 22;
+        }
+
+        private static string NormalizeSidebarRoman(string text)
+        {
+            string glyphs = Regex.Replace(text ?? "", @"\s+", "");
+            // Only an independently isolated numeral with an exact canonical prefix
+            // reaches this repair. Do not force arbitrary OCR with a whitelist.
+            return Regex.IsMatch(glyphs, @"^[IVXivx1l|!]+$")
+                ? glyphs.Replace('1', 'I').Replace('l', 'I').Replace('|', 'I').Replace('!', 'I').ToUpperInvariant() : "";
+        }
+
+        private static string ExtractSidebarCaptionSuffix(string caption)
+        {
+            var suffix = Regex.Match(caption ?? "", @"[\(\[\{]\s*([IVXivx1l|!]+)\s*[\)\]\}]\s*$");
+            return suffix.Success ? suffix.Groups[1].Value : "";
+        }
+
+        internal static string ResolveSidebarRomanEvidence(bool exactPrefix, bool curvedBrackets,
+            int? straightICount, IEnumerable<string> availableSuffixes, string rawNumeral,
+            string thresholdNumeral, string thresholdSuffix, string captionSuffix)
+        {
+            if (!exactPrefix || !curvedBrackets || availableSuffixes == null) return "";
+            var available = availableSuffixes.Where(value => value != null).Select(value => value.ToUpperInvariant()).ToList();
+            Func<string, string> observed = value => NormalizeSidebarRoman((value ?? "").Trim().Trim('(', ')', '[', ']', '{', '}'));
+            if (straightICount.HasValue)
+            {
+                if (straightICount.Value < 1 || straightICount.Value > 3) return "";
+                string physical = new string('I', straightICount.Value);
+                // A threshold or full-caption read must corroborate the independent
+                // geometry. Raw text alone cannot repair or choose a numeral.
+                return available.Count(value => value == physical) == 1 &&
+                    new[] { thresholdNumeral, thresholdSuffix, captionSuffix }.Any(value => observed(value) == physical)
+                    ? physical : "";
+            }
+            string raw = observed(rawNumeral), threshold = observed(thresholdNumeral);
+            // V/X and mixed Roman numerals retain strict agreement. A failed straight
+            // I qualification cannot be bypassed by two identical I-only OCR reads.
+            return raw.Length > 0 && raw == threshold && !Regex.IsMatch(raw, @"^I+$") &&
+                available.Count(value => value == raw) == 1 ? raw : "";
+        }
+
+        internal static int? ReadSidebarStraightICount(Bitmap numeralCrop, bool selected = false)
+        {
+            if (numeralCrop == null || numeralCrop.Width == 0 || numeralCrop.Height == 0) return null;
+            using (var pixels = new Pixels(numeralCrop))
+            {
+                int minimumColumnInk = Math.Max(2, (int)Math.Round(numeralCrop.Height * .06));
+                var columns = Bands(0, numeralCrop.Width, x =>
+                {
+                    int count = 0;
+                    for (int y = 0; y < numeralCrop.Height; ++y)
+                        if (IsSidebarNameInk(pixels.Get(x, y), selected)) ++count;
+                    return count >= minimumColumnInk;
+                }, 0, 1);
+                if (columns.Count < 1 || columns.Count > 3) return null;
+                int firstTop = -1, firstBottom = -1;
+                foreach (var column in columns)
+                {
+                    int top = numeralCrop.Height, bottom = -1, longestSpine = 0;
+                    for (int x = column.Top; x < column.Bottom; ++x)
+                    {
+                        int run = 0;
+                        for (int y = 0; y < numeralCrop.Height; ++y)
+                        {
+                            if (IsSidebarNameInk(pixels.Get(x, y), selected))
+                            {
+                                top = Math.Min(top, y);
+                                bottom = Math.Max(bottom, y);
+                                longestSpine = Math.Max(longestSpine, ++run);
+                            }
+                            else run = 0;
+                        }
+                    }
+                    int height = bottom - top + 1;
+                    // Count a glyph only if it has a narrow, nearly full-height fixed
+                    // vertical spine. Counting disconnected components alone would
+                    // confuse diagonal V/X strokes or punctuation with I stems.
+                    if (height < Math.Max(8, (int)Math.Round(numeralCrop.Height * .5)) ||
+                        column.Height > height * .45 || longestSpine < height * .85) return null;
+                    int alignmentTolerance = Math.Max(2, (int)Math.Round(height * .12));
+                    if (firstTop >= 0 && (Math.Abs(top - firstTop) > alignmentTolerance ||
+                        Math.Abs(bottom - firstBottom) > alignmentTolerance)) return null;
+                    firstTop = top;
+                    firstBottom = bottom;
+                }
+                return columns.Count;
+            }
+        }
+
+        private static bool IsSidebarBracket(Pixels pixels, Rectangle columns, Rectangle line,
+            bool selected, bool opening, Geometry geometry)
+        {
+            var edges = new List<int>();
+            for (int y = line.Top; y < line.Bottom; ++y)
+            {
+                int edge = opening ? int.MaxValue : int.MinValue;
+                for (int x = columns.Top; x < columns.Bottom; ++x)
+                {
+                    if (!IsSidebarNameInk(pixels.Get(x, y), selected)) continue;
+                    edge = opening ? Math.Min(edge, x) : Math.Max(edge, x);
+                }
+                if (edge != int.MaxValue && edge != int.MinValue) edges.Add(edge);
+            }
+            if (edges.Count < Math.Max(8, geometry.Y(10))) return false;
+            int third = edges.Count / 3;
+            double ends = edges.Take(third).Concat(edges.Skip(edges.Count - third)).Average();
+            double middle = edges.Skip(third).Take(edges.Count - third * 2).Average();
+            // Both parentheses curve away from their end positions at mid-height.
+            // An I stem/serif has the opposite shape and cannot be stripped here.
+            return (opening ? ends - middle : middle - ends) >= Math.Max(1, geometry.X(1));
         }
 
         public int? ReadCompletedTotal(Bitmap frame)
@@ -565,7 +800,7 @@ namespace InventoryKamera
                 readings.Add(Clean(Read(frame, region, PageSegMode.SingleLine, true).Text));
             }
             string state = string.Join(" ", readings);
-            observation.CompletedText = Regex.IsMatch(state, @"\bcompleted\b", RegexOptions.IgnoreCase);
+            observation.CompletedText = HasCompletedStampText(state, observation.CompletionDate);
             observation.Claimable = Regex.IsMatch(state, @"\bclaim\b", RegexOptions.IgnoreCase);
             var progress = Regex.Match(state, @"\b(\d+)\s*/\s*(\d+)\b");
             if (progress.Success) observation.Progress = progress.Groups[1].Value + "/" + progress.Groups[2].Value;
@@ -574,11 +809,52 @@ namespace InventoryKamera
             if (total.Success && int.TryParse(total.Groups[1].Value.Replace(",", ""), out value)) observation.Total = value;
             if (!observation.CompletedText && !observation.Claimable && !progress.Success)
             {
-                // An unclaimed reward's button can use white letters rather than the usual tan ink.
-                var button = Read(frame, geometry.Clip(Rectangle.FromLTRB(geometry.X(1668),
-                    bounds.Top + geometry.Y(20), geometry.X(1810), bounds.Bottom - geometry.Y(12))), PageSegMode.SingleBlock);
-                observation.Claimable = Regex.IsMatch(button.Text ?? "", @"\bclaim\b", RegexOptions.IgnoreCase);
+                // Sparse stamp strokes can split the Completed word into narrow
+                // bands. Re-read the entire state column before rejecting it,
+                // retaining both completion and unfinished-progress evidence.
+                var stateBounds = geometry.Clip(Rectangle.FromLTRB(geometry.X(1668),
+                    bounds.Top + geometry.Y(20), geometry.X(1810), bounds.Bottom - geometry.Y(12)));
+                readings.Add(Clean(Read(frame, stateBounds, PageSegMode.SingleBlock).Text));
+                state = string.Join(" ", readings);
+                bool recognized = HasCompletedStampText(state, observation.CompletionDate)
+                    || Regex.IsMatch(state, @"\bclaim\b|\b\d+\s*/\s*\d+\b", RegexOptions.IgnoreCase);
+                if (!recognized)
+                {
+                    // Preserve the full label's ascenders/descenders and leave
+                    // the separate date line outside this thresholded retry.
+                    var labelBounds = geometry.Clip(Rectangle.FromLTRB(geometry.X(1668),
+                        bounds.Top + geometry.Y(20), geometry.X(1810), bounds.Bottom - geometry.Y(34)));
+                    readings.Add(Clean(Read(frame, labelBounds, PageSegMode.SingleBlock, true).Text));
+                    state = string.Join(" ", readings);
+                }
+                observation.CompletedText = HasCompletedStampText(state, observation.CompletionDate);
+                observation.Claimable = Regex.IsMatch(state, @"\bclaim\b", RegexOptions.IgnoreCase);
+                progress = Regex.Match(state, @"\b(\d+)\s*/\s*(\d+)\b");
+                if (progress.Success) observation.Progress = progress.Groups[1].Value + "/" + progress.Groups[2].Value;
+                total = Regex.Match(state, @"\btotal\s*:\s*(\d[\d,]*)", RegexOptions.IgnoreCase);
+                if (total.Success && int.TryParse(total.Groups[1].Value.Replace(",", ""), out value)) observation.Total = value;
+                Logger.Debug("Achievement state column reread: category={0}, page={1}, top={2}, title='{3}', completed={4}, claimable={5}, progress='{6}', date='{7}', raw='{8}'",
+                    observation.CategoryId, observation.Page, bounds.Top, observation.Title, observation.CompletedText,
+                    observation.Claimable, observation.Progress, observation.CompletionDate, state);
             }
+            if (observation.CompletedText && !Regex.IsMatch(state, @"\bcompleted\b", RegexOptions.IgnoreCase))
+                Logger.Debug("Achievement completion stamp repaired lowercase l/i OCR: category={0}, page={1}, top={2}, title='{3}', validDate='{4}', raw='{5}'; tier/star and progress validation still required",
+                    observation.CategoryId, observation.Page, bounds.Top, observation.Title, observation.CompletionDate, state);
+            if (!observation.CompletedText && !observation.Claimable && string.IsNullOrEmpty(observation.Progress))
+            {
+                Logger.Warn("Achievement completion evidence unreadable: category={0}, page={1}, top={2}, title='{3}', date='{4}', stateBands={5}, raw='{6}'",
+                    observation.CategoryId, observation.Page, bounds.Top, observation.Title, observation.CompletionDate, bands.Count, state);
+            }
+        }
+
+        private static bool HasCompletedStampText(string text, string validDate)
+        {
+            if (Regex.IsMatch(text ?? "", @"\bcompleted\b", RegexOptions.IgnoreCase)) return true;
+            // The narrow lowercase l in this stamp is sometimes read as i/1.
+            // Repair that one glyph only alongside a separately validated date;
+            // Reconcile still requires matching filled stars and rejects unfinished progress.
+            return !string.IsNullOrEmpty(validDate)
+                && Regex.IsMatch(text ?? "", @"\bcomp[i1]eted\b", RegexOptions.IgnoreCase);
         }
 
         internal static void Reconcile(AchievementObservation observation, AchievementFamily family,

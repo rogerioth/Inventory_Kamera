@@ -11,20 +11,34 @@ namespace InventoryKamera
         private void SetScanOptionsEnabled(bool enabled)
         {
             foreach (var control in new Control[] { Weapons_CheckBox, Artifacts_Checkbox, Characters_CheckBox,
-                CharDevItems_CheckBox, Materials_CheckBox, achievementsCheckBox, OutputPath_TextBox, FileSelectButton })
+                CharDevItems_CheckBox, Materials_CheckBox, achievementsCheckBox, OutputPath_TextBox, FileSelectButton,
+                WeaponRarityControl, MinimumWeaponLevelControl, ArtifactRarityControl, numericUpDown1 })
                 control.Enabled = enabled;
         }
 
         private void UpdateAchievementProgress(AchievementScanResult result, AchievementCategory category, int page)
         {
-            string count = result.Completed.Count + " / " + (result.ExpectedCompleted?.ToString() ?? "?");
-            Invoke((MethodInvoker)delegate
-            {
-                achievementCountLabel.Text = count;
-            });
+            int visited = result.Categories.Count(coverage => coverage.ReachedBottom);
+            int? total = data.AchievementCatalog?.Categories.Count;
+            string count = RefreshAchievementCounterSnapshot(result, visited, total);
             UserInterface.ReportScanProgress(ScanPhase.Achievements,
-                result.Categories.Count(coverage => coverage.ReachedBottom), data.AchievementCatalog?.Categories.Count,
+                visited, total,
                 count + " completed achievements");
+        }
+
+        private string RefreshAchievementCounterSnapshot(AchievementScanResult result, int visited, int? total)
+        {
+            // Capture collection-derived counts while the scanner owns the result,
+            // before dispatching to the UI. Tooltips consume only this snapshot.
+            int confirmed = result.Completed.Count;
+            int? expected = result.ExpectedCompleted;
+            int unresolved = result.Observations.Count(row => !string.IsNullOrEmpty(row.Error));
+            bool complete = result.Complete, cancelled = result.Cancelled;
+            MethodInvoker update = () => SetAchievementCounterSnapshot(confirmed, expected, visited,
+                total, unresolved, complete, cancelled);
+            if (InvokeRequired) Invoke(update);
+            else update();
+            return confirmed + " / " + (expected?.ToString() ?? "?");
         }
 
         private void UpdateAchievementPreview(Bitmap row, AchievementObservation observation)
@@ -42,6 +56,8 @@ namespace InventoryKamera
         {
             try
             {
+                RefreshAchievementCounterSnapshot(data.Achievements,
+                    data.Achievements.Categories.Count(category => category.ReachedBottom), data.AchievementCatalog?.Categories.Count);
                 var paths = AchievementExport.Write(data.Achievements, directory);
                 foreach (var path in paths) Logger.Info("Saved achievement export: {0}", path);
                 if (!data.Achievements.Complete)
