@@ -51,6 +51,17 @@ namespace InventoryKamera
             AppVersion = Assembly.GetExecutingAssembly().GetName().Version.ToString(3);
             Source = "Inventory_Kamera";
 
+            AssignCharacters(genshinData);
+
+            AssignWeapons(genshinData);
+
+            AssignArtifacts(genshinData);
+
+            AssignMaterials(genshinData);
+        }
+
+        private void AssignCharacters(InventoryKamera genshinData)
+        {
             // Assign Characters
             if (genshinData.Characters.Count > 0)
             {
@@ -61,9 +72,10 @@ namespace InventoryKamera
                     foreach (Character character in Characters) character.Weapon = null;
                 }
             }
+        }
 
-
-
+        private void AssignWeapons(InventoryKamera genshinData)
+        {
             // Assign Weapons
             if (genshinData.Inventory.Weapons.Count > 0)
             {
@@ -74,7 +86,10 @@ namespace InventoryKamera
                     foreach (Weapon weapon in Weapons) weapon.EquippedCharacter = "";
                 }
             }
+        }
 
+        private void AssignArtifacts(InventoryKamera genshinData)
+        {
             // Assign Artifacts
             if (genshinData.Inventory.Artifacts.Count > 0)
             {
@@ -85,7 +100,10 @@ namespace InventoryKamera
                     foreach (Artifact artifact in Artifacts) artifact.EquippedCharacter = "";
                 }
             }
+        }
 
+        private void AssignMaterials(InventoryKamera genshinData)
+        {
             // Assign materials
             if (genshinData.Inventory.AllMaterials.Count > 0) Materials = new Dictionary<string, int>();
             genshinData.Inventory.AllMaterials.ToList().ForEach(material => Materials.Add(material.name, material.count));

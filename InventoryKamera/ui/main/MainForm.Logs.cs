@@ -293,23 +293,7 @@ namespace InventoryKamera
             var rtf = new StringBuilder("{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Consolas;}}" +
                 "{\\colortbl;\\red0\\green0\\blue0;\\red138\\green90\\blue0;\\red197\\green15\\blue31;}" +
                 "\\f0\\fs18\\pard\\tx480 ");
-            int textLength = 0;
-            int latestErrorStart = -1;
-            foreach (var entry in displayedLogEntries)
-            {
-                if (!IsLogEntryVisible(entry))
-                    continue;
-                int color;
-                if (entry.IsError) color = 3;
-                else color = entry.Level.Ordinal >= LogLevel.Warn.Ordinal ? 2 : 1;
-                rtf.Append("\\cf").Append(color).Append(' ');
-                string text = entry.Text.Replace("\r\n", "\n").Replace('\r', '\n');
-                if (entry.IsError)
-                    latestErrorStart = textLength;
-                AppendLogRtfText(rtf, text);
-                rtf.Append("\\par ");
-                textLength += text.Length + 1;
-            }
+            int latestErrorStart = AppendVisibleLogEntries(rtf);
             rtf.Append('}');
             logText.Rtf = rtf.ToString();
 
@@ -329,6 +313,28 @@ namespace InventoryKamera
                 logText.Select(selectionStart, Math.Min(selectionLength, logText.TextLength - selectionStart));
                 LogSendMessage(logText.Handle, 0x04DE, IntPtr.Zero, ref scrollPosition); // EM_SETSCROLLPOS
             }
+        }
+
+        private int AppendVisibleLogEntries(StringBuilder rtf)
+        {
+            int textLength = 0;
+            int latestErrorStart = -1;
+            foreach (var entry in displayedLogEntries)
+            {
+                if (!IsLogEntryVisible(entry))
+                    continue;
+                int color;
+                if (entry.IsError) color = 3;
+                else color = entry.Level.Ordinal >= LogLevel.Warn.Ordinal ? 2 : 1;
+                rtf.Append("\\cf").Append(color).Append(' ');
+                string text = entry.Text.Replace("\r\n", "\n").Replace('\r', '\n');
+                if (entry.IsError)
+                    latestErrorStart = textLength;
+                AppendLogRtfText(rtf, text);
+                rtf.Append("\\par ");
+                textLength += text.Length + 1;
+            }
+            return latestErrorStart;
         }
 
         private static void AppendLogRtfText(StringBuilder rtf, string text)
