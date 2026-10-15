@@ -154,6 +154,43 @@ namespace InventoryKamera
 			GenshinProcesor.ReloadData();
 
 			// Initize Image Processors
+			StartImageProcessorWorkers();
+
+			GenshinProcesor.RestartEngines();
+
+			AssignCustomCharacterNames();
+
+			if (Properties.Settings.Default.ScanWeapons)
+				ScanWeaponInventory();
+
+			if (Properties.Settings.Default.ScanArtifacts)
+				ScanArtifactInventory();
+
+			workerQueue.Enqueue(new OcrImageCollection(null, "END", 0));
+
+			if (Properties.Settings.Default.ScanCharacters)
+				ScanCharacterRoster();
+
+			// Wait for Image Processors to finish
+			AwaitEquipmentProcessing();
+
+			if (Properties.Settings.Default.ScanCharacters)
+				AssignScannedEquipment();
+
+			// Scan Character Development Items
+			if (Properties.Settings.Default.ScanCharDevItems)
+				ScanCharacterDevelopmentItems();
+
+			// Scan Materials
+			if (Properties.Settings.Default.ScanMaterials)
+				ScanMaterialInventory();
+
+            ScanAchievements();
+			Logger.Info("Inventory scan finished");
+		}
+
+		private void StartImageProcessorWorkers()
+		{
 			for (int i = 0; i < NumWorkers; i++)
 			{
 				Thread processor = new Thread(ImageProcessorWorker){ IsBackground = true };
@@ -161,10 +198,10 @@ namespace InventoryKamera
 				ImageProcessors.Add(processor);
 			}
 			Logger.Debug("Added {count} workers", ImageProcessors.Count);
+		}
 
-			GenshinProcesor.RestartEngines();
-
-
+		private void AssignCustomCharacterNames()
+		{
 			// Assign Traveler's custom name
 			// Assign Wanderer's custom name
 			// A missing character entry (e.g. outdated characters.json) must not abort the
@@ -180,89 +217,88 @@ namespace InventoryKamera
 				UserInterface.AddError($"    [FAILURE] Could not assign custom character names: {ex.Message}. Continuing scan.");
 				Logger.Debug(ex, "Custom character name assignment exception");
 			}
+		}
 
-
-			if (Properties.Settings.Default.ScanWeapons)
+		private void ScanWeaponInventory()
+		{
+			UserInterface.BeginScanPhase(ScanPhase.Weapons);
+			Logger.Info("Starting weapon inventory scan");
+			// Get Weapons
+			Navigation.InventoryScreen();
+			Navigation.SelectWeaponInventory();
+			try
 			{
-				UserInterface.BeginScanPhase(ScanPhase.Weapons);
-				Logger.Info("Starting weapon inventory scan");
-				// Get Weapons
-				Navigation.InventoryScreen();
-				Navigation.SelectWeaponInventory();
-				try
-				{
-                    weaponScraper.ScanWeapons();
-				}
-				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Weapon inventory scan: " + ex.Message); }
-				catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
-				catch (Exception ex)
-				{
-					UserInterface.AddError("    [FAILURE] Weapon inventory scan: " + ex.Message);
-					Logger.Debug(ex, "Weapon inventory scan exception");
-				}
-				Navigation.MainMenuScreen();
-				Logger.Info("Finished capturing weapon inventory cards");
+                weaponScraper.ScanWeapons();
 			}
-
-			if (Properties.Settings.Default.ScanArtifacts)
+			catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Weapon inventory scan: " + ex.Message); }
+			catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
+			catch (Exception ex)
 			{
-				UserInterface.BeginScanPhase(ScanPhase.Artifacts);
-				Logger.Info("Starting artifact inventory scan");
-
-				// Get Artifacts
-				Navigation.InventoryScreen();
-				Navigation.SelectArtifactInventory();
-				try
-				{
-					artifactScraper.ScanArtifacts();
-				}
-				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Artifact inventory scan: " + ex.Message); }
-				catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
-				catch (Exception ex)
-				{
-					UserInterface.AddError("    [FAILURE] Artifact inventory scan: " + ex.Message);
-					Logger.Debug(ex, "Artifact inventory scan exception");
-				}
-				Navigation.MainMenuScreen();
-				Logger.Info("Finished capturing artifact inventory cards");
+				UserInterface.AddError("    [FAILURE] Weapon inventory scan: " + ex.Message);
+				Logger.Debug(ex, "Weapon inventory scan exception");
 			}
+			Navigation.MainMenuScreen();
+			Logger.Info("Finished capturing weapon inventory cards");
+		}
 
-			workerQueue.Enqueue(new OcrImageCollection(null, "END", 0));
+		private void ScanArtifactInventory()
+		{
+			UserInterface.BeginScanPhase(ScanPhase.Artifacts);
+			Logger.Info("Starting artifact inventory scan");
 
-			if (Properties.Settings.Default.ScanCharacters)
+			// Get Artifacts
+			Navigation.InventoryScreen();
+			Navigation.SelectArtifactInventory();
+			try
 			{
-				CharacterScanComplete = false;
-				UserInterface.BeginScanPhase(ScanPhase.Characters);
-				Logger.Info("Starting character roster scan");
-				// Get characters
-				CharacterNavigation.BeginScan();
-				bool characterTalentsCorrected = false;
-				try
-				{
-					CharacterNavigation.OpenCharacterScreen("start character roster scan", true);
-					CharacterScraper.ScanCharacters(Characters);
-					CharacterScanComplete = CharacterScraper.LastScanComplete;
-					characterTalentsCorrected = true;
-					CharacterNavigation.Require(CharacterScreenState.CharacterMenu, "finish character roster scan");
-				}
-				catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
-				catch (CharacterNavigationException)
-				{
-					if (!characterTalentsCorrected) CharacterScraper.ApplyTartagliaTalentCorrection(Characters);
-					throw;
-				}
-				catch (Exception ex)
-				{
-					UserInterface.AddError("    [FAILURE] Character roster scan: " + ex.Message);
-					Logger.Debug(ex, "Character roster scan exception");
-				}
-				finally { CharacterNavigation.EndScan(); }
-				Navigation.MainMenuScreen();
-				Logger.Info("Finished character roster scan: {0} characters recorded; complete={1}, skipped={2}",
-					Characters.Count, CharacterScanComplete, CharacterScraper.LastSkippedCount);
+				artifactScraper.ScanArtifacts();
 			}
+			catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Artifact inventory scan: " + ex.Message); }
+			catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
+			catch (Exception ex)
+			{
+				UserInterface.AddError("    [FAILURE] Artifact inventory scan: " + ex.Message);
+				Logger.Debug(ex, "Artifact inventory scan exception");
+			}
+			Navigation.MainMenuScreen();
+			Logger.Info("Finished capturing artifact inventory cards");
+		}
 
-			// Wait for Image Processors to finish
+		private void ScanCharacterRoster()
+		{
+			CharacterScanComplete = false;
+			UserInterface.BeginScanPhase(ScanPhase.Characters);
+			Logger.Info("Starting character roster scan");
+			// Get characters
+			CharacterNavigation.BeginScan();
+			bool characterTalentsCorrected = false;
+			try
+			{
+				CharacterNavigation.OpenCharacterScreen("start character roster scan", true);
+				CharacterScraper.ScanCharacters(Characters);
+				CharacterScanComplete = CharacterScraper.LastScanComplete;
+				characterTalentsCorrected = true;
+				CharacterNavigation.Require(CharacterScreenState.CharacterMenu, "finish character roster scan");
+			}
+			catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
+			catch (CharacterNavigationException)
+			{
+				if (!characterTalentsCorrected) CharacterScraper.ApplyTartagliaTalentCorrection(Characters);
+				throw;
+			}
+			catch (Exception ex)
+			{
+				UserInterface.AddError("    [FAILURE] Character roster scan: " + ex.Message);
+				Logger.Debug(ex, "Character roster scan exception");
+			}
+			finally { CharacterNavigation.EndScan(); }
+			Navigation.MainMenuScreen();
+			Logger.Info("Finished character roster scan: {0} characters recorded; complete={1}, skipped={2}",
+				Characters.Count, CharacterScanComplete, CharacterScraper.LastSkippedCount);
+		}
+
+		private void AwaitEquipmentProcessing()
+		{
 			Logger.Debug("Waiting for remaining weapon and artifact scans...");
             if (Volatile.Read(ref equipmentProcessed) < Volatile.Read(ref equipmentEnqueued))
             {
@@ -284,65 +320,61 @@ namespace InventoryKamera
             }
             else AwaitProcessors();
 			Logger.Debug("    Equipment processing finished");
+		}
 
-			if (Properties.Settings.Default.ScanCharacters)
-			{
-				// Assign Artifacts to Characters
-				if (Properties.Settings.Default.ScanArtifacts)
-					AssignArtifacts();
-				if (Properties.Settings.Default.ScanWeapons)
-					AssignWeapons();
-			}
+		private void AssignScannedEquipment()
+		{
+			// Assign Artifacts to Characters
+			if (Properties.Settings.Default.ScanArtifacts)
+				AssignArtifacts();
+			if (Properties.Settings.Default.ScanWeapons)
+				AssignWeapons();
+		}
 
-			// Scan Character Development Items
-			if (Properties.Settings.Default.ScanCharDevItems)
+		private void ScanCharacterDevelopmentItems()
+		{
+			UserInterface.BeginScanPhase(ScanPhase.CharacterDevelopmentItems);
+			Logger.Info("Starting character development material scan");
+			// Get Materials
+			Navigation.InventoryScreen();
+			Navigation.SelectCharacterDevelopmentInventory();
+			try
 			{
-				UserInterface.BeginScanPhase(ScanPhase.CharacterDevelopmentItems);
-				Logger.Info("Starting character development material scan");
-				// Get Materials
-				Navigation.InventoryScreen();
-				Navigation.SelectCharacterDevelopmentInventory();
-				try
-				{
-					materialScraper.SetInventoryPage(InventoryPage.CharacterDevelopmentItems);
-					materialScraper.Scan_Materials(Inventory);
-				}
-				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Character development material scan: " + ex.Message); }
-				catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
-				catch (Exception ex)
-				{
-					UserInterface.AddError("    [FAILURE] Character development material scan: " + ex.Message);
-					Logger.Debug(ex, "Character development material scan exception");
-				}
-				Navigation.MainMenuScreen();
-				Logger.Info("Finished character development material scan");
+				materialScraper.SetInventoryPage(InventoryPage.CharacterDevelopmentItems);
+				materialScraper.Scan_Materials(Inventory);
 			}
+			catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Character development material scan: " + ex.Message); }
+			catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
+			catch (Exception ex)
+			{
+				UserInterface.AddError("    [FAILURE] Character development material scan: " + ex.Message);
+				Logger.Debug(ex, "Character development material scan exception");
+			}
+			Navigation.MainMenuScreen();
+			Logger.Info("Finished character development material scan");
+		}
 
-			// Scan Materials
-			if (Properties.Settings.Default.ScanMaterials)
+		private void ScanMaterialInventory()
+		{
+			UserInterface.BeginScanPhase(ScanPhase.Materials);
+			Logger.Info("Starting material inventory scan");
+			// Get Materials
+			Navigation.InventoryScreen();
+			Navigation.SelectMaterialInventory();
+			try
 			{
-				UserInterface.BeginScanPhase(ScanPhase.Materials);
-				Logger.Info("Starting material inventory scan");
-				// Get Materials
-				Navigation.InventoryScreen();
-				Navigation.SelectMaterialInventory();
-				try
-				{
-					materialScraper.SetInventoryPage(InventoryPage.Materials);
-					materialScraper.Scan_Materials(Inventory);
-				}
-				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Material inventory scan: " + ex.Message); }
-				catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
-				catch (Exception ex)
-				{
-					UserInterface.AddError("    [FAILURE] Material inventory scan: " + ex.Message);
-					Logger.Debug(ex, "Material inventory scan exception");
-				}
-				Navigation.MainMenuScreen();
-				Logger.Info("Finished material inventory scan");
+				materialScraper.SetInventoryPage(InventoryPage.Materials);
+				materialScraper.Scan_Materials(Inventory);
 			}
-            ScanAchievements();
-			Logger.Info("Inventory scan finished");
+			catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Material inventory scan: " + ex.Message); }
+			catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
+			catch (Exception ex)
+			{
+				UserInterface.AddError("    [FAILURE] Material inventory scan: " + ex.Message);
+				Logger.Debug(ex, "Material inventory scan exception");
+			}
+			Navigation.MainMenuScreen();
+			Logger.Info("Finished material inventory scan");
 		}
 
         public bool RequestAchievementStop()
@@ -389,204 +421,7 @@ namespace InventoryKamera
 
 				if (workerQueue.TryDequeue(out OcrImageCollection imageCollection))
 				{
-					// A single unrecognized or malformed item must never kill this worker
-					// thread; log it and keep processing the rest of the queue.
-					try
-					{
-						switch (imageCollection.Type)
-						{
-						case "weapon":
-							if (weaponScraper.IsEnhancementMaterial(imageCollection.Bitmaps.First()))
-							{
-								Logger.Debug("Enhancement Material found for weapon #{weaponID}", imageCollection.Id);
-								weaponScraper.StopScanning = true;
-								break;
-							}
-
-							UserInterface.SetGearPictureBox(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1]);
-
-							// Scan as weapon
-							Weapon weapon = weaponScraper.CatalogueFromBitmapsAsync(imageCollection.Bitmaps, imageCollection.Id).Result;
-							UserInterface.SetGear(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1], weapon);
-
-							string weaponPath = $"./logging/weapons/weapon{weapon.Id}/";
-
-							if (Properties.Settings.Default.LogScreenshots) Directory.CreateDirectory(weaponPath);
-
-							if (weapon.IsValid())
-							{
-								UserInterface.IncrementWeaponCount();
-								Inventory.Add(weapon);
-								if (!string.IsNullOrWhiteSpace(weapon.EquippedCharacter))
-									equippedWeapons.Add(weapon);
-								Logger.Info("    Completed weapon #{0}: {1}, level {2}, refinement {3}{4}",
-									weapon.Id, weapon.Name, weapon.Level, weapon.RefinementLevel,
-									string.IsNullOrWhiteSpace(weapon.EquippedCharacter) ? "" : ", equipped by " + weapon.EquippedCharacter);
-							}
-							else
-							{
-								string error = "";
-								if (!weapon.HasValidWeaponName()) error += "Invalid weapon name\n"; 
-								if (!weapon.HasValidRarity()) error += "Invalid weapon rarity\n";
-								if (!weapon.HasValidLevel()) error += "Invalid weapon level\n";
-								if (!weapon.HasValidRefinementLevel()) error += "Invalid refinement level\n";
-								if (!weapon.HasValidEquippedCharacter()) error += "Invalid equipped character\n";
-								UserInterface.AddError($"    [FAILURE] Weapon #{weapon.Id} ({weapon.Name ?? "unknown"}) could not be validated and was skipped.\n        {error.TrimEnd().Replace("\n", "\n        ")}");
-								Logger.Debug("Invalid weapon #{0} details: {1}", weapon.Id, weapon);
-								Directory.CreateDirectory(weaponPath);
-								try
-								{
-									using (var writer = File.CreateText(weaponPath + "log.txt"))
-									{
-										writer.WriteLine($"Version: {Assembly.GetExecutingAssembly().GetName().Version.ToString(3)}");
-										writer.WriteLine($"Resolution: {Navigation.GetWidth()}x{Navigation.GetHeight()}");
-										writer.WriteLine($"Error log:\n\t{error.Replace("\n", "\n\t")}");
-									}
-								}
-								catch (Exception ex)
-								{
-									Logger.Warn(ex, "Could not write diagnostic log for weapon #{0}. Continuing...", weapon.Id);
-								}
-							}
-
-                            if (!weapon.IsValid() || Properties.Settings.Default.LogScreenshots)
-                            {
-                                // Diagnostic saves must never kill the worker or
-                                // skip the remaining captures (GDI+ generic errors,
-                                // missing directories, disconnected drives).
-                                try
-                                {
-                                    SaveDiagnosticImage(imageCollection.Bitmaps[0], weaponPath + "name", weaponPath + "name/name.png");
-                                    SaveDiagnosticImage(imageCollection.Bitmaps[0], weaponPath + "rarity", weaponPath + "rarity/rarity.png");
-                                    SaveDiagnosticImage(imageCollection.Bitmaps[1], weaponPath + "level", weaponPath + "level/level.png");
-                                    SaveDiagnosticImage(imageCollection.Bitmaps[2], weaponPath + "refinement", weaponPath + "refinement/refinement.png");
-                                    SaveDiagnosticImage(imageCollection.Bitmaps[4], weaponPath + "equipped", weaponPath + "equipped/equipped.png");
-
-                                    imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1].Save(weaponPath + "card.png");
-                                }
-                                catch (Exception ex)
-                                {
-                                    Logger.Warn(ex, "Could not save diagnostic screenshots for weapon #{0}. Continuing...", weapon.Id);
-                                }
-                                Task.Run(() => LogObject(weapon, weaponPath + "weapon.json"), achievementCancellation.Token);
-                            }
-
-                            // Dispose of everything
-                            imageCollection.Bitmaps.ForEach(b => b.Dispose());
-							break;
-
-						case "artifact":
-							if (ArtifactScraper.IsEnhancementMaterial(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1]))
-							{
-								Logger.Debug("Enhancement Material found for artifact #{artifactID}", imageCollection.Id);
-								artifactScraper.StopScanning = true;
-								break;
-							}
-
-							UserInterface.SetGearPictureBox(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1]);
-							// Scan as artifact
-							Artifact artifact = ArtifactScraper.CatalogueFromBitmapsAsync(imageCollection.Bitmaps, imageCollection.Id).Result;
-							UserInterface.SetGear(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1], artifact);
-
-							string artifactPath = $"./logging/artifacts/artifact{artifact.Id}/";
-
-                            if (Properties.Settings.Default.LogScreenshots) Directory.CreateDirectory(artifactPath);
-
-							if (artifact.IsValid())
-							{
-								UserInterface.IncrementArtifactCount();
-								Inventory.Add(artifact);
-								if (!string.IsNullOrWhiteSpace(artifact.EquippedCharacter))
-									equippedArtifacts.Add(artifact);
-								Logger.Info("    Completed artifact #{0}: {1} {2}, level {3}, main stat {4}{5}",
-									artifact.Id, artifact.SetName, artifact.GearSlot, artifact.Level, artifact.MainStat,
-									string.IsNullOrWhiteSpace(artifact.EquippedCharacter) ? "" : ", equipped by " + artifact.EquippedCharacter);
-							}
-							else
-							{
-								string error = "";
-								if (!artifact.HasValidSlot()) error += "Invalid artifact gear slot\n";
-								if (!artifact.HasValidSetName()) error += "Invalid artifact set name\n";
-								if (!artifact.HasValidRarity()) error += "Invalid artifact rarity\n";
-								if (!artifact.HasValidLevel()) error += "Invalid artifact level\n";
-								if (!artifact.HasValidMainStat()) error += "Invalid artifact main stat\n";
-								if (!artifact.HasValidSubStats()) error += "Invalid artifact sub stats\n";
-								if (!artifact.HasValidEquippedCharacter()) error += "Invalid equipped character\n";
-								UserInterface.AddError($"    [FAILURE] Artifact #{artifact.Id} ({artifact.SetName ?? "unknown"}) could not be validated and was skipped.\n        {error.TrimEnd().Replace("\n", "\n        ")}");
-								Logger.Debug("Invalid artifact #{0} details: {1}", artifact.Id, artifact);
-								Directory.CreateDirectory(artifactPath);
-								try
-								{
-									using (var writer = File.CreateText(artifactPath + "log.txt"))
-									{
-										writer.WriteLine($"Version: {Assembly.GetExecutingAssembly().GetName().Version.ToString(3)}");
-										writer.WriteLine($"Resolution: {Navigation.GetWidth()}x{Navigation.GetHeight()}");
-										writer.WriteLine($"Error Log:\n\t{error.Replace("\n", "\n\t")}");
-									}
-								}
-								catch (Exception ex)
-								{
-									Logger.Warn(ex, "Could not write diagnostic log for artifact #{0}. Continuing...", artifact.Id);
-								}
-							}
-
-                            if (!artifact.IsValid() || Properties.Settings.Default.LogScreenshots)
-                            {
-                                // Diagnostic saves must never kill the worker or
-                                // skip the remaining captures (GDI+ generic errors,
-                                // missing directories, disconnected drives).
-                                try
-                                {
-                                    SaveDiagnosticImage(imageCollection.Bitmaps[0], artifactPath + "name", artifactPath + "name/name.png");
-                                    SaveDiagnosticImage(imageCollection.Bitmaps[1], artifactPath + "slot", artifactPath + "slot/slot.png");
-                                    SaveDiagnosticImage(imageCollection.Bitmaps[2], artifactPath + "mainstat", artifactPath + "mainstat/mainstat.png");
-                                    SaveDiagnosticImage(imageCollection.Bitmaps[3], artifactPath + "level", artifactPath + "level/level.png");
-                                    SaveDiagnosticImage(imageCollection.Bitmaps[4], artifactPath + "substats", artifactPath + "substats/substats.png");
-                                    SaveDiagnosticImage(imageCollection.Bitmaps[5], artifactPath + "equipped", artifactPath + "equipped/equipped.png");
-                                    SaveDiagnosticImage(imageCollection.Bitmaps[6], artifactPath + "locked", artifactPath + "locked/locked.png");
-                                    // Sanctified banner capture (index 7), for diagnosing
-                                    // artifacts crafted with Sanctifying Elixir.
-                                    // (Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6)
-                                    SaveDiagnosticImage(imageCollection.Bitmaps[7], artifactPath + "sanctify", artifactPath + "sanctify/sanctify.png");
-
-                                    imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1].Save(artifactPath + "card.png");
-                                }
-								catch (Exception ex)
-								{
-									Logger.Warn(ex, "Could not save diagnostic screenshots for artifact #{0}. Continuing...", artifact.Id);
-								}
-
-								Task.Run(()=>LogObject(artifact, artifactPath + "artifact.json"), achievementCancellation.Token);
-							}
-
-							// Dispose of everything
-							imageCollection.Bitmaps.ForEach(b => b.Dispose());
-							break;
-
-						case "END":
-							b_threadCancel = true;
-							break;
-
-						default:
-							MainForm.UnexpectedError("Unknown Image type for Image Processor");
-							break;
-					}
-					}
-					catch (Exception ex)
-					{
-						Logger.Error(ex, "    [FAILURE] Could not process {0} #{1}. Skipping item: {2}", imageCollection.Type, imageCollection.Id, ex.GetBaseException().Message);
-						try { imageCollection.Bitmaps?.ForEach(b => b?.Dispose()); } catch { /* Intentionally ignored: best-effort cleanup during error handling. */ }
-					}
-                    finally
-                    {
-                        if (imageCollection.Type == "weapon" || imageCollection.Type == "artifact")
-                        {
-                            int finished = Interlocked.Increment(ref equipmentProcessed);
-                            if (reportingEquipmentProcessing)
-                                UserInterface.ReportScanProgress(ScanPhase.EquipmentProcessing, finished,
-                                    Volatile.Read(ref equipmentEnqueued));
-                        }
-                    }
+					ProcessDequeuedImage(imageCollection);
 				}
 				else
 				{
@@ -595,6 +430,256 @@ namespace InventoryKamera
 				}
 			}
 			Logger.Debug("Thread {threadId} exit", Thread.CurrentThread.ManagedThreadId);
+		}
+
+		private void ProcessDequeuedImage(OcrImageCollection imageCollection)
+		{
+			// A single unrecognized or malformed item must never kill this worker
+			// thread; log it and keep processing the rest of the queue.
+			try
+			{
+				switch (imageCollection.Type)
+				{
+				case "weapon":
+					ProcessWeaponImage(imageCollection);
+					break;
+
+				case "artifact":
+					ProcessArtifactImage(imageCollection);
+					break;
+
+				case "END":
+					b_threadCancel = true;
+					break;
+
+				default:
+					MainForm.UnexpectedError("Unknown Image type for Image Processor");
+					break;
+				}
+			}
+			catch (Exception ex)
+			{
+				Logger.Error(ex, "    [FAILURE] Could not process {0} #{1}. Skipping item: {2}", imageCollection.Type, imageCollection.Id, ex.GetBaseException().Message);
+				try { imageCollection.Bitmaps?.ForEach(b => b?.Dispose()); } catch { /* Intentionally ignored: best-effort cleanup during error handling. */ }
+			}
+            finally
+            {
+                if (imageCollection.Type == "weapon" || imageCollection.Type == "artifact")
+                {
+                    int finished = Interlocked.Increment(ref equipmentProcessed);
+                    if (reportingEquipmentProcessing)
+                        UserInterface.ReportScanProgress(ScanPhase.EquipmentProcessing, finished,
+                            Volatile.Read(ref equipmentEnqueued));
+                }
+            }
+		}
+
+		private void ProcessWeaponImage(OcrImageCollection imageCollection)
+		{
+			if (weaponScraper.IsEnhancementMaterial(imageCollection.Bitmaps.First()))
+			{
+				Logger.Debug("Enhancement Material found for weapon #{weaponID}", imageCollection.Id);
+				weaponScraper.StopScanning = true;
+				return;
+			}
+
+			UserInterface.SetGearPictureBox(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1]);
+
+			// Scan as weapon
+			Weapon weapon = weaponScraper.CatalogueFromBitmapsAsync(imageCollection.Bitmaps, imageCollection.Id).Result;
+			UserInterface.SetGear(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1], weapon);
+
+			string weaponPath = $"./logging/weapons/weapon{weapon.Id}/";
+
+			if (Properties.Settings.Default.LogScreenshots) Directory.CreateDirectory(weaponPath);
+
+			RecordWeapon(weapon, weaponPath);
+
+			SaveWeaponDiagnostics(imageCollection, weapon, weaponPath);
+
+			// Dispose of everything
+			imageCollection.Bitmaps.ForEach(b => b.Dispose());
+		}
+
+		private void RecordWeapon(Weapon weapon, string weaponPath)
+		{
+			if (weapon.IsValid())
+			{
+				UserInterface.IncrementWeaponCount();
+				Inventory.Add(weapon);
+				if (!string.IsNullOrWhiteSpace(weapon.EquippedCharacter))
+					equippedWeapons.Add(weapon);
+				Logger.Info("    Completed weapon #{0}: {1}, level {2}, refinement {3}{4}",
+					weapon.Id, weapon.Name, weapon.Level, weapon.RefinementLevel,
+					string.IsNullOrWhiteSpace(weapon.EquippedCharacter) ? "" : ", equipped by " + weapon.EquippedCharacter);
+			}
+			else
+			{
+				RecordInvalidWeapon(weapon, weaponPath);
+			}
+		}
+
+		private static string WeaponValidationErrors(Weapon weapon)
+		{
+			string error = "";
+			if (!weapon.HasValidWeaponName()) error += "Invalid weapon name\n";
+			if (!weapon.HasValidRarity()) error += "Invalid weapon rarity\n";
+			if (!weapon.HasValidLevel()) error += "Invalid weapon level\n";
+			if (!weapon.HasValidRefinementLevel()) error += "Invalid refinement level\n";
+			if (!weapon.HasValidEquippedCharacter()) error += "Invalid equipped character\n";
+			return error;
+		}
+
+		private static void RecordInvalidWeapon(Weapon weapon, string weaponPath)
+		{
+			string error = WeaponValidationErrors(weapon);
+			UserInterface.AddError($"    [FAILURE] Weapon #{weapon.Id} ({weapon.Name ?? "unknown"}) could not be validated and was skipped.\n        {error.TrimEnd().Replace("\n", "\n        ")}");
+			Logger.Debug("Invalid weapon #{0} details: {1}", weapon.Id, weapon);
+			Directory.CreateDirectory(weaponPath);
+			WriteInvalidItemLog(weaponPath, error, "Error log", "weapon", weapon.Id);
+		}
+
+		private void SaveWeaponDiagnostics(OcrImageCollection imageCollection, Weapon weapon, string weaponPath)
+		{
+			if (!weapon.IsValid() || Properties.Settings.Default.LogScreenshots)
+			{
+				// Diagnostic saves must never kill the worker or
+				// skip the remaining captures (GDI+ generic errors,
+				// missing directories, disconnected drives).
+				try
+				{
+					SaveDiagnosticImage(imageCollection.Bitmaps[0], weaponPath + "name", weaponPath + "name/name.png");
+					SaveDiagnosticImage(imageCollection.Bitmaps[0], weaponPath + "rarity", weaponPath + "rarity/rarity.png");
+					SaveDiagnosticImage(imageCollection.Bitmaps[1], weaponPath + "level", weaponPath + "level/level.png");
+					SaveDiagnosticImage(imageCollection.Bitmaps[2], weaponPath + "refinement", weaponPath + "refinement/refinement.png");
+					SaveDiagnosticImage(imageCollection.Bitmaps[4], weaponPath + "equipped", weaponPath + "equipped/equipped.png");
+
+					imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1].Save(weaponPath + "card.png");
+				}
+				catch (Exception ex)
+				{
+					Logger.Warn(ex, "Could not save diagnostic screenshots for weapon #{0}. Continuing...", weapon.Id);
+				}
+				Task.Run(() => LogObject(weapon, weaponPath + "weapon.json"), achievementCancellation.Token);
+			}
+		}
+
+		private void ProcessArtifactImage(OcrImageCollection imageCollection)
+		{
+			if (ArtifactScraper.IsEnhancementMaterial(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1]))
+			{
+				Logger.Debug("Enhancement Material found for artifact #{artifactID}", imageCollection.Id);
+				artifactScraper.StopScanning = true;
+				return;
+			}
+
+			UserInterface.SetGearPictureBox(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1]);
+			// Scan as artifact
+			Artifact artifact = ArtifactScraper.CatalogueFromBitmapsAsync(imageCollection.Bitmaps, imageCollection.Id).Result;
+			UserInterface.SetGear(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1], artifact);
+
+			string artifactPath = $"./logging/artifacts/artifact{artifact.Id}/";
+
+			if (Properties.Settings.Default.LogScreenshots) Directory.CreateDirectory(artifactPath);
+
+			RecordArtifact(artifact, artifactPath);
+
+			SaveArtifactDiagnostics(imageCollection, artifact, artifactPath);
+
+			// Dispose of everything
+			imageCollection.Bitmaps.ForEach(b => b.Dispose());
+		}
+
+		private void RecordArtifact(Artifact artifact, string artifactPath)
+		{
+			if (artifact.IsValid())
+			{
+				UserInterface.IncrementArtifactCount();
+				Inventory.Add(artifact);
+				if (!string.IsNullOrWhiteSpace(artifact.EquippedCharacter))
+					equippedArtifacts.Add(artifact);
+				Logger.Info("    Completed artifact #{0}: {1} {2}, level {3}, main stat {4}{5}",
+					artifact.Id, artifact.SetName, artifact.GearSlot, artifact.Level, artifact.MainStat,
+					string.IsNullOrWhiteSpace(artifact.EquippedCharacter) ? "" : ", equipped by " + artifact.EquippedCharacter);
+			}
+			else
+			{
+				RecordInvalidArtifact(artifact, artifactPath);
+			}
+		}
+
+		private static string ArtifactValidationErrors(Artifact artifact)
+		{
+			string error = "";
+			if (!artifact.HasValidSlot()) error += "Invalid artifact gear slot\n";
+			if (!artifact.HasValidSetName()) error += "Invalid artifact set name\n";
+			if (!artifact.HasValidRarity()) error += "Invalid artifact rarity\n";
+			if (!artifact.HasValidLevel()) error += "Invalid artifact level\n";
+			if (!artifact.HasValidMainStat()) error += "Invalid artifact main stat\n";
+			if (!artifact.HasValidSubStats()) error += "Invalid artifact sub stats\n";
+			if (!artifact.HasValidEquippedCharacter()) error += "Invalid equipped character\n";
+			return error;
+		}
+
+		private static void RecordInvalidArtifact(Artifact artifact, string artifactPath)
+		{
+			string error = ArtifactValidationErrors(artifact);
+			UserInterface.AddError($"    [FAILURE] Artifact #{artifact.Id} ({artifact.SetName ?? "unknown"}) could not be validated and was skipped.\n        {error.TrimEnd().Replace("\n", "\n        ")}");
+			Logger.Debug("Invalid artifact #{0} details: {1}", artifact.Id, artifact);
+			Directory.CreateDirectory(artifactPath);
+			WriteInvalidItemLog(artifactPath, error, "Error Log", "artifact", artifact.Id);
+		}
+
+		// Writes the validation summary next to the saved captures. The OCR text
+		// differs between item kinds, so the section heading and item label are
+		// passed in by the callers.
+		private static void WriteInvalidItemLog(string directory, string error, string errorLogTitle, string itemType, int itemId)
+		{
+			try
+			{
+				using (var writer = File.CreateText(directory + "log.txt"))
+				{
+					writer.WriteLine($"Version: {Assembly.GetExecutingAssembly().GetName().Version.ToString(3)}");
+					writer.WriteLine($"Resolution: {Navigation.GetWidth()}x{Navigation.GetHeight()}");
+					writer.WriteLine($"{errorLogTitle}:\n\t{error.Replace("\n", "\n\t")}");
+				}
+			}
+			catch (Exception ex)
+			{
+				Logger.Warn(ex, "Could not write diagnostic log for " + itemType + " #{0}. Continuing...", itemId);
+			}
+		}
+
+		private void SaveArtifactDiagnostics(OcrImageCollection imageCollection, Artifact artifact, string artifactPath)
+		{
+			if (!artifact.IsValid() || Properties.Settings.Default.LogScreenshots)
+			{
+				// Diagnostic saves must never kill the worker or
+				// skip the remaining captures (GDI+ generic errors,
+				// missing directories, disconnected drives).
+				try
+				{
+					SaveDiagnosticImage(imageCollection.Bitmaps[0], artifactPath + "name", artifactPath + "name/name.png");
+					SaveDiagnosticImage(imageCollection.Bitmaps[1], artifactPath + "slot", artifactPath + "slot/slot.png");
+					SaveDiagnosticImage(imageCollection.Bitmaps[2], artifactPath + "mainstat", artifactPath + "mainstat/mainstat.png");
+					SaveDiagnosticImage(imageCollection.Bitmaps[3], artifactPath + "level", artifactPath + "level/level.png");
+					SaveDiagnosticImage(imageCollection.Bitmaps[4], artifactPath + "substats", artifactPath + "substats/substats.png");
+					SaveDiagnosticImage(imageCollection.Bitmaps[5], artifactPath + "equipped", artifactPath + "equipped/equipped.png");
+					SaveDiagnosticImage(imageCollection.Bitmaps[6], artifactPath + "locked", artifactPath + "locked/locked.png");
+					// Sanctified banner capture (index 7), for diagnosing
+					// artifacts crafted with Sanctifying Elixir.
+					// (Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6)
+					SaveDiagnosticImage(imageCollection.Bitmaps[7], artifactPath + "sanctify", artifactPath + "sanctify/sanctify.png");
+
+					imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1].Save(artifactPath + "card.png");
+				}
+				catch (Exception ex)
+				{
+					Logger.Warn(ex, "Could not save diagnostic screenshots for artifact #{0}. Continuing...", artifact.Id);
+				}
+
+				Task.Run(()=>LogObject(artifact, artifactPath + "artifact.json"), achievementCancellation.Token);
+			}
 		}
 
         private static void LogObject(object obj, string path)

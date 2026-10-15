@@ -129,59 +129,76 @@ namespace InventoryKamera
             Version latest = null;
             foreach (var property in source.Properties())
             {
-                int categoryId;
-                var categoryObject = property.Value as JObject;
-                if (!int.TryParse(property.Name, NumberStyles.None, CultureInfo.InvariantCulture, out categoryId)
-                    || categoryId < 0 || categoryObject == null)
-                    throw new InvalidDataException("Invalid achievement category ID or object: " + property.Name);
-                var name = ReadText(categoryObject, "name");
-                var orderToken = categoryObject["order"];
-                var entries = categoryObject["achievements"] as JArray;
-                if (orderToken == null || orderToken.Type != JTokenType.Integer || entries == null || entries.Count == 0)
-                    throw new InvalidDataException("Invalid achievement category metadata: " + name);
-                var category = new AchievementCategory { Id = categoryId, Name = name, Order = (int)orderToken };
-                foreach (var entry in entries)
-                {
-                    var tiers = entry is JArray ? ((JArray)entry).ToList() : new List<JToken> { entry };
-                    if (tiers.Count == 0) throw new InvalidDataException("Empty achievement tier family in " + name);
-                    var family = new AchievementFamily { CategoryId = categoryId };
-                    foreach (var token in tiers)
-                    {
-                        var definitionObject = token as JObject;
-                        if (definitionObject == null) throw new InvalidDataException("Invalid achievement tier in " + name);
-                        var idToken = definitionObject["id"];
-                        var rewardToken = definitionObject["reward"];
-                        if (idToken == null || idToken.Type != JTokenType.Integer || (int)idToken <= 0
-                            || rewardToken == null || rewardToken.Type != JTokenType.Integer || (int)rewardToken <= 0)
-                            throw new InvalidDataException("Invalid achievement ID or reward in " + name);
-                        var definition = new AchievementDefinition
-                        {
-                            Id = (int)idToken,
-                            CategoryId = categoryId,
-                            Name = ReadText(definitionObject, "name"),
-                            Description = ReadText(definitionObject, "desc"),
-                            Reward = (int)rewardToken,
-                            TierIndex = family.Tiers.Count
-                        };
-                        if (!ids.Add(definition.Id)) throw new InvalidDataException("Duplicate achievement ID: " + definition.Id);
-                        if (family.Tiers.Count == 0)
-                        {
-                            family.Id = definition.Id;
-                            family.Name = definition.Name;
-                        }
-                        family.Tiers.Add(definition);
-                        Version version;
-                        if (Version.TryParse((string)definitionObject["ver"], out version) && (latest == null || version > latest))
-                            latest = version;
-                    }
-                    category.Families.Add(family);
-                }
-                result.Categories.Add(category);
+                result.Categories.Add(ReadAchievementCategory(property, ids, ref latest));
             }
             if (result.Categories.Count == 0) throw new InvalidDataException("The achievement catalog is empty.");
             result.Categories = result.Categories.OrderBy(category => category.Order).ThenBy(category => category.Id).ToList();
             result.LatestVersion = latest == null ? null : latest.ToString();
             return result;
+        }
+
+        private static AchievementCategory ReadAchievementCategory(JProperty property, HashSet<int> ids, ref Version latest)
+        {
+            int categoryId;
+            var categoryObject = property.Value as JObject;
+            if (!int.TryParse(property.Name, NumberStyles.None, CultureInfo.InvariantCulture, out categoryId)
+                || categoryId < 0 || categoryObject == null)
+                throw new InvalidDataException("Invalid achievement category ID or object: " + property.Name);
+            var name = ReadText(categoryObject, "name");
+            var orderToken = categoryObject["order"];
+            var entries = categoryObject["achievements"] as JArray;
+            if (orderToken == null || orderToken.Type != JTokenType.Integer || entries == null || entries.Count == 0)
+                throw new InvalidDataException("Invalid achievement category metadata: " + name);
+            var category = new AchievementCategory { Id = categoryId, Name = name, Order = (int)orderToken };
+            foreach (var entry in entries)
+            {
+                category.Families.Add(ReadAchievementFamily(entry, name, categoryId, ids, ref latest));
+            }
+            return category;
+        }
+
+        private static AchievementFamily ReadAchievementFamily(JToken entry, string name, int categoryId,
+            HashSet<int> ids, ref Version latest)
+        {
+            var tiers = entry is JArray ? ((JArray)entry).ToList() : new List<JToken> { entry };
+            if (tiers.Count == 0) throw new InvalidDataException("Empty achievement tier family in " + name);
+            var family = new AchievementFamily { CategoryId = categoryId };
+            foreach (var token in tiers)
+            {
+                ReadAchievementTier(token, name, categoryId, family, ids, ref latest);
+            }
+            return family;
+        }
+
+        private static void ReadAchievementTier(JToken token, string name, int categoryId, AchievementFamily family,
+            HashSet<int> ids, ref Version latest)
+        {
+            var definitionObject = token as JObject;
+            if (definitionObject == null) throw new InvalidDataException("Invalid achievement tier in " + name);
+            var idToken = definitionObject["id"];
+            var rewardToken = definitionObject["reward"];
+            if (idToken == null || idToken.Type != JTokenType.Integer || (int)idToken <= 0
+                || rewardToken == null || rewardToken.Type != JTokenType.Integer || (int)rewardToken <= 0)
+                throw new InvalidDataException("Invalid achievement ID or reward in " + name);
+            var definition = new AchievementDefinition
+            {
+                Id = (int)idToken,
+                CategoryId = categoryId,
+                Name = ReadText(definitionObject, "name"),
+                Description = ReadText(definitionObject, "desc"),
+                Reward = (int)rewardToken,
+                TierIndex = family.Tiers.Count
+            };
+            if (!ids.Add(definition.Id)) throw new InvalidDataException("Duplicate achievement ID: " + definition.Id);
+            if (family.Tiers.Count == 0)
+            {
+                family.Id = definition.Id;
+                family.Name = definition.Name;
+            }
+            family.Tiers.Add(definition);
+            Version version;
+            if (Version.TryParse((string)definitionObject["ver"], out version) && (latest == null || version > latest))
+                latest = version;
         }
 
         public AchievementCategory MatchCategory(string text)
@@ -205,33 +222,9 @@ namespace InventoryKamera
             var normalizedDescription = Normalize(description);
             var hasDescription = normalizedDescription.Length > 0;
             var observedNumbers = ExtractNumbers(description);
-            // Some families use different names for each tier (for example a Roman-numeral suffix).
-            var families = category.Families.Where(family => family.Tiers.Count > 0)
-                .Select(family => new { Family = family, TitleScore = family.Tiers.Max(tier => Similarity(normalizedTitle, Normalize(tier.Name))) })
-                .Where(candidate => candidate.TitleScore >= 84).ToList();
-            bool hasExactTitle = families.Any(candidate => IsExactTitleScore(candidate.TitleScore));
-            if (hasExactTitle) families = families.Where(candidate => IsExactTitleScore(candidate.TitleScore)).ToList();
-            var candidates = new List<Candidate>();
-            foreach (var familyCandidate in families)
-            {
-                foreach (var tier in familyCandidate.Family.Tiers)
-                {
-                    var titleScore = Similarity(normalizedTitle, Normalize(tier.Name));
-                    if (titleScore < 84 || (hasExactTitle && !IsExactTitleScore(titleScore))) continue;
-                    if (reward.HasValue && reward.Value != tier.Reward) continue;
-                    var expectedNumbers = ExtractNumbers(tier.Description);
-                    if (observedNumbers.Count > 0 && !NumbersAgree(observedNumbers, expectedNumbers)) continue;
-                    var descriptionScore = hasDescription ? Similarity(normalizedDescription, Normalize(tier.Description)) : 0;
-                    if (hasDescription && descriptionScore < 60) continue;
-                    if (titleScore < 92 && (!hasDescription || descriptionScore < 75)) continue;
-                    candidates.Add(new Candidate
-                    {
-                        Family = familyCandidate.Family,
-                        Tier = tier,
-                        Score = hasDescription ? titleScore * .65 + descriptionScore * .35 : titleScore
-                    });
-                }
-            }
+            bool hasExactTitle;
+            var candidates = CollectMatchingCandidates(category, normalizedTitle, normalizedDescription,
+                hasDescription, observedNumbers, reward, out hasExactTitle);
             candidates = candidates.OrderByDescending(candidate => candidate.Score).ToList();
             if (candidates.Count == 0)
             {
@@ -255,6 +248,53 @@ namespace InventoryKamera
             return new AchievementMatch { Family = best.Family, Tier = best.Tier, Confidence = best.Score };
         }
 
+        private static List<Candidate> CollectMatchingCandidates(AchievementCategory category, string normalizedTitle,
+            string normalizedDescription, bool hasDescription, List<string> observedNumbers, int? reward, out bool hasExactTitle)
+        {
+            // Some families use different names for each tier (for example a Roman-numeral suffix).
+            var families = category.Families.Where(family => family.Tiers.Count > 0)
+                .Select(family => new { Family = family, TitleScore = family.Tiers.Max(tier => Similarity(normalizedTitle, Normalize(tier.Name))) })
+                .Where(candidate => candidate.TitleScore >= 84).ToList();
+            hasExactTitle = families.Any(candidate => IsExactTitleScore(candidate.TitleScore));
+            if (hasExactTitle) families = families.Where(candidate => IsExactTitleScore(candidate.TitleScore)).ToList();
+            var candidates = new List<Candidate>();
+            foreach (var familyCandidate in families)
+            {
+                foreach (var tier in familyCandidate.Family.Tiers)
+                {
+                    var candidate = MatchTier(familyCandidate.Family, tier, normalizedTitle, normalizedDescription,
+                        hasDescription, hasExactTitle, observedNumbers, reward);
+                    if (candidate != null) candidates.Add(candidate);
+                }
+            }
+            return candidates;
+        }
+
+        private static Candidate MatchTier(AchievementFamily family, AchievementDefinition tier, string normalizedTitle,
+            string normalizedDescription, bool hasDescription, bool hasExactTitle, List<string> observedNumbers, int? reward)
+        {
+            var titleScore = Similarity(normalizedTitle, Normalize(tier.Name));
+            if (titleScore < 84 || (hasExactTitle && !IsExactTitleScore(titleScore))) return null;
+            if (reward.HasValue && reward.Value != tier.Reward) return null;
+            var expectedNumbers = ExtractNumbers(tier.Description);
+            if (observedNumbers.Count > 0 && !NumbersAgree(observedNumbers, expectedNumbers)) return null;
+            return ScoreTierCandidate(family, tier, titleScore, normalizedDescription, hasDescription);
+        }
+
+        private static Candidate ScoreTierCandidate(AchievementFamily family, AchievementDefinition tier, double titleScore,
+            string normalizedDescription, bool hasDescription)
+        {
+            var descriptionScore = hasDescription ? Similarity(normalizedDescription, Normalize(tier.Description)) : 0;
+            if (hasDescription && descriptionScore < 60) return null;
+            if (titleScore < 92 && (!hasDescription || descriptionScore < 75)) return null;
+            return new Candidate
+            {
+                Family = family,
+                Tier = tier,
+                Score = hasDescription ? titleScore * .65 + descriptionScore * .35 : titleScore
+            };
+        }
+
         private static AchievementMatch ResolveConfusableTitle(AchievementCategory category, string title,
             string description, List<string> observedNumbers, int? reward)
         {
@@ -264,20 +304,7 @@ namespace InventoryKamera
             string repairedTitle = Regex.Replace(title, @"0o|o0", "o", RegexOptions.None, RegexTimeouts.RegexTimeout);
             repairedTitle = Regex.Replace(repairedTitle, @"(?<=[a-z])0|0(?=[a-z])", "o", RegexOptions.None, RegexTimeouts.RegexTimeout);
             if (repairedTitle == title) return null;
-            var candidates = new List<Candidate>();
-            foreach (var family in category.Families)
-            {
-                foreach (var tier in family.Tiers)
-                {
-                    if (Normalize(tier.Name) != repairedTitle || tier.Reward != reward.Value) continue;
-                    // This exceptional path requires every description number, in order; it
-                    // cannot repair a title on the strength of an incomplete numeric goal.
-                    if (!observedNumbers.SequenceEqual(ExtractNumbers(tier.Description))) continue;
-                    double descriptionScore = Similarity(description, Normalize(tier.Description));
-                    if (descriptionScore < 60) continue;
-                    candidates.Add(new Candidate { Family = family, Tier = tier, Score = 65 + descriptionScore * .35 });
-                }
-            }
+            var candidates = CollectRepairedTitleCandidates(category, repairedTitle, description, observedNumbers, reward.Value);
             if (candidates.Count == 0) return null;
             candidates = candidates.OrderByDescending(candidate => candidate.Score).ToList();
             var best = candidates[0];
@@ -291,6 +318,26 @@ namespace InventoryKamera
             if (otherTier != null && best.Score - otherTier.Score < 4)
                 return new AchievementMatch { Family = best.Family, Confidence = Math.Min(95, best.Score), Error = "The repaired OCR title has an ambiguous achievement tier." };
             return new AchievementMatch { Family = best.Family, Tier = best.Tier, Confidence = Math.Min(95, best.Score) };
+        }
+
+        private static List<Candidate> CollectRepairedTitleCandidates(AchievementCategory category, string repairedTitle,
+            string description, List<string> observedNumbers, int reward)
+        {
+            var candidates = new List<Candidate>();
+            foreach (var family in category.Families)
+            {
+                foreach (var tier in family.Tiers)
+                {
+                    if (Normalize(tier.Name) != repairedTitle || tier.Reward != reward) continue;
+                    // This exceptional path requires every description number, in order; it
+                    // cannot repair a title on the strength of an incomplete numeric goal.
+                    if (!observedNumbers.SequenceEqual(ExtractNumbers(tier.Description))) continue;
+                    double descriptionScore = Similarity(description, Normalize(tier.Description));
+                    if (descriptionScore < 60) continue;
+                    candidates.Add(new Candidate { Family = family, Tier = tier, Score = 65 + descriptionScore * .35 });
+                }
+            }
+            return candidates;
         }
 
         private static AchievementMatch Failure(string error, double confidence = 0)

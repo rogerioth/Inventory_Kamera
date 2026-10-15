@@ -438,6 +438,24 @@ namespace InventoryKamera
             return changed;
         }
 
+        // Joined source rows for the Traveler rebuild, keyed by their game IDs.
+        private sealed class TravelerSources
+        {
+            internal TravelerSources(ILookup<int, JObject> avatarsById, ILookup<int, JObject> depotsById,
+                ILookup<int, JObject> skillsById, ILookup<int, JObject> talentsById)
+            {
+                AvatarsById = avatarsById;
+                DepotsById = depotsById;
+                SkillsById = skillsById;
+                TalentsById = talentsById;
+            }
+
+            internal ILookup<int, JObject> AvatarsById { get; }
+            internal ILookup<int, JObject> DepotsById { get; }
+            internal ILookup<int, JObject> SkillsById { get; }
+            internal ILookup<int, JObject> TalentsById { get; }
+        }
+
         internal static JObject BuildTravelerData(JArray avatars, JArray depots, JArray skills, JArray talents,
             IDictionary<string, string> textmap)
         {
@@ -451,14 +469,30 @@ namespace InventoryKamera
                 ["Fire"] = "pyro", ["Water"] = "hydro", ["Grass"] = "dendro", ["Electric"] = "electro",
                 ["Wind"] = "anemo", ["Ice"] = "cryo", ["Rock"] = "geo"
             };
-            var avatarsById = avatars.OfType<JObject>().ToLookup(row => (int?)row["id"] ?? 0);
-            var depotsById = depots.OfType<JObject>().ToLookup(row => (int?)row["id"] ?? 0);
-            var skillsById = skills.OfType<JObject>().ToLookup(row => (int?)row["id"] ?? 0);
-            var talentsById = talents.OfType<JObject>().ToLookup(row => (int?)row["talentId"] ?? 0);
+            var sources = new TravelerSources(
+                avatars.OfType<JObject>().ToLookup(row => (int?)row["id"] ?? 0),
+                depots.OfType<JObject>().ToLookup(row => (int?)row["id"] ?? 0),
+                skills.OfType<JObject>().ToLookup(row => (int?)row["id"] ?? 0),
+                talents.OfType<JObject>().ToLookup(row => (int?)row["talentId"] ?? 0));
             var orders = new SortedDictionary<string, JArray>(StringComparer.Ordinal);
+            CollectTravelerConstellationOrders(sources, nativeElements, textmap, orders);
+            return new JObject
+            {
+                [GoodKey] = "Traveler",
+                [ElementKey] = new JArray(orders.Keys),
+                ["ConstellationName"] = new JArray("Viator", "Viatrix"),
+                ["ConstellationOrder"] = new JObject(orders.Select(pair => new JProperty(pair.Key, pair.Value))),
+                ["WeaponType"] = (int)WeaponType.Sword
+            };
+        }
+
+        private static void CollectTravelerConstellationOrders(TravelerSources sources,
+            Dictionary<string, string> nativeElements, IDictionary<string, string> textmap,
+            SortedDictionary<string, JArray> orders)
+        {
             foreach (int avatarId in new[] { 10000005, 10000007 })
             {
-                var avatar = RequireTravelerRow(avatarsById[avatarId], "avatar " + avatarId);
+                var avatar = RequireTravelerRow(sources.AvatarsById[avatarId], "avatar " + avatarId);
                 if ((string)avatar["useType"] != "AVATAR_FORMAL" || (string)avatar["weaponType"] != "WEAPON_SWORD_ONE_HAND")
                     throw new InvalidDataException("Traveler avatar " + avatarId + " is not a playable sword avatar.");
                 var candidates = avatar["candSkillDepotIds"] as JArray;
@@ -467,52 +501,57 @@ namespace InventoryKamera
                 var seenElements = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var candidate in candidates)
                 {
-                    int depotId = RequireTravelerId(candidate, "candidate depot");
-                    if (!seenDepots.Add(depotId)) throw new InvalidDataException("Duplicate Traveler candidate depot " + depotId + ".");
-                    var depot = RequireTravelerRow(depotsById[depotId], "skill depot " + depotId);
-                    int burstId = (int?)depot["energySkill"] ?? 0;
-                    if (burstId == 0) continue; // The common, elementless depot has no burst.
-                    var burst = RequireTravelerRow(skillsById[burstId], "burst " + burstId);
-                    string element;
-                    if (!nativeElements.TryGetValue((string)burst["costElemType"] ?? "", out element) || !seenElements.Add(element))
-                        throw new InvalidDataException("Traveler depot " + depotId + " has an unknown or duplicate element.");
-                    var skillIds = depot["skills"] as JArray;
-                    var talentIds = depot["talents"] as JArray;
-                    if (skillIds == null || skillIds.Count < 2 || talentIds == null || talentIds.Count != 6)
-                        throw new InvalidDataException("Traveler depot " + depotId + " lacks its skill or six constellation references.");
-                    int autoId = RequireTravelerId(skillIds[0], "normal attack in depot " + depotId);
-                    int skillId = RequireTravelerId(skillIds[1], "elemental skill in depot " + depotId);
-                    if (autoId == skillId || skillId == burstId || autoId == burstId)
-                        throw new InvalidDataException("Traveler depot " + depotId + " reuses a talent skill ID.");
-                    var auto = RequireTravelerRow(skillsById[autoId], "normal attack " + autoId);
-                    var skill = RequireTravelerRow(skillsById[skillId], "elemental skill " + skillId);
-                    string autoName = RequireTravelerText(auto[NameTextMapHashKey], textmap, "normal attack " + autoId);
-                    string skillName = RequireTravelerText(skill[NameTextMapHashKey], textmap, "elemental skill " + skillId);
-                    string burstName = RequireTravelerText(burst[NameTextMapHashKey], textmap, "burst " + burstId);
-                    var ids = talentIds.Select(x => RequireTravelerId(x, "constellation in depot " + depotId)).ToList();
-                    if (ids.Distinct().Count() != 6) throw new InvalidDataException("Traveler depot " + depotId + " repeats a constellation ID.");
-                    var c3 = RequireTravelerRow(talentsById[ids[2]], "C3 talent " + ids[2]);
-                    var c5 = RequireTravelerRow(talentsById[ids[4]], "C5 talent " + ids[4]);
-                    var order = new JArray
-                    {
-                        TravelerUpgradeType(RequireTravelerText(c3["descTextMapHash"], textmap, "C3 talent " + ids[2]), autoId, skillId, burstId, autoName, skillName, burstName),
-                        TravelerUpgradeType(RequireTravelerText(c5["descTextMapHash"], textmap, "C5 talent " + ids[4]), autoId, skillId, burstId, autoName, skillName, burstName)
-                    };
-                    JArray previous;
-                    if (orders.TryGetValue(element, out previous) && !JToken.DeepEquals(previous, order))
-                        throw new InvalidDataException("The two Traveler avatars disagree on " + element + " constellation order.");
-                    orders[element] = order;
+                    RecordTravelerDepotOrder(candidate, sources, nativeElements, seenDepots, seenElements, textmap, orders);
                 }
                 if (seenElements.Count != nativeElements.Count || nativeElements.Values.Any(x => !seenElements.Contains(x)))
                     throw new InvalidDataException("Traveler avatar " + avatarId + " does not provide all seven elemental skill depots.");
             }
-            return new JObject
+        }
+
+        private static void RecordTravelerDepotOrder(JToken candidate, TravelerSources sources,
+            Dictionary<string, string> nativeElements, HashSet<int> seenDepots, HashSet<string> seenElements,
+            IDictionary<string, string> textmap, SortedDictionary<string, JArray> orders)
+        {
+            int depotId = RequireTravelerId(candidate, "candidate depot");
+            if (!seenDepots.Add(depotId)) throw new InvalidDataException("Duplicate Traveler candidate depot " + depotId + ".");
+            var depot = RequireTravelerRow(sources.DepotsById[depotId], "skill depot " + depotId);
+            int burstId = (int?)depot["energySkill"] ?? 0;
+            if (burstId == 0) return; // The common, elementless depot has no burst.
+            var burst = RequireTravelerRow(sources.SkillsById[burstId], "burst " + burstId);
+            string element;
+            if (!nativeElements.TryGetValue((string)burst["costElemType"] ?? "", out element) || !seenElements.Add(element))
+                throw new InvalidDataException("Traveler depot " + depotId + " has an unknown or duplicate element.");
+            var skillIds = depot["skills"] as JArray;
+            var talentIds = depot["talents"] as JArray;
+            if (skillIds == null || skillIds.Count < 2 || talentIds == null || talentIds.Count != 6)
+                throw new InvalidDataException("Traveler depot " + depotId + " lacks its skill or six constellation references.");
+            int autoId = RequireTravelerId(skillIds[0], "normal attack in depot " + depotId);
+            int skillId = RequireTravelerId(skillIds[1], "elemental skill in depot " + depotId);
+            if (autoId == skillId || skillId == burstId || autoId == burstId)
+                throw new InvalidDataException("Traveler depot " + depotId + " reuses a talent skill ID.");
+            var order = BuildTravelerDepotOrder(depotId, autoId, skillId, burstId, burst, talentIds, sources, textmap);
+            JArray previous;
+            if (orders.TryGetValue(element, out previous) && !JToken.DeepEquals(previous, order))
+                throw new InvalidDataException("The two Traveler avatars disagree on " + element + " constellation order.");
+            orders[element] = order;
+        }
+
+        private static JArray BuildTravelerDepotOrder(int depotId, int autoId, int skillId, int burstId, JObject burst,
+            JArray talentIds, TravelerSources sources, IDictionary<string, string> textmap)
+        {
+            var auto = RequireTravelerRow(sources.SkillsById[autoId], "normal attack " + autoId);
+            var skill = RequireTravelerRow(sources.SkillsById[skillId], "elemental skill " + skillId);
+            string autoName = RequireTravelerText(auto[NameTextMapHashKey], textmap, "normal attack " + autoId);
+            string skillName = RequireTravelerText(skill[NameTextMapHashKey], textmap, "elemental skill " + skillId);
+            string burstName = RequireTravelerText(burst[NameTextMapHashKey], textmap, "burst " + burstId);
+            var ids = talentIds.Select(x => RequireTravelerId(x, "constellation in depot " + depotId)).ToList();
+            if (ids.Distinct().Count() != 6) throw new InvalidDataException("Traveler depot " + depotId + " repeats a constellation ID.");
+            var c3 = RequireTravelerRow(sources.TalentsById[ids[2]], "C3 talent " + ids[2]);
+            var c5 = RequireTravelerRow(sources.TalentsById[ids[4]], "C5 talent " + ids[4]);
+            return new JArray
             {
-                [GoodKey] = "Traveler",
-                [ElementKey] = new JArray(orders.Keys),
-                ["ConstellationName"] = new JArray("Viator", "Viatrix"),
-                ["ConstellationOrder"] = new JObject(orders.Select(pair => new JProperty(pair.Key, pair.Value))),
-                ["WeaponType"] = (int)WeaponType.Sword
+                TravelerUpgradeType(RequireTravelerText(c3["descTextMapHash"], textmap, "C3 talent " + ids[2]), autoId, skillId, burstId, autoName, skillName, burstName),
+                TravelerUpgradeType(RequireTravelerText(c5["descTextMapHash"], textmap, "C5 talent " + ids[4]), autoId, skillId, burstId, autoName, skillName, burstName)
             };
         }
 
@@ -546,21 +585,31 @@ namespace InventoryKamera
             var matches = new List<string>();
             if (links.Count > 0)
             {
-                if (links.Any(x => x != autoId && x != skillId && x != burstId))
-                    throw new InvalidDataException("Traveler constellation links to a skill outside its depot.");
-                if (links.Contains(autoId)) matches.Add(TalentAuto);
-                if (links.Contains(skillId)) matches.Add(TalentSkill);
-                if (links.Contains(burstId)) matches.Add(TalentBurst);
+                CollectLinkedUpgradeTypes(links, autoId, skillId, burstId, matches);
             }
             else
             {
-                // Older elemental constellations embed exact mapped names instead of links.
-                if (description.IndexOf(autoName, StringComparison.OrdinalIgnoreCase) >= 0) matches.Add(TalentAuto);
-                if (description.IndexOf(skillName, StringComparison.OrdinalIgnoreCase) >= 0) matches.Add(TalentSkill);
-                if (description.IndexOf(burstName, StringComparison.OrdinalIgnoreCase) >= 0) matches.Add(TalentBurst);
+                CollectNamedUpgradeTypes(description, autoName, skillName, burstName, matches);
             }
             if (matches.Count != 1) throw new InvalidDataException("Traveler constellation has no unambiguous talent upgrade.");
             return matches[0];
+        }
+
+        private static void CollectLinkedUpgradeTypes(List<int> links, int autoId, int skillId, int burstId, List<string> matches)
+        {
+            if (links.Any(x => x != autoId && x != skillId && x != burstId))
+                throw new InvalidDataException("Traveler constellation links to a skill outside its depot.");
+            if (links.Contains(autoId)) matches.Add(TalentAuto);
+            if (links.Contains(skillId)) matches.Add(TalentSkill);
+            if (links.Contains(burstId)) matches.Add(TalentBurst);
+        }
+
+        private static void CollectNamedUpgradeTypes(string description, string autoName, string skillName, string burstName, List<string> matches)
+        {
+            // Older elemental constellations embed exact mapped names instead of links.
+            if (description.IndexOf(autoName, StringComparison.OrdinalIgnoreCase) >= 0) matches.Add(TalentAuto);
+            if (description.IndexOf(skillName, StringComparison.OrdinalIgnoreCase) >= 0) matches.Add(TalentSkill);
+            if (description.IndexOf(burstName, StringComparison.OrdinalIgnoreCase) >= 0) matches.Add(TalentBurst);
         }
 
         private void LoadMappings()
@@ -673,138 +722,15 @@ namespace InventoryKamera
                         return;
                     }
 
-                    string name = mappedName;
-
-                    try
-                    {
-                        string PascalCase = CultureInfo.GetCultureInfo("en").TextInfo.ToTitleCase(name);
-                        string nameGOOD = Regex.Replace(PascalCase, @"[\W]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
-                        string nameKey = nameGOOD.ToLower();
-                        int characterID = (int)character["id"];
-
-                        // Placeholder avatars (beta Columbina/Ineffa, trial duplicates,
-                        // UGC templates) reuse real characters' keys but have no fetter
-                        // data, which yields empty elements and can shadow the real
-                        // entry depending on parallel processing order.
-                        // Ported from taiwenlee/Inventory_Kamera (MIT): 43c16129
-                        if (characterID > 10000900) return;
-
-                        string const3Description = "";
-                        string const5Description = "";
-                        string skill = "";
-                        string auto = "Normal Attack";
-
-                        var value = new JObject();
-
-                        if (!data.ContainsKey(nameKey))
-                        {
-                            value.Add("GOOD", nameGOOD);
-
-                            // Some characters have different internal names.
-                            // Ex: Jean -> Qin, Yanfei -> Feiyan, etc.
-                            string[] iconParts = character["iconName"].ToString().Split('_'); // UI_AvatarIcon_[Qin] -> Qin
-                            name = iconParts[iconParts.Length - 1];
-
-                            // Traveler was rebuilt once above from explicit source-ID joins.
-                            // Not every avatar has a Skill_S_ entry (e.g. test ones),
-                            // so look it up tolerantly instead of throwing.
-                            // Ported from taiwenlee/Inventory_Kamera (MIT): 480222b9
-                            var characterSkill = skills.FirstOrDefault(entry => entry["skillIcon"]?.ToString().Contains($"Skill_S_{name}") == true);
-
-                            if (characterSkill == null)
-                            {
-                                Logger.Debug("Skipping {0} - no skill data available", name);
-                                return;
-                            }
-
-                            skill = Mappings[characterSkill[NameTextMapHashKey].ToString()].ToString();
-
-
-                            value.Add("ConstellationName", new JArray
-                            {
-                                GetConstellationNameFromId(characterID)
-                            });
-
-                            var constellationOrder = new JArray();
-
-                            // The skill/burst name is always mentioned in the constellation's description
-                            // so we'll check for it. C3 and C5 can also level the normal attack for
-                            // characters such as Freminet, Sethos, Arlecchino or Neuvillette.
-                            // Ported from taiwenlee/Inventory_Kamera (MIT): 191fa8f2
-                            const3Description = talents.Where(entry => entry["icon"]?.ToString().Contains(name) == true).ElementAt(2)["descTextMapHash"].ToString();
-                            const3Description = Mappings[const3Description].ToString();
-
-                            if (const3Description.Contains(auto))
-                            {
-                                constellationOrder.Add(TalentAuto);
-                            }
-                            else if (const3Description.Contains(skill))
-                            {
-                                constellationOrder.Add(TalentSkill);
-                            }
-                            else
-                            {
-                                constellationOrder.Add(TalentBurst);
-                            }
-
-                            const5Description = talents.Where(entry => entry["icon"]?.ToString().Contains(name) == true).ElementAt(4)["descTextMapHash"].ToString();
-                            const5Description = Mappings[const5Description].ToString();
-
-                            if (const5Description.Contains(auto))
-                            {
-                                constellationOrder.Add(TalentAuto);
-                            }
-                            else if (const5Description.Contains(skill))
-                            {
-                                constellationOrder.Add(TalentSkill);
-                            }
-                            else
-                            {
-                                constellationOrder.Add(TalentBurst);
-                            }
-
-                            value.Add("ConstellationOrder", constellationOrder);
-
-                            value.Add("Element", new JArray(GetElementFromID(characterID)));
-
-                            var weaponArchetype = character["weaponType"].ToString();
-                            WeaponType weaponType;
-                            if (weaponArchetype.Contains("SWORD_ONE_HAND")) weaponType = WeaponType.Sword;
-                            else if (weaponArchetype.Contains("CLAYMORE")) weaponType = WeaponType.Claymore;
-                            else if (weaponArchetype.Contains("POLE")) weaponType = WeaponType.Polearm;
-                            else if (weaponArchetype.Contains("BOW")) weaponType = WeaponType.Bow;
-                            else if (weaponArchetype.Contains("CATALYST")) weaponType = WeaponType.Catalyst;
-                            else if (weaponArchetype.Contains("CROSSBOW")) weaponType = WeaponType.Sword; // Not a released weapon class; current dumps only tag the traveler rows with it
-                            else throw new InvalidOperationException($"{name} uses unknown weapon type {weaponArchetype}");
-
-                            value.Add("WeaponType", (int)weaponType);
-
-                            if (data.TryAdd(nameKey, value)) status = UpdateStatus.Success;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Warn(ex, "Problem when generating character information for {0}", name);
-                    }
+                    if (RecordNewCharacter(character, mappedName, data, skills, talents, constellations))
+                        status = UpdateStatus.Success;
                 });
-
-                string GetConstellationNameFromId(int targetID)
-                {
-                    var constellation = constellations.FirstOrDefault(entry => ((int)entry["avatarId"]) == targetID);
-                    return constellation == null ? "" : Mappings[constellation["avatarConstellationBeforTextMapHash"].ToString()].ToString();
-                }
-
-                string GetElementFromID(int targetID)
-                {
-                    var element = constellations.FirstOrDefault(entry => ((int)entry["avatarId"]) == targetID);
-                    return element == null ? "" : Mappings[element["avatarVisionBeforTextMapHash"].ToString()].ToString().ToLower();
-                }
             }
             catch (Exception ex)
             {
                 Logger.Warn(ex);
                 status = UpdateStatus.Fail;
-            }            
+            }
 
             if (status == UpdateStatus.Success)
             {
@@ -815,6 +741,137 @@ namespace InventoryKamera
             }
 
             return status;
+        }
+
+        private bool RecordNewCharacter(JObject character, string mappedName, ConcurrentDictionary<string, JObject> data,
+            List<JObject> skills, List<JObject> talents, List<JObject> constellations)
+        {
+            string name = mappedName;
+
+            try
+            {
+                string pascalCase = CultureInfo.GetCultureInfo("en").TextInfo.ToTitleCase(name);
+                string nameGood = Regex.Replace(pascalCase, @"[\W]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
+                string nameKey = nameGood.ToLower();
+                int characterId = (int)character["id"];
+
+                // Placeholder avatars (beta Columbina/Ineffa, trial duplicates,
+                // UGC templates) reuse real characters' keys but have no fetter
+                // data, which yields empty elements and can shadow the real
+                // entry depending on parallel processing order.
+                // Ported from taiwenlee/Inventory_Kamera (MIT): 43c16129
+                if (characterId > 10000900) return false;
+
+                if (!data.ContainsKey(nameKey))
+                {
+                    var value = BuildNewCharacterValue(character, ref name, characterId, nameGood, skills, talents, constellations, Mappings);
+                    if (value != null && data.TryAdd(nameKey, value)) return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn(ex, "Problem when generating character information for {0}", name);
+            }
+
+            return false;
+        }
+
+        private static JObject BuildNewCharacterValue(JObject character, ref string name, int characterId, string nameGood,
+            List<JObject> skills, List<JObject> talents, List<JObject> constellations, ConcurrentDictionary<string, string> mappings)
+        {
+            var value = new JObject();
+            value.Add("GOOD", nameGood);
+
+            // Some characters have different internal names.
+            // Ex: Jean -> Qin, Yanfei -> Feiyan, etc.
+            string[] iconParts = character["iconName"].ToString().Split('_'); // UI_AvatarIcon_[Qin] -> Qin
+            name = iconParts[iconParts.Length - 1];
+            string iconName = name;
+
+            // Traveler was rebuilt once above from explicit source-ID joins.
+            // Not every avatar has a Skill_S_ entry (e.g. test ones),
+            // so look it up tolerantly instead of throwing.
+            // Ported from taiwenlee/Inventory_Kamera (MIT): 480222b9
+            var characterSkill = skills.FirstOrDefault(entry => entry["skillIcon"]?.ToString().Contains($"Skill_S_{iconName}") == true);
+            if (characterSkill == null)
+            {
+                Logger.Debug("Skipping {0} - no skill data available", name);
+                return null;
+            }
+
+            string skill = mappings[characterSkill[NameTextMapHashKey].ToString()].ToString();
+
+            value.Add("ConstellationName", new JArray
+            {
+                GetConstellationNameFromId(characterId, constellations, mappings)
+            });
+
+            value.Add("ConstellationOrder", BuildConstellationOrder(talents, name, skill, mappings));
+
+            value.Add("Element", new JArray(GetElementFromID(characterId, constellations, mappings)));
+
+            value.Add("WeaponType", (int)ParseWeaponType(character["weaponType"].ToString(), name));
+            return value;
+        }
+
+        private static JArray BuildConstellationOrder(List<JObject> talents, string name, string skill,
+            ConcurrentDictionary<string, string> mappings)
+        {
+            var constellationOrder = new JArray();
+
+            // The skill/burst name is always mentioned in the constellation's description
+            // so we'll check for it. C3 and C5 can also level the normal attack for
+            // characters such as Freminet, Sethos, Arlecchino or Neuvillette.
+            // Ported from taiwenlee/Inventory_Kamera (MIT): 191fa8f2
+            constellationOrder.Add(ConstellationUpgradeType(talents, name, 2, skill, mappings));
+            constellationOrder.Add(ConstellationUpgradeType(talents, name, 4, skill, mappings));
+            return constellationOrder;
+        }
+
+        private static string ConstellationUpgradeType(List<JObject> talents, string name, int tierIndex, string skill,
+            ConcurrentDictionary<string, string> mappings)
+        {
+            string description = talents.Where(entry => entry["icon"]?.ToString().Contains(name) == true).ElementAt(tierIndex)["descTextMapHash"].ToString();
+            description = mappings[description].ToString();
+            if (description.Contains("Normal Attack"))
+            {
+                return TalentAuto;
+            }
+            else if (description.Contains(skill))
+            {
+                return TalentSkill;
+            }
+            else
+            {
+                return TalentBurst;
+            }
+        }
+
+        private static WeaponType ParseWeaponType(string weaponArchetype, string name)
+        {
+            WeaponType weaponType;
+            if (weaponArchetype.Contains("SWORD_ONE_HAND")) weaponType = WeaponType.Sword;
+            else if (weaponArchetype.Contains("CLAYMORE")) weaponType = WeaponType.Claymore;
+            else if (weaponArchetype.Contains("POLE")) weaponType = WeaponType.Polearm;
+            else if (weaponArchetype.Contains("BOW")) weaponType = WeaponType.Bow;
+            else if (weaponArchetype.Contains("CATALYST")) weaponType = WeaponType.Catalyst;
+            else if (weaponArchetype.Contains("CROSSBOW")) weaponType = WeaponType.Sword; // Not a released weapon class; current dumps only tag the traveler rows with it
+            else throw new InvalidOperationException($"{name} uses unknown weapon type {weaponArchetype}");
+            return weaponType;
+        }
+
+        private static string GetConstellationNameFromId(int targetId, List<JObject> constellations,
+            ConcurrentDictionary<string, string> mappings)
+        {
+            var constellation = constellations.FirstOrDefault(entry => ((int)entry["avatarId"]) == targetId);
+            return constellation == null ? "" : mappings[constellation["avatarConstellationBeforTextMapHash"].ToString()].ToString();
+        }
+
+        private static string GetElementFromID(int targetId, List<JObject> constellations,
+            ConcurrentDictionary<string, string> mappings)
+        {
+            var element = constellations.FirstOrDefault(entry => ((int)entry["avatarId"]) == targetId);
+            return element == null ? "" : mappings[element["avatarVisionBeforTextMapHash"].ToString()].ToString().ToLower();
         }
 
         private UpdateStatus UpdateArtifacts(bool force)
@@ -851,6 +908,24 @@ namespace InventoryKamera
             return UpdateStatus.Success;
         }
 
+        // Joined source rows and shared constants for the artifact lookup rebuild.
+        private sealed class ArtifactSources
+        {
+            internal ArtifactSources(ILookup<int, JObject> affixesById, ILookup<int, JObject> piecesById,
+                Dictionary<string, string> slotsByEquipment, HashSet<int> prayerSets)
+            {
+                AffixesById = affixesById;
+                PiecesById = piecesById;
+                SlotsByEquipment = slotsByEquipment;
+                PrayerSets = prayerSets;
+            }
+
+            internal ILookup<int, JObject> AffixesById { get; }
+            internal ILookup<int, JObject> PiecesById { get; }
+            internal Dictionary<string, string> SlotsByEquipment { get; }
+            internal HashSet<int> PrayerSets { get; }
+        }
+
         internal static JObject BuildArtifactLookup(JArray setDefs, JArray affixes, JArray pieces,
             IDictionary<string, string> textmap)
         {
@@ -859,14 +934,15 @@ namespace InventoryKamera
             if (pieces == null) throw new ArgumentNullException(nameof(pieces));
             if (textmap == null) throw new ArgumentNullException(nameof(textmap));
 
-            var affixesById = affixes.OfType<JObject>().ToLookup(row => (int?)row["id"] ?? 0);
-            var piecesById = pieces.OfType<JObject>().ToLookup(row => (int?)row["id"] ?? 0);
-            var slotsByEquipment = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["EQUIP_BRACER"] = "flower", ["EQUIP_NECKLACE"] = "plume",
-                ["EQUIP_SHOES"] = "sands", ["EQUIP_RING"] = "goblet", ["EQUIP_DRESS"] = "circlet"
-            };
-            var prayerSets = new HashSet<int> { 15009, 15010, 15011, 15013 };
+            var sources = new ArtifactSources(
+                affixes.OfType<JObject>().ToLookup(row => (int?)row["id"] ?? 0),
+                pieces.OfType<JObject>().ToLookup(row => (int?)row["id"] ?? 0),
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["EQUIP_BRACER"] = "flower", ["EQUIP_NECKLACE"] = "plume",
+                    ["EQUIP_SHOES"] = "sands", ["EQUIP_RING"] = "goblet", ["EQUIP_DRESS"] = "circlet"
+                },
+                new HashSet<int> { 15009, 15010, 15011, 15013 });
             var seenSetIds = new HashSet<int>();
             var seenPieceNames = new HashSet<string>(StringComparer.Ordinal);
             var result = new SortedDictionary<string, JObject>(StringComparer.Ordinal);
@@ -875,51 +951,71 @@ namespace InventoryKamera
                 var definition = token as JObject;
                 if (definition == null) throw new InvalidDataException("An artifact set definition is not an object.");
                 if (((int?)definition["disableFilter"] ?? 0) != 0) continue;
-                int setId = RequireArtifactId(definition["setId"], "setId");
-                if (!seenSetIds.Add(setId)) throw new InvalidDataException("Duplicate artifact set ID " + setId + ".");
-                int affixId = RequireArtifactId(definition["equipAffixId"], "equipAffixId for set " + setId);
-                var names = affixesById[affixId].Select(row => RequireArtifactName(row[NameTextMapHashKey], textmap,
-                    "affix for set " + setId)).Distinct(StringComparer.Ordinal).ToList();
-                if (names.Count != 1) throw new InvalidDataException("Artifact set " + setId + " has no unique mapped affix name.");
-                string setName = names[0], setGood = ConvertToGOOD(setName), setKey = setGood.ToLowerInvariant();
-                if (setKey.Length == 0 || result.ContainsKey(setKey))
-                    throw new InvalidDataException("Artifact set " + setId + " has an empty or ambiguous normalized name.");
-
-                var references = definition["containsList"] as JArray;
-                int expectedCount = prayerSets.Contains(setId) ? 1 : 5;
-                if (references == null || references.Count != expectedCount)
-                    throw new InvalidDataException("Artifact set " + setId + " does not contain its expected " + expectedCount + " pieces.");
-                var seenPieceIds = new HashSet<int>();
-                var artifacts = new JObject();
-                foreach (var reference in references)
-                {
-                    int pieceId = RequireArtifactId(reference, "piece ID for set " + setId);
-                    var matchingPieces = piecesById[pieceId].ToList();
-                    if (!seenPieceIds.Add(pieceId) || matchingPieces.Count != 1)
-                        throw new InvalidDataException("Artifact piece " + pieceId + " is missing or ambiguous.");
-                    var piece = matchingPieces[0];
-                    if (RequireArtifactId(piece["setId"], "setId for piece " + pieceId) != setId)
-                        throw new InvalidDataException("Artifact piece " + pieceId + " belongs to a different set.");
-                    string slot;
-                    if (!slotsByEquipment.TryGetValue((string)piece["equipType"] ?? string.Empty, out slot)
-                        || artifacts[slot] != null || prayerSets.Contains(setId) && slot != "circlet")
-                        throw new InvalidDataException("Artifact set " + setId + " has an unsupported or duplicate slot.");
-                    string pieceName = RequireArtifactName(piece[NameTextMapHashKey], textmap, "piece " + pieceId);
-                    string pieceGood = ConvertToGOOD(pieceName), pieceKey = pieceGood.ToLowerInvariant();
-                    if (pieceKey.Length == 0 || !seenPieceNames.Add(pieceKey))
-                        throw new InvalidDataException("Artifact piece " + pieceId + " has an empty or ambiguous normalized name.");
-                    artifacts[slot] = new JObject
-                    {
-                        ["artifactName"] = pieceName, [GoodKey] = pieceGood, ["normalizedName"] = pieceKey
-                    };
-                }
-                result.Add(setKey, new JObject
-                {
-                    ["setName"] = setName, [GoodKey] = setGood, ["normalizedName"] = setKey, ["artifacts"] = artifacts
-                });
+                AddArtifactSet(definition, result, sources, seenSetIds, seenPieceNames, textmap);
             }
             if (result.Count == 0) throw new InvalidDataException("No enabled artifact sets were generated.");
             return new JObject(result.Select(pair => new JProperty(pair.Key, pair.Value)));
+        }
+
+        private static void AddArtifactSet(JObject definition, SortedDictionary<string, JObject> result,
+            ArtifactSources sources, HashSet<int> seenSetIds, HashSet<string> seenPieceNames,
+            IDictionary<string, string> textmap)
+        {
+            int setId = RequireArtifactId(definition["setId"], "setId");
+            if (!seenSetIds.Add(setId)) throw new InvalidDataException("Duplicate artifact set ID " + setId + ".");
+            int affixId = RequireArtifactId(definition["equipAffixId"], "equipAffixId for set " + setId);
+            var names = sources.AffixesById[affixId].Select(row => RequireArtifactName(row[NameTextMapHashKey], textmap,
+                "affix for set " + setId)).Distinct(StringComparer.Ordinal).ToList();
+            if (names.Count != 1) throw new InvalidDataException("Artifact set " + setId + " has no unique mapped affix name.");
+            string setName = names[0], setGood = ConvertToGOOD(setName), setKey = setGood.ToLowerInvariant();
+            if (setKey.Length == 0 || result.ContainsKey(setKey))
+                throw new InvalidDataException("Artifact set " + setId + " has an empty or ambiguous normalized name.");
+
+            result.Add(setKey, new JObject
+            {
+                ["setName"] = setName, [GoodKey] = setGood, ["normalizedName"] = setKey,
+                ["artifacts"] = CollectArtifactPieces(definition, setId, sources, seenPieceNames, textmap)
+            });
+        }
+
+        private static JObject CollectArtifactPieces(JObject definition, int setId, ArtifactSources sources,
+            HashSet<string> seenPieceNames, IDictionary<string, string> textmap)
+        {
+            var references = definition["containsList"] as JArray;
+            int expectedCount = sources.PrayerSets.Contains(setId) ? 1 : 5;
+            if (references == null || references.Count != expectedCount)
+                throw new InvalidDataException("Artifact set " + setId + " does not contain its expected " + expectedCount + " pieces.");
+            var seenPieceIds = new HashSet<int>();
+            var artifacts = new JObject();
+            foreach (var reference in references)
+            {
+                AddArtifactPiece(reference, setId, artifacts, sources, seenPieceIds, seenPieceNames, textmap);
+            }
+            return artifacts;
+        }
+
+        private static void AddArtifactPiece(JToken reference, int setId, JObject artifacts, ArtifactSources sources,
+            HashSet<int> seenPieceIds, HashSet<string> seenPieceNames, IDictionary<string, string> textmap)
+        {
+            int pieceId = RequireArtifactId(reference, "piece ID for set " + setId);
+            var matchingPieces = sources.PiecesById[pieceId].ToList();
+            if (!seenPieceIds.Add(pieceId) || matchingPieces.Count != 1)
+                throw new InvalidDataException("Artifact piece " + pieceId + " is missing or ambiguous.");
+            var piece = matchingPieces[0];
+            if (RequireArtifactId(piece["setId"], "setId for piece " + pieceId) != setId)
+                throw new InvalidDataException("Artifact piece " + pieceId + " belongs to a different set.");
+            string slot;
+            if (!sources.SlotsByEquipment.TryGetValue((string)piece["equipType"] ?? string.Empty, out slot)
+                || artifacts[slot] != null || sources.PrayerSets.Contains(setId) && slot != "circlet")
+                throw new InvalidDataException("Artifact set " + setId + " has an unsupported or duplicate slot.");
+            string pieceName = RequireArtifactName(piece[NameTextMapHashKey], textmap, "piece " + pieceId);
+            string pieceGood = ConvertToGOOD(pieceName), pieceKey = pieceGood.ToLowerInvariant();
+            if (pieceKey.Length == 0 || !seenPieceNames.Add(pieceKey))
+                throw new InvalidDataException("Artifact piece " + pieceId + " has an empty or ambiguous normalized name.");
+            artifacts[slot] = new JObject
+            {
+                ["artifactName"] = pieceName, [GoodKey] = pieceGood, ["normalizedName"] = pieceKey
+            };
         }
 
         private static int RequireArtifactId(JToken token, string field)

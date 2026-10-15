@@ -295,6 +295,28 @@ namespace InventoryKamera
             if (running)
                 return;
 
+            ResetScanUi();
+
+            Logger.Info("Starting scan");
+
+            if (!ValidateScanSelection()) return;
+            GenshinProcesor.ReloadData();
+            if (LookupTablesMissing()) return;
+
+            // Refuse to start when the output location cannot be written to;
+            // ValidateOutputDirectory surfaces the reason to the user.
+            if (ValidateOutputDirectory(OutputPath_TextBox.Text))
+            {
+                LaunchScannerThread();
+            }
+            else
+            {
+                Logger.Warn("Scan not started: output directory is not usable");
+            }
+        }
+
+        private void ResetScanUi()
+        {
             // A forced GC.Collect() used to trim memory here before the scan
             // starts; removed because the runtime reclaims it on its own.
             UserInterface.ResetAll();
@@ -302,17 +324,23 @@ namespace InventoryKamera
             achievementCountLabel.Text = "0 / ?";
             ResetScanProgress();
             ResetScanLogs();
+        }
 
-            Logger.Info("Starting scan");
-
+        private static bool ValidateScanSelection()
+        {
             var selected = Properties.Settings.Default;
             if (!selected.ScanWeapons && !selected.ScanArtifacts && !selected.ScanCharacters &&
                 !selected.ScanCharDevItems && !selected.ScanMaterials && !selected.ScanAchievements)
             {
                 MessageBox.Show("Select at least one scan type.", "Scan Items", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
+                return false;
             }
-            GenshinProcesor.ReloadData();
+            return true;
+        }
+
+        private static bool LookupTablesMissing()
+        {
+            var selected = Properties.Settings.Default;
             if (selected.ScanWeapons && GenshinProcesor.Weapons.Count == 0 ||
                 selected.ScanCharacters && GenshinProcesor.Characters.Count == 0 ||
                 selected.ScanCharDevItems && GenshinProcesor.DevItems.Count == 0 ||
@@ -320,204 +348,224 @@ namespace InventoryKamera
             {
                 MessageBox.Show("Lookup tables needed by the selected scan types are missing. Run 'Options > Update Lookup Tables' first.",
                     "Lookup Tables Missing", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return true;
+            }
+            return false;
+        }
+
+        private void LaunchScannerThread()
+        {
+            UserInterface.SetProgramStatus("Scanning");
+
+            if (running)
+            {
+                Logger.Debug("Already running");
                 return;
             }
+            running = true;
+            SetScanOptionsEnabled(false);
+            data = new InventoryKamera { AchievementProgress = UpdateAchievementProgress, AchievementPreview = UpdateAchievementPreview };
+            string outputDirectory = OutputPath_TextBox.Text;
+            bool scanAchievements = Properties.Settings.Default.ScanAchievements;
+            bool scanArtifacts = Properties.Settings.Default.ScanArtifacts;
+            bool scanCharacters = Properties.Settings.Default.ScanCharacters;
+            ManualExportButton.Enabled = false;
 
-            // Refuse to start when the output location cannot be written to;
-            // ValidateOutputDirectory surfaces the reason to the user.
-            if (ValidateOutputDirectory(OutputPath_TextBox.Text))
+            HotkeyManager.Current.AddOrReplace("Stop", Keys.Enter, Hotkey_Pressed);
+            Logger.Info("Hotkey registered");
+            var settings = Properties.Settings.Default;
+            var gameVersion = new DatabaseManager().LocalVersion.ToString(2);
+            var options =
+                $"\n\tGame Version Data:\t\t\t {gameVersion}\n" +
+                $"\tWeapons:\t\t\t\t {settings.ScanWeapons}\n" +
+                $"\tArtifacts:\t\t\t\t {settings.ScanArtifacts}\n" +
+                $"\tCharacters:\t\t\t\t {settings.ScanCharacters}\n" +
+                $"\tDev Items:\t\t\t\t {settings.ScanCharDevItems}\n" +
+                $"\tMaterials:\t\t\t\t {settings.ScanMaterials}\n" +
+                $"\tAchievements:\t\t\t {settings.ScanAchievements}\n" +
+                $"\tMin Weapon Rarity:\t\t {settings.MinimumWeaponRarity}\n" +
+                $"\tMin Weapon Level:\t\t {settings.MinimumWeaponLevel}\n" +
+                $"\tEquip Weapons:\t\t\t {settings.EquipWeapons}\n" +
+                $"\tMin Artifact Rarity:\t {settings.MinimumArtifactRarity}\n" +
+                $"\tMin Artifact Level:\t\t {settings.MinimumArtifactLevel}\n" +
+                $"\tEquip Artifacts:\t\t {settings.EquipArtifacts}\n" +
+                $"\tDelay:\t\t\t\t\t {settings.ScannerDelay}";
+
+            Logger.Info("Scan settings: {0}", options);
+
+            scannerThread = new Thread(() => RunScannerScan(scanAchievements, scanArtifacts, scanCharacters, outputDirectory))
             {
-                UserInterface.SetProgramStatus("Scanning");
+                IsBackground = true
+            };
+            StartScan_Button.Enabled = false;
+            scannerThread.Start();
+        }
 
-                if (running)
+        private void RunScannerScan(bool scanAchievements, bool scanArtifacts, bool scanCharacters, string outputDirectory)
+        {
+            try
+            {
+                // Repair caches made by older artifact generators even
+                // when version.txt already says the current game version.
+                // Finish the update before any game input or OCR workers.
+                if (scanArtifacts) EnsureArtifactLookupReady();
+                if (scanCharacters) EnsureTravelerLookupReady();
+                if (scanAchievements)
                 {
-                    Logger.Debug("Already running");
+                    UserInterface.SetProgramStatus("Scanning: loading achievement catalog");
+                    data.AchievementCatalog = AchievementCatalog.Load();
+                }
+                // Get Screen Location and Size
+                Navigation.Initialize();
+                ValidateDisplayResolution();
+
+                // Add navigation delay
+                Navigation.SetDelay(ScannerDelayValue(Delay));
+
+
+                // The Data object of json object
+                data.GatherData();
+                if (scanAchievements) FinishAchievementProgress();
+
+                // Scanning is finished. Enter must not abort the thread while files are being saved.
+                Invoke((MethodInvoker)RemoveHotkey);
+
+                ExportAndReportScan(scanAchievements, scanCharacters, outputDirectory);
+            }
+            catch (ThreadAbortException ex)
+            {
+                // Workers can get stuck if the thread is aborted or an exception is raised
+                data?.StopImageProcessorWorkers();
+                if (data == null)
+                {
+                    Logger.Warn(ex, "Scan thread aborted before scan data was created; nothing to export");
+                    UserInterface.SetProgramStatus("Scan stopped");
                     return;
                 }
-                running = true;
-                SetScanOptionsEnabled(false);
-                data = new InventoryKamera { AchievementProgress = UpdateAchievementProgress, AchievementPreview = UpdateAchievementPreview };
-                string outputDirectory = OutputPath_TextBox.Text;
-                bool scanAchievements = selected.ScanAchievements;
-                bool scanArtifacts = selected.ScanArtifacts;
-                bool scanCharacters = selected.ScanCharacters;
-                ManualExportButton.Enabled = false;
-
-                HotkeyManager.Current.AddOrReplace("Stop", Keys.Enter, Hotkey_Pressed);
-                Logger.Info("Hotkey registered");
-                var settings = Properties.Settings.Default;
-                var gameVersion = new DatabaseManager().LocalVersion.ToString(2);
-                var options =
-                    $"\n\tGame Version Data:\t\t\t {gameVersion}\n" +
-                    $"\tWeapons:\t\t\t\t {settings.ScanWeapons}\n" +
-                    $"\tArtifacts:\t\t\t\t {settings.ScanArtifacts}\n" +
-                    $"\tCharacters:\t\t\t\t {settings.ScanCharacters}\n" +
-                    $"\tDev Items:\t\t\t\t {settings.ScanCharDevItems}\n" +
-                    $"\tMaterials:\t\t\t\t {settings.ScanMaterials}\n" +
-                    $"\tAchievements:\t\t\t {settings.ScanAchievements}\n" +
-                    $"\tMin Weapon Rarity:\t\t {settings.MinimumWeaponRarity}\n" +
-                    $"\tMin Weapon Level:\t\t {settings.MinimumWeaponLevel}\n" +
-                    $"\tEquip Weapons:\t\t\t {settings.EquipWeapons}\n" +
-                    $"\tMin Artifact Rarity:\t {settings.MinimumArtifactRarity}\n" +
-                    $"\tMin Artifact Level:\t\t {settings.MinimumArtifactLevel}\n" +
-                    $"\tEquip Artifacts:\t\t {settings.EquipArtifacts}\n" +
-                    $"\tDelay:\t\t\t\t\t {settings.ScannerDelay}";
-
-                Logger.Info("Scan settings: {0}", options);
-
-                scannerThread = new Thread(() =>
+                if (scanAchievements)
                 {
-                    try
-                    {
-                        // Repair caches made by older artifact generators even
-                        // when version.txt already says the current game version.
-                        // Finish the update before any game input or OCR workers.
-                        if (scanArtifacts)
-                        {
-                            var artifactDatabase = new DatabaseManager();
-                            if (artifactDatabase.ArtifactUpdateRequired)
-                            {
-                                UserInterface.SetProgramStatus("Scanning: updating artifact database");
-                                if (artifactDatabase.UpdateArtifactData() == UpdateStatus.Fail)
-                                    throw new InvalidOperationException("The artifact lookup table could not be updated. Check the update error in the log and retry the scan.");
-                                GenshinProcesor.ReloadData();
-                            }
-                            if (GenshinProcesor.Artifacts.Count == 0)
-                                throw new InvalidOperationException("The artifact lookup table is empty. Update lookup tables before scanning artifacts.");
-                        }
-                        if (scanCharacters)
-                        {
-                            var characterDatabase = new DatabaseManager();
-                            if (characterDatabase.TravelerUpdateRequired)
-                            {
-                                UserInterface.SetProgramStatus("Scanning: updating Traveler database");
-                                if (characterDatabase.UpdateTravelerData() == UpdateStatus.Fail)
-                                    throw new InvalidOperationException("The Traveler lookup could not be updated. Check the update error in the log and retry the scan.");
-                                GenshinProcesor.ReloadData();
-                            }
-                        }
-                        if (scanAchievements)
-                        {
-                            UserInterface.SetProgramStatus("Scanning: loading achievement catalog");
-                            data.AchievementCatalog = AchievementCatalog.Load();
-                        }
-                        // Get Screen Location and Size
-                        Navigation.Initialize();
-
-                        List<Size> sizes = new List<Size>
-                        {
-                            new Size(16,9),
-                            new Size(8,5),
-                        };
-
-                        if (!sizes.Contains(Navigation.GetAspectRatio()))
-                        {
-                            throw new NotImplementedException($"{Navigation.GetSize().Width}x{Navigation.GetSize().Height} is an unsupported resolution.");
-                        }
-
-                        using (Bitmap screenshot = Navigation.CaptureWindow())
-                        {
-                            if (Navigation.GetSize() != screenshot.Size) throw new FormatException("Window size and screenshot size mismatch. Please make sure the game is not in a fullscreen mode.");
-                        }
-
-                        Logger.Info("Resolution: {0}x{1}", Navigation.GetSize().Width, Navigation.GetSize().Height);
-
-                        // Add navigation delay
-                        Navigation.SetDelay(ScannerDelayValue(Delay));
-
-
-                        // The Data object of json object
-                        data.GatherData();
-                        if (scanAchievements) FinishAchievementProgress();
-
-                        // Scanning is finished. Enter must not abort the thread while files are being saved.
-                        Invoke((MethodInvoker)RemoveHotkey);
-
-                        Good good = null;
-                        if (data.HasInventoryData)
-                        {
-                            good = new Good(data);
-                            good.WriteToJSON(outputDirectory);
-                        }
-                        bool exportSucceeded = !scanAchievements || ExportAchievements(outputDirectory);
-                        bool scansComplete = (!scanCharacters || data.CharacterScanComplete) &&
-                            (!scanAchievements || data.Achievements.Complete);
-                        string status;
-                        if (!exportSucceeded) status = "Export failed";
-                        else if (scanAchievements && data.Achievements.Cancelled) status = "Scan stopped";
-                        else if (!scansComplete) status = "Finished (partial)";
-                        else status = "Finished";
-                        UserInterface.SetProgramStatus(status, ok: exportSucceeded && scansComplete);
-                        if (good != null && !data.Achievements.Cancelled) OpenOptimizerDialog(good);
-                    }
-                    catch (ThreadAbortException ex)
-                    {
-                        // Workers can get stuck if the thread is aborted or an exception is raised
-                        data?.StopImageProcessorWorkers();
-                        if (data == null)
-                        {
-                            Logger.Warn(ex, "Scan thread aborted before scan data was created; nothing to export");
-                            UserInterface.SetProgramStatus("Scan stopped");
-                            return;
-                        }
-                        if (scanAchievements)
-                        {
-                            data.Achievements.Cancelled = true;
-                            data.Achievements.Complete = false;
-                            ExportAchievements(outputDirectory);
-                        }
-                        UserInterface.SetProgramStatus("Scan stopped");
-                    }
-                    catch (CharacterNavigationException ex)
-                    {
-                        data?.StopImageProcessorWorkers();
-                        if (data != null && data.HasInventoryData)
-                        {
-                            new Good(data).WriteToJSON(outputDirectory);
-                            Logger.Warn(ex, "Saved partial inventory after character navigation stopped; no further game input was sent");
-                        }
-                        RecordAchievementFailure(scanAchievements, outputDirectory, ex);
-                        UserInterface.AddError("    [FAILURE] Character navigation stopped: " + ex.Message);
-                        UserInterface.SetProgramStatus("Scan stopped (navigation)", ok: false);
-                    }
-                    catch (NotImplementedException ex)
-                    {
-                        RecordAchievementFailure(scanAchievements, outputDirectory, ex);
-                        UserInterface.AddError("    [FAILURE] Scan aborted: " + ex);
-                        UserInterface.SetProgramStatus("Scan aborted", ok: false);
-                    }
-                    catch (Exception ex)
-                    {
-                        // Workers can get stuck if the thread is aborted or an exception is raised
-                        data?.StopImageProcessorWorkers();
-                        while (ex.InnerException != null) ex = ex.InnerException;
-                        RecordAchievementFailure(scanAchievements, outputDirectory, ex);
-                        UserInterface.AddError("    [FAILURE] Scan aborted: " + ex);
-                        UserInterface.SetProgramStatus("Scan aborted", ok: false);
-                    }
-                    finally
-                    {
-                        ResetUI();
-                        running = false;
-                        ManualExportButton.Invoke((MethodInvoker)delegate
-                        {
-                            ManualExportButton.Enabled = data != null && data.HasData;
-                            SetScanOptionsEnabled(true);
-                            StartScan_Button.Enabled = true;
-                        });
-                        MainForm_Activate();
-                    }
-                })
-                {
-                    IsBackground = true
-                };
-                StartScan_Button.Enabled = false;
-                scannerThread.Start();
+                    data.Achievements.Cancelled = true;
+                    data.Achievements.Complete = false;
+                    ExportAchievements(outputDirectory);
+                }
+                UserInterface.SetProgramStatus("Scan stopped");
             }
-            else
+            catch (CharacterNavigationException ex)
             {
-                Logger.Warn("Scan not started: output directory is not usable");
+                RecordNavigationFailure(ex, scanAchievements, outputDirectory);
             }
+            catch (NotImplementedException ex)
+            {
+                RecordAchievementFailure(scanAchievements, outputDirectory, ex);
+                UserInterface.AddError("    [FAILURE] Scan aborted: " + ex);
+                UserInterface.SetProgramStatus("Scan aborted", ok: false);
+            }
+            catch (Exception ex)
+            {
+                RecordAbortedScan(ex, scanAchievements, outputDirectory);
+            }
+            finally
+            {
+                ResetUI();
+                running = false;
+                ManualExportButton.Invoke((MethodInvoker)delegate
+                {
+                    ManualExportButton.Enabled = data != null && data.HasData;
+                    SetScanOptionsEnabled(true);
+                    StartScan_Button.Enabled = true;
+                });
+                MainForm_Activate();
+            }
+        }
+
+        private static void EnsureArtifactLookupReady()
+        {
+            var artifactDatabase = new DatabaseManager();
+            if (artifactDatabase.ArtifactUpdateRequired)
+            {
+                UserInterface.SetProgramStatus("Scanning: updating artifact database");
+                if (artifactDatabase.UpdateArtifactData() == UpdateStatus.Fail)
+                    throw new InvalidOperationException("The artifact lookup table could not be updated. Check the update error in the log and retry the scan.");
+                GenshinProcesor.ReloadData();
+            }
+            if (GenshinProcesor.Artifacts.Count == 0)
+                throw new InvalidOperationException("The artifact lookup table is empty. Update lookup tables before scanning artifacts.");
+        }
+
+        private static void EnsureTravelerLookupReady()
+        {
+            var characterDatabase = new DatabaseManager();
+            if (characterDatabase.TravelerUpdateRequired)
+            {
+                UserInterface.SetProgramStatus("Scanning: updating Traveler database");
+                if (characterDatabase.UpdateTravelerData() == UpdateStatus.Fail)
+                    throw new InvalidOperationException("The Traveler lookup could not be updated. Check the update error in the log and retry the scan.");
+                GenshinProcesor.ReloadData();
+            }
+        }
+
+        private static void ValidateDisplayResolution()
+        {
+            List<Size> sizes = new List<Size>
+            {
+                new Size(16,9),
+                new Size(8,5),
+            };
+
+            if (!sizes.Contains(Navigation.GetAspectRatio()))
+            {
+                throw new NotImplementedException($"{Navigation.GetSize().Width}x{Navigation.GetSize().Height} is an unsupported resolution.");
+            }
+
+            using (Bitmap screenshot = Navigation.CaptureWindow())
+            {
+                if (Navigation.GetSize() != screenshot.Size) throw new FormatException("Window size and screenshot size mismatch. Please make sure the game is not in a fullscreen mode.");
+            }
+
+            Logger.Info("Resolution: {0}x{1}", Navigation.GetSize().Width, Navigation.GetSize().Height);
+        }
+
+        private void ExportAndReportScan(bool scanAchievements, bool scanCharacters, string outputDirectory)
+        {
+            Good good = null;
+            if (data.HasInventoryData)
+            {
+                good = new Good(data);
+                good.WriteToJSON(outputDirectory);
+            }
+            bool exportSucceeded = !scanAchievements || ExportAchievements(outputDirectory);
+            bool scansComplete = (!scanCharacters || data.CharacterScanComplete) &&
+                (!scanAchievements || data.Achievements.Complete);
+            string status;
+            if (!exportSucceeded) status = "Export failed";
+            else if (scanAchievements && data.Achievements.Cancelled) status = "Scan stopped";
+            else if (!scansComplete) status = "Finished (partial)";
+            else status = "Finished";
+            UserInterface.SetProgramStatus(status, ok: exportSucceeded && scansComplete);
+            if (good != null && !data.Achievements.Cancelled) OpenOptimizerDialog(good);
+        }
+
+        private void RecordNavigationFailure(CharacterNavigationException ex, bool scanAchievements, string outputDirectory)
+        {
+            data?.StopImageProcessorWorkers();
+            if (data != null && data.HasInventoryData)
+            {
+                new Good(data).WriteToJSON(outputDirectory);
+                Logger.Warn(ex, "Saved partial inventory after character navigation stopped; no further game input was sent");
+            }
+            RecordAchievementFailure(scanAchievements, outputDirectory, ex);
+            UserInterface.AddError("    [FAILURE] Character navigation stopped: " + ex.Message);
+            UserInterface.SetProgramStatus("Scan stopped (navigation)", ok: false);
+        }
+
+        private void RecordAbortedScan(Exception ex, bool scanAchievements, string outputDirectory)
+        {
+            // Workers can get stuck if the thread is aborted or an exception is raised
+            data?.StopImageProcessorWorkers();
+            while (ex.InnerException != null) ex = ex.InnerException;
+            RecordAchievementFailure(scanAchievements, outputDirectory, ex);
+            UserInterface.AddError("    [FAILURE] Scan aborted: " + ex);
+            UserInterface.SetProgramStatus("Scan aborted", ok: false);
         }
 
         private void OpenOptimizerDialog(Good data, bool skip = false)
@@ -800,60 +848,9 @@ namespace InventoryKamera
             {
                 var updatesAvailable = updateManager.UpdateAvailable();
                 if (updatesAvailable)
-                {
-                    var message = "A new version for Genshin Impact has been found. Would you like to update Kamera's lookup tables? (Recommended)";
-                    var result = MessageBox.Show(message, "Game Version Update", MessageBoxButtons.YesNo);
-                    if (result == DialogResult.Yes)
-                    {
-                        switch (updateManager.UpdateGameData())
-                        {
-                            case UpdateStatus.Fail:
-                                MessageBox.Show(UpdateFailedMessage, UpdateFailedCaption, buttons: MessageBoxButtons.OK, icon: MessageBoxIcon.Stop);
-                                break;
-                            case UpdateStatus.Success:
-                                // Reflect the freshly downloaded tables in
-                                // memory; a fresh install starts with none.
-                                GenshinProcesor.ReloadData();
-                                MessageBox.Show($"Update for game version {updateManager.LocalVersion.ToString(2) } successful.", "Update status", buttons: MessageBoxButtons.OK, icon: MessageBoxIcon.Information);
-                                Logger.Info("Updated game data to {0}", updateManager.LocalVersion.ToString(2));
-                                break;
-                            default:
-                                break;
-                        }
-                    }
-                    else if (result == DialogResult.No)
-                    {
-                        MessageBox.Show("Update skipped. Please know that skipping this update will likely result in incorrect scans.\n" +
-                            "\nYou may check for updates again on restarting this application or by using the update manager found" +
-                            " under 'options'", "Update declined", MessageBoxButtons.OK);
-                    }
-                }
+                    OfferGameUpdate(updateManager);
                 else
-                {
-                    bool cacheRepairsSucceeded = true;
-                    if (updateManager.ArtifactUpdateRequired)
-                    {
-                        Logger.Info("Repairing artifact lookup table generated by an older updater...");
-                        if (updateManager.UpdateArtifactData() == UpdateStatus.Fail)
-                        {
-                            Logger.Error("Artifact lookup table repair failed; the previous table was preserved. Artifact scans will retry the update before starting.");
-                            cacheRepairsSucceeded = false;
-                        }
-                        else GenshinProcesor.ReloadData();
-                    }
-                    if (updateManager.TravelerUpdateRequired)
-                    {
-                        Logger.Info("Repairing Traveler lookup generated by an older updater...");
-                        if (updateManager.UpdateTravelerData() == UpdateStatus.Fail)
-                        {
-                            Logger.Error("Traveler lookup repair failed; the previous table was preserved. Character scans will retry the update before starting.");
-                            cacheRepairsSucceeded = false;
-                        }
-                        else GenshinProcesor.ReloadData();
-                    }
-                    if (cacheRepairsSucceeded)
-                        Logger.Info("Current game data is up to date with data for {0}", updateManager.LocalVersion.ToString(2));
-                }
+                    RepairStaleLookupCaches(updateManager);
             }
             catch (Exception ex)
             {
@@ -861,6 +858,63 @@ namespace InventoryKamera
                 MessageBox.Show("Could not check for updates. Consider trying again in an hour or so.", "Game Version Update", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             Properties.Settings.Default.LastUpdateCheck = DateTime.Now;
+        }
+
+        private static void OfferGameUpdate(DatabaseManager updateManager)
+        {
+            var message = "A new version for Genshin Impact has been found. Would you like to update Kamera's lookup tables? (Recommended)";
+            var result = MessageBox.Show(message, "Game Version Update", MessageBoxButtons.YesNo);
+            if (result == DialogResult.Yes)
+            {
+                switch (updateManager.UpdateGameData())
+                {
+                    case UpdateStatus.Fail:
+                        MessageBox.Show(UpdateFailedMessage, UpdateFailedCaption, buttons: MessageBoxButtons.OK, icon: MessageBoxIcon.Stop);
+                        break;
+                    case UpdateStatus.Success:
+                        // Reflect the freshly downloaded tables in
+                        // memory; a fresh install starts with none.
+                        GenshinProcesor.ReloadData();
+                        MessageBox.Show($"Update for game version {updateManager.LocalVersion.ToString(2) } successful.", "Update status", MessageBoxButtons.OK, icon: MessageBoxIcon.Information);
+                        Logger.Info("Updated game data to {0}", updateManager.LocalVersion.ToString(2));
+                        break;
+                    default:
+                        break;
+                }
+            }
+            else if (result == DialogResult.No)
+            {
+                MessageBox.Show("Update skipped. Please know that skipping this update will likely result in incorrect scans.\n" +
+                    "\nYou may check for updates again on restarting this application or by using the update manager found" +
+                    " under 'options'", "Update declined", MessageBoxButtons.OK);
+            }
+        }
+
+        private static void RepairStaleLookupCaches(DatabaseManager updateManager)
+        {
+            bool cacheRepairsSucceeded = true;
+            if (updateManager.ArtifactUpdateRequired)
+            {
+                Logger.Info("Repairing artifact lookup table generated by an older updater...");
+                if (updateManager.UpdateArtifactData() == UpdateStatus.Fail)
+                {
+                    Logger.Error("Artifact lookup table repair failed; the previous table was preserved. Artifact scans will retry the update before starting.");
+                    cacheRepairsSucceeded = false;
+                }
+                else GenshinProcesor.ReloadData();
+            }
+            if (updateManager.TravelerUpdateRequired)
+            {
+                Logger.Info("Repairing Traveler lookup generated by an older updater...");
+                if (updateManager.UpdateTravelerData() == UpdateStatus.Fail)
+                {
+                    Logger.Error("Traveler lookup repair failed; the previous table was preserved. Character scans will retry the update before starting.");
+                    cacheRepairsSucceeded = false;
+                }
+                else GenshinProcesor.ReloadData();
+            }
+            if (cacheRepairsSucceeded)
+                Logger.Info("Current game data is up to date with data for {0}", updateManager.LocalVersion.ToString(2));
         }
 
         private void Export_Button_Click(object sender, EventArgs e)
