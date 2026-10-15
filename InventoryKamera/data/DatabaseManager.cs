@@ -529,29 +529,39 @@ namespace InventoryKamera
             int skillId = RequireTravelerId(skillIds[1], "elemental skill in depot " + depotId);
             if (autoId == skillId || skillId == burstId || autoId == burstId)
                 throw new InvalidDataException("Traveler depot " + depotId + " reuses a talent skill ID.");
-            var order = BuildTravelerDepotOrder(depotId, autoId, skillId, burstId, burst, talentIds, sources, textmap);
+            var order = BuildTravelerDepotOrder(depotId, talentIds, sources, textmap,
+                new TravelerTalentSkills { AutoId = autoId, SkillId = skillId, BurstId = burstId, Burst = burst });
             JArray previous;
             if (orders.TryGetValue(element, out previous) && !JToken.DeepEquals(previous, order))
                 throw new InvalidDataException("The two Traveler avatars disagree on " + element + " constellation order.");
             orders[element] = order;
         }
 
-        private static JArray BuildTravelerDepotOrder(int depotId, int autoId, int skillId, int burstId, JObject burst,
-            JArray talentIds, TravelerSources sources, IDictionary<string, string> textmap)
+        /// <summary>The depot's normal-attack, elemental-skill and burst rows referenced by its constellations.</summary>
+        private sealed class TravelerTalentSkills
         {
-            var auto = RequireTravelerRow(sources.SkillsById[autoId], "normal attack " + autoId);
-            var skill = RequireTravelerRow(sources.SkillsById[skillId], "elemental skill " + skillId);
-            string autoName = RequireTravelerText(auto[NameTextMapHashKey], textmap, "normal attack " + autoId);
-            string skillName = RequireTravelerText(skill[NameTextMapHashKey], textmap, "elemental skill " + skillId);
-            string burstName = RequireTravelerText(burst[NameTextMapHashKey], textmap, "burst " + burstId);
+            internal int AutoId;
+            internal int SkillId;
+            internal int BurstId;
+            internal JObject Burst;
+        }
+
+        private static JArray BuildTravelerDepotOrder(int depotId, JArray talentIds, TravelerSources sources,
+            IDictionary<string, string> textmap, TravelerTalentSkills skills)
+        {
+            var auto = RequireTravelerRow(sources.SkillsById[skills.AutoId], "normal attack " + skills.AutoId);
+            var skill = RequireTravelerRow(sources.SkillsById[skills.SkillId], "elemental skill " + skills.SkillId);
+            string autoName = RequireTravelerText(auto[NameTextMapHashKey], textmap, "normal attack " + skills.AutoId);
+            string skillName = RequireTravelerText(skill[NameTextMapHashKey], textmap, "elemental skill " + skills.SkillId);
+            string burstName = RequireTravelerText(skills.Burst[NameTextMapHashKey], textmap, "burst " + skills.BurstId);
             var ids = talentIds.Select(x => RequireTravelerId(x, "constellation in depot " + depotId)).ToList();
             if (ids.Distinct().Count() != 6) throw new InvalidDataException("Traveler depot " + depotId + " repeats a constellation ID.");
             var c3 = RequireTravelerRow(sources.TalentsById[ids[2]], "C3 talent " + ids[2]);
             var c5 = RequireTravelerRow(sources.TalentsById[ids[4]], "C5 talent " + ids[4]);
             return new JArray
             {
-                TravelerUpgradeType(RequireTravelerText(c3["descTextMapHash"], textmap, "C3 talent " + ids[2]), autoId, skillId, burstId, autoName, skillName, burstName),
-                TravelerUpgradeType(RequireTravelerText(c5["descTextMapHash"], textmap, "C5 talent " + ids[4]), autoId, skillId, burstId, autoName, skillName, burstName)
+                TravelerUpgradeType(RequireTravelerText(c3["descTextMapHash"], textmap, "C3 talent " + ids[2]), skills.AutoId, skills.SkillId, skills.BurstId, autoName, skillName, burstName),
+                TravelerUpgradeType(RequireTravelerText(c5["descTextMapHash"], textmap, "C5 talent " + ids[4]), skills.AutoId, skills.SkillId, skills.BurstId, autoName, skillName, burstName)
             };
         }
 
@@ -795,8 +805,18 @@ namespace InventoryKamera
 
                 if (!data.ContainsKey(nameKey))
                 {
-                    var value = BuildNewCharacterValue(character, ref name, characterId, nameGood, skills, talents, constellations, Mappings);
-                    if (value != null && data.TryAdd(nameKey, value)) return true;
+                    var context = new CharacterImportContext
+                    {
+                        Character = character,
+                        CharacterId = characterId,
+                        NameGood = nameGood,
+                        Skills = skills,
+                        Talents = talents,
+                        Constellations = constellations,
+                        Mappings = Mappings
+                    };
+                    JObject value;
+                    if (TryBuildNewCharacterValue(ref name, context, out value) && data.TryAdd(nameKey, value)) return true;
                 }
             }
             catch (Exception ex)
@@ -807,15 +827,26 @@ namespace InventoryKamera
             return false;
         }
 
-        private static JObject BuildNewCharacterValue(JObject character, ref string name, int characterId, string nameGood,
-            List<JObject> skills, List<JObject> talents, List<JObject> constellations, ConcurrentDictionary<string, string> mappings)
+        /// <summary>Source rows and mappings needed to import one character into the lookup table.</summary>
+        private sealed class CharacterImportContext
         {
-            var value = new JObject();
-            value.Add("GOOD", nameGood);
+            internal JObject Character;
+            internal int CharacterId;
+            internal string NameGood;
+            internal List<JObject> Skills;
+            internal List<JObject> Talents;
+            internal List<JObject> Constellations;
+            internal ConcurrentDictionary<string, string> Mappings;
+        }
+
+        private static bool TryBuildNewCharacterValue(ref string name, CharacterImportContext context, out JObject value)
+        {
+            value = new JObject();
+            value.Add("GOOD", context.NameGood);
 
             // Some characters have different internal names.
             // Ex: Jean -> Qin, Yanfei -> Feiyan, etc.
-            string[] iconParts = character["iconName"].ToString().Split('_'); // UI_AvatarIcon_[Qin] -> Qin
+            string[] iconParts = context.Character["iconName"].ToString().Split('_'); // UI_AvatarIcon_[Qin] -> Qin
             name = iconParts[iconParts.Length - 1];
             string iconName = name;
 
@@ -823,26 +854,27 @@ namespace InventoryKamera
             // Not every avatar has a Skill_S_ entry (e.g. test ones),
             // so look it up tolerantly instead of throwing.
             // Ported from taiwenlee/Inventory_Kamera (MIT): 480222b9
-            var characterSkill = skills.FirstOrDefault(entry => entry["skillIcon"]?.ToString().Contains($"Skill_S_{iconName}") == true);
+            var characterSkill = context.Skills.FirstOrDefault(entry => entry["skillIcon"]?.ToString().Contains($"Skill_S_{iconName}") == true);
             if (characterSkill == null)
             {
                 Logger.Debug("Skipping {0} - no skill data available", name);
-                return null;
+                value = null;
+                return false;
             }
 
-            string skill = mappings[characterSkill[NameTextMapHashKey].ToString()].ToString();
+            string skill = context.Mappings[characterSkill[NameTextMapHashKey].ToString()].ToString();
 
             value.Add("ConstellationName", new JArray
             {
-                GetConstellationNameFromId(characterId, constellations, mappings)
+                GetConstellationNameFromId(context.CharacterId, context.Constellations, context.Mappings)
             });
 
-            value.Add("ConstellationOrder", BuildConstellationOrder(talents, name, skill, mappings));
+            value.Add("ConstellationOrder", BuildConstellationOrder(context.Talents, name, skill, context.Mappings));
 
-            value.Add("Element", new JArray(GetElementFromID(characterId, constellations, mappings)));
+            value.Add("Element", new JArray(GetElementFromID(context.CharacterId, context.Constellations, context.Mappings)));
 
-            value.Add("WeaponType", (int)ParseWeaponType(character["weaponType"].ToString(), name));
-            return value;
+            value.Add("WeaponType", (int)ParseWeaponType(context.Character["weaponType"].ToString(), name));
+            return true;
         }
 
         private static JArray BuildConstellationOrder(List<JObject> talents, string name, string skill,

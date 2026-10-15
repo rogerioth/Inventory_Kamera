@@ -89,7 +89,9 @@ namespace InventoryKamera
 
         public static void OpenCharacterScreen(string context, bool selectPartySlotOne = false)
         {
-            for (int attempt = 1; ; attempt++)
+            // The retry below always throws on the second failed attempt, so the
+            // loop can never run a third iteration; the bound makes that explicit.
+            for (int attempt = 1; attempt <= 2; attempt++)
             {
                 try
                 {
@@ -201,7 +203,8 @@ namespace InventoryKamera
 
         private static void OpenWithCharacterKey(string context)
         {
-            for (int attempt = 1; ; attempt++)
+            // The body always returns or throws by the second attempt.
+            for (int attempt = 1; attempt <= 2; attempt++)
             {
                 Logger.Info("Opening Character screen during {0}: configured key {1}, attempt {2}/2", context, Navigation.characterKey, attempt);
                 input.PressKey(Navigation.characterKey);
@@ -262,7 +265,8 @@ namespace InventoryKamera
         {
             CharacterScreenState basePane = DetailBase(expectedDetail);
             ValidateCoordinate(x, y);
-            for (int attempt = 1; ; attempt++)
+            // The body always returns or throws by the second attempt.
+            for (int attempt = 1; attempt <= 2; attempt++)
             {
                 var before = Verify(context + " before detail click", state => state.State == basePane || state.State == expectedDetail,
                     "Expected the verified " + basePane + " pane or its detail overlay.", CharacterScreenState.CharacterMenu);
@@ -284,7 +288,8 @@ namespace InventoryKamera
         public static void SelectPane(CharacterScreenState pane, double x, double y, string context)
         {
             ValidateCoordinate(x, y);
-            for (int attempt = 1; ; attempt++)
+            // The body always returns or throws by the second attempt.
+            for (int attempt = 1; attempt <= 2; attempt++)
             {
                 var current = Require(CharacterScreenState.CharacterMenu, context + " before selecting pane");
                 if (current.State == pane) return;
@@ -362,19 +367,12 @@ namespace InventoryKamera
                 // inconclusive screen. Two of the three remaining fresh captures
                 // must agree on the exact pane/overlay. One inconclusive frame
                 // may separate them; a positively conflicting state clears them.
-                if (CanAttemptTolerantDetection(attempt, tolerantExpected, current))
+                CharacterScreenRecognition confirmed = TryConfirmTolerantDetection(context, matches,
+                    tolerantExpected, current, votes, attempt, maximumAttempts);
+                if (confirmed != null)
                 {
-                    CharacterScreenRecognition confirmed = TryConfirmTolerantDetection(context, matches,
-                        tolerantExpected.Value, current, votes, attempt, maximumAttempts);
-                    if (confirmed != null)
-                    {
-                        current = confirmed;
-                        return true;
-                    }
-                }
-                else
-                {
-                    DiscardTolerantVoteAfterStrictState(context, votes, current, attempt, maximumAttempts);
+                    current = confirmed;
+                    return true;
                 }
                 Logger.Debug("Waiting for character screen during {0}: attempt {1}/{2}, expected {3}, observed {4}",
                     context, attempt, maximumAttempts, expected, current.State);
@@ -391,25 +389,20 @@ namespace InventoryKamera
         }
 
         private static CharacterScreenRecognition TryConfirmTolerantDetection(string context,
-            Func<CharacterScreenRecognition, bool> matches, CharacterScreenState tolerantExpected,
+            Func<CharacterScreenRecognition, bool> matches, CharacterScreenState? tolerantExpected,
             CharacterScreenRecognition current, TolerantVote votes, int attempt, int maximumAttempts)
         {
-            var relaxed = ReadTolerant(context, tolerantExpected, current);
+            if (!CanAttemptTolerantDetection(attempt, tolerantExpected, current))
+            {
+                DiscardTolerantVoteAfterStrictState(context, votes, current, attempt, maximumAttempts);
+                return null;
+            }
+            var relaxed = ReadTolerant(context, tolerantExpected.Value, current);
             if (relaxed.IsCharacterMenu && relaxed.State != CharacterScreenState.CharacterMenu && matches(relaxed))
             {
-                votes.Confirmations = votes.RelaxedState == relaxed.State && attempt - votes.LastCapture <= 2
-                    ? votes.Confirmations + 1 : 1;
-                votes.RelaxedState = relaxed.State;
-                Logger.Debug("Tolerant character detection during {0}: strict={1}, relaxed={2}, confirmation={3}/2 within three fresh captures, capture={4}/{5}, previousVoteCapture={6}",
-                    context, current.State, relaxed.State, votes.Confirmations, attempt, maximumAttempts, votes.LastCapture);
-                votes.LastCapture = attempt;
+                RecordTolerantConfirmation(votes, relaxed, current, context, attempt, maximumAttempts);
                 if (votes.Confirmations >= 2)
-                {
-                    Logger.Info("Character screen verified by tolerant detection during {0}: {1} on two agreeing frames within three fresh captures ({2}/{3}); evidence {4}",
-                        context, relaxed.State, attempt, maximumAttempts, relaxed.Evidence);
-                    if (lastFrame != null) SaveEvidence(lastFrame, context + " tolerant detection confirmed", relaxed);
-                    return relaxed;
-                }
+                    return ConfirmedTolerantDetection(context, relaxed, attempt, maximumAttempts);
             }
             else if ((relaxed.State == CharacterScreenState.Unknown || relaxed.State == CharacterScreenState.CharacterMenu)
                 && votes.Confirmations > 0 && attempt - votes.LastCapture == 1)
@@ -419,12 +412,38 @@ namespace InventoryKamera
             }
             else
             {
-                if (votes.Confirmations > 0)
-                    Logger.Debug("Tolerant character detection during {0}: clearing {1} vote after result {2} at capture {3}/{4}; evidence {5}",
-                        context, votes.RelaxedState, relaxed.State, attempt, maximumAttempts, relaxed.Evidence);
-                votes.Reset();
+                ClearTolerantVote(context, votes, relaxed, attempt, maximumAttempts);
             }
             return null;
+        }
+
+        private static void RecordTolerantConfirmation(TolerantVote votes, CharacterScreenRecognition relaxed,
+            CharacterScreenRecognition current, string context, int attempt, int maximumAttempts)
+        {
+            votes.Confirmations = votes.RelaxedState == relaxed.State && attempt - votes.LastCapture <= 2
+                ? votes.Confirmations + 1 : 1;
+            votes.RelaxedState = relaxed.State;
+            Logger.Debug("Tolerant character detection during {0}: strict={1}, relaxed={2}, confirmation={3}/2 within three fresh captures, capture={4}/{5}, previousVoteCapture={6}",
+                context, current.State, relaxed.State, votes.Confirmations, attempt, maximumAttempts, votes.LastCapture);
+            votes.LastCapture = attempt;
+        }
+
+        private static CharacterScreenRecognition ConfirmedTolerantDetection(string context,
+            CharacterScreenRecognition relaxed, int attempt, int maximumAttempts)
+        {
+            Logger.Info("Character screen verified by tolerant detection during {0}: {1} on two agreeing frames within three fresh captures ({2}/{3}); evidence {4}",
+                context, relaxed.State, attempt, maximumAttempts, relaxed.Evidence);
+            if (lastFrame != null) SaveEvidence(lastFrame, context + " tolerant detection confirmed", relaxed);
+            return relaxed;
+        }
+
+        private static void ClearTolerantVote(string context, TolerantVote votes, CharacterScreenRecognition relaxed,
+            int attempt, int maximumAttempts)
+        {
+            if (votes.Confirmations > 0)
+                Logger.Debug("Tolerant character detection during {0}: clearing {1} vote after result {2} at capture {3}/{4}; evidence {5}",
+                    context, votes.RelaxedState, relaxed.State, attempt, maximumAttempts, relaxed.Evidence);
+            votes.Reset();
         }
 
         private static void DiscardTolerantVoteAfterStrictState(string context, TolerantVote votes,

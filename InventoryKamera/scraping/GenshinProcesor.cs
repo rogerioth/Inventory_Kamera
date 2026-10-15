@@ -29,7 +29,7 @@ namespace InventoryKamera
 		private static readonly string tesseractDatapath = $".\\tessdata";
 		private static readonly string tesseractLanguage = "genshin_fast_09_04_21";
 
-		internal static Dictionary<string, string> Stats = new Dictionary<string, string>
+		internal static readonly Dictionary<string, string> Stats = new Dictionary<string, string>
 		{
 			["hp"] = "hp",
 			["hp%"] = "hp_",
@@ -82,9 +82,15 @@ namespace InventoryKamera
 
 		private static readonly object EnginesLock = new object();
 
-		internal static ConcurrentBag<TesseractEngine> engines;
+		// Reassigned during engine (re)creation and engine borrowing, so these
+		// stay mutable but are exposed as properties rather than writable fields.
+		internal static ConcurrentBag<TesseractEngine> engines { get; set; }
 
-		internal static Dictionary<string, string> Weapons, DevItems, Materials;
+		internal static Dictionary<string, string> Weapons { get; set; }
+
+		internal static Dictionary<string, string> DevItems { get; set; }
+
+		internal static Dictionary<string, string> Materials { get; set; }
 
 		// Initialized inline so the former static constructor's work runs from
 		// the type initializer without an explicit static constructor. Field
@@ -109,7 +115,9 @@ namespace InventoryKamera
 			return built;
 		}
 
-		internal static Dictionary<string, JObject> Characters, Artifacts;
+		internal static Dictionary<string, JObject> Characters { get; set; }
+
+		internal static Dictionary<string, JObject> Artifacts { get; set; }
 
 		internal static void ReloadData()
         {
@@ -244,7 +252,11 @@ namespace InventoryKamera
 		/// is reported with actionable instructions instead of an opaque
 		/// TypeInitializationException later (issues #536/#366/#287).
 		/// </summary>
-		internal static void EnsureInitialized() { }
+		internal static void EnsureInitialized()
+		{
+			// Empty on purpose: invoking this member forces this type's static
+			// constructor (OCR engines + game data) to run.
+		}
 
 		private static string BuildTesseractInstallError(string detail)
 		{
@@ -320,19 +332,11 @@ namespace InventoryKamera
 		private static void InitEngines()
 		{
 			engines = new ConcurrentBag<TesseractEngine>();
-			try
-			{
-				ValidateTesseractInstall();
+			ValidateTesseractInstall();
 
-				LogTesseractEnvironment();
+			LogTesseractEnvironment();
 
-				CreateEngines();
-			}
-			catch (Exception ex)
-			{
-				Logger.Error(ex, "Failed to initialize Tesseract engines.");
-				throw;
-			}
+			CreateEngines();
 		}
 
 		internal static void RestartEngines()
@@ -580,7 +584,7 @@ namespace InventoryKamera
 
 			HashSet<string> keys = new HashSet<string>(targets.Keys);
 
-			if (keys.Where(key => key.Contains(source)).Count() == 1) return targets[keys.First(key => key.Contains(source))];
+			if (keys.Count(key => key.Contains(source)) == 1) return targets[keys.First(key => key.Contains(source))];
 
 			source = FindClosestInList(source, keys, minConfidence);
 
@@ -594,7 +598,7 @@ namespace InventoryKamera
 
 			HashSet<string> keys = new HashSet<string>(targets.Keys);
 
-			if (keys.Where(key => key.Contains(source)).Count() == 1) return (string)targets[keys.First(key => key.Contains(source))]["GOOD"];
+			if (keys.Count(key => key.Contains(source)) == 1) return (string)targets[keys.First(key => key.Contains(source))]["GOOD"];
 
 			source = FindClosestInList(source, keys, minConfidence);
 

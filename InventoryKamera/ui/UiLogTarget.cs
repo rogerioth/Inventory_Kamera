@@ -109,9 +109,18 @@ namespace InventoryKamera.ui
             if (line.Length > MaximumEntryLength)
                 line = line.Substring(0, MaximumEntryLength) + " … [entry truncated; see log file]";
 
+            AppendEntry(logEvent.Level, line);
+
+            LineLogged?.Invoke(logEvent.Level, line);
+        }
+
+        // The shared buffer state is static; mutating it from this instance
+        // override is routed through this static helper.
+        private static void AppendEntry(LogLevel level, string line)
+        {
             lock (Sync)
             {
-                var entry = new UiLogEntry(++nextSequence, logEvent.Level, line);
+                var entry = new UiLogEntry(++nextSequence, level, line);
                 Buffer.AddLast(entry);
                 bufferedCharacters += line.Length;
                 while (Buffer.Count > MaximumEntryCount || bufferedCharacters > MaximumTextLength)
@@ -122,8 +131,6 @@ namespace InventoryKamera.ui
                 foreach (var subscriber in Subscribers)
                     subscriber.Deliver(entry);
             }
-
-            LineLogged?.Invoke(logEvent.Level, line);
         }
 
         private sealed class Subscription : IDisposable

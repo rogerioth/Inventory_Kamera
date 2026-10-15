@@ -15,7 +15,9 @@ namespace InventoryKamera
 	{
 		private static NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
 
-		internal static InputSimulator sim = new InputSimulator();
+		// Reassigned on scan reset; exposed as a property rather than a
+		// writable field. Only Navigation mutates it.
+		internal static InputSimulator sim { get; set; } = new InputSimulator();
 		private static Rect WindowSize;
 		private static Rect WindowPosition;
 		private static Size AspectRatio;
@@ -424,15 +426,9 @@ namespace InventoryKamera
 		[DllImport("user32.dll", EntryPoint = "SetCursorPos")]
 		private static extern bool SetCursorPosNative(int X, int Y);
 
-		// Public wrapper keeping the previously public native entry point for callers.
-		public static bool SetCursorPos(int X, int Y)
-		{
-			return SetCursorPosNative(X, Y);
-		}
-
 		public static bool SetCursor(int X, int Y)
         {
-			return SetCursorPos(GetPosition().Left + X, GetPosition().Top + Y);
+			return SetCursorPosNative(GetPosition().Left + X, GetPosition().Top + Y);
 		}
 
 		public static bool SetCursor(Point point)

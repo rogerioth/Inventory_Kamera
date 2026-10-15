@@ -349,26 +349,8 @@ namespace InventoryKamera
 
             foreach (var item in rectangles)
             {
-                bool addX = true;
-                bool addY = true;
-                foreach (var x in colCoords)
-                {
-                    var xC = item.Center().X;
-                    if (x - 75 / baseAspectWidth * screenshot.Width <= xC && xC <= x + 75 / baseAspectWidth * screenshot.Width)
-                    {
-                        addX = false;
-                        break;
-                    }
-                }
-                foreach (var y in rowCoords)
-                {
-                    var yC = item.Center().Y;
-                    if (y - 100 / baseAspectHeight * screenshot.Height <= yC && yC <= y + 100 / baseAspectHeight * screenshot.Height)
-                    {
-                        addY = false;
-                        break;
-                    }
-                }
+                bool addX = !HasNearbyGridCoordinate(item.Center().X, colCoords, 75 / baseAspectWidth * screenshot.Width);
+                bool addY = !HasNearbyGridCoordinate(item.Center().Y, rowCoords, 100 / baseAspectHeight * screenshot.Height);
                 if (addX)
                 {
                     colCoords.Add(item.Center().X);
@@ -379,6 +361,18 @@ namespace InventoryKamera
                 }
             }
             return (colCoords, rowCoords);
+        }
+
+        private static bool HasNearbyGridCoordinate(int center, List<int> coords, double tolerance)
+        {
+            foreach (var coordinate in coords)
+            {
+                if (coordinate - tolerance <= center && center <= coordinate + tolerance)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static List<Rectangle> BuildGridRectangles(List<int> colCoords, List<int> rowCoords, int minWidth, int minHeight)
