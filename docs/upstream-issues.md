@@ -5,6 +5,19 @@ which is no longer maintained. This page records how its open issues were addres
 reference when comparing against the upstream tracker. Each entry links the original issue and the
 pull request in this repository that resolved it.
 
+## Accepted SonarCloud findings (10)
+
+After the full cleanup sweep (PRs #21–#39), the SonarCloud issues tab is down to **10 findings — all
+deliberate leaves** with a documented reason. Please do not "fix" these without reading the rationale;
+if one must change, the contract it protects has to change first:
+
+| Finding | Reason it stays |
+| --- | --- |
+| S107 on `Artifact(…)` / `Weapon(…)` constructors (10/8 params) | The signatures are part of the JSON round-trip and scanner capture paths; changing them risks deserialization and call-site stability for no functional gain. |
+| S107 on `CharacterScraper.CountRosterBestEffort` / `AchievementRecognizer.ResolveSidebarRomanEvidence` | Internal helpers with multiple direct call sites in `tests/`; a parameter-object refactor would churn test contracts for a cosmetic rule. |
+| S1144 ×4 on `Navigation.WindowPlacement` fields | The struct is marshaled to the Win32 `WINDOWPLACEMENT` layout (`Marshal.SizeOf` feeds its `length` field); removing "unused" fields corrupts the native layout. |
+| S2325 on `GOOD.WriteToJson` / `WeaponScraper.CatalogueFromBitmapsAsync` | Compiler-verified: both call instance members (`ToString()` override / inherited instance method) and cannot be static. |
+
 ## Fixed in this fork
 
 | Upstream issue | Fix | PR |
