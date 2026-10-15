@@ -14,6 +14,12 @@ logging, and the available offline regression harnesses.
 - Include the validation commands and results, with any checks you could not run.
 - Keep unrelated changes separate and update relevant documentation when behavior changes.
 
+Each merge into `master` is a release candidate and publishes automatically after
+the merge commit passes CI. Document user-visible changes in the PR description;
+GitHub uses merged PRs to generate release notes. Do not create a version-bump
+commit or upload a replacement executable manually. See
+[Releases and downloads](docs/releases.md) for versioning and release recovery.
+
 For OCR or navigation changes, explain which screen or text evidence supports the
 result and how uncertain reads, interrupted navigation, and cancellation behave.
 Saved captures and a focused regression case are useful when they demonstrate the bug.

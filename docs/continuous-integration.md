@@ -1,5 +1,8 @@
 # Continuous integration
 
+CircleCI also validates the release policy and builds a complete Windows package
+on PRs, before Sonar analysis. This catches packaging failures before a merge.
+
 The Windows build/check baseline has passed locally and in the initial CircleCI
 hosted run. Its verified GitHub status is
 `ci/circleci: Windows build and offline checks`.
@@ -105,3 +108,27 @@ The separate Sonar check is not required globally because fork PRs have no
 analysis credential. Promote a reviewed fork change to a maintainer-controlled
 branch and PR when a Sonar analysis is needed before merging it.
 See [Repository review policy](repository-governance.md) for protection setup.
+
+## Automatic releases
+
+CircleCI remains the PR and default-branch build/test service. After a push to
+`master`, [`.github/workflows/release.yml`](../.github/workflows/release.yml)
+waits for the successful CircleCI build and its required GitHub status on that
+**exact commit**. The trusted `master` job includes the Sonar quality-gate wait;
+a passing PR build alone cannot authorize a release of its later merge commit.
+
+A Windows job builds and checks the Release `x64` distribution with read-only
+repository access. A separate publishing job receives only the packaged artifacts
+and a temporary `GITHUB_TOKEN` with `contents: write` to create the tag and release.
+It does not execute application or packaging code. No personal access token or
+GitHub write credential is stored in CircleCI, and PRs do not publish releases.
+See GitHub's [token permissions guidance](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token).
+
+Release jobs use standard GitHub-hosted runners, which are
+[free for public repositories](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
+They do not select paid larger runners. Intermediate artifacts have short retention;
+the downloadable distributions live on GitHub Releases. CircleCI Windows checks
+still use the Free plan's credit allowance described above.
+
+See [Releases and downloads](releases.md) for version calculation, included runtime
+files, checksum verification, and retrying a failed publication.

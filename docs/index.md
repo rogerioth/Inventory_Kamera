@@ -16,11 +16,13 @@ Genshin Impact account via OCR and exports the result in the
 | [Project structure](project-structure.md) | What lives where in the repository and the Visual Studio solution |
 | [Development](development.md) | Build prerequisites, working on the code, and debugging tips |
 | [Continuous integration](continuous-integration.md) | Windows builds, offline checks, CircleCI settings, and Sonar analysis |
+| [Releases and downloads](releases.md) | Windows packages, runtime setup, automatic versions, and release recovery |
 | [Upstream issue log](upstream-issues.md) | How issues from the original repository were addressed in this fork |
 
 ## Where to start
 
 - **Using the scanner** — see the [README](../README.md) quick start.
+- **Downloading or publishing a release** — read [Releases and downloads](releases.md).
 - **Curious how it works** — read [Architecture](architecture.md), then
   [Scanning pipeline](scanning-pipeline.md).
 - **Fixing a bad scan after a game update** — read [Data updater](data-updater.md) and
