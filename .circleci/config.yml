@@ -7,7 +7,9 @@ jobs:
       shell: powershell.exe -ExecutionPolicy Bypass
     resource_class: windows.medium
     steps:
-      - checkout
+      # Sonar's Git blame reader needs historical blobs, not a partial clone.
+      - checkout:
+          method: full
       - run:
           name: Build Debug configurations and run offline checks
           no_output_timeout: 10m
