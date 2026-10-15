@@ -37,12 +37,12 @@ namespace InventoryKamera.ui.main
             Application.Exit();
         }
 
-        internal void SaveSettings()
+        internal static void SaveSettings()
         {
             Properties.Settings.Default.Save();
         }
 
-        private void RemoveHotkey()
+        private static void RemoveHotkey()
         {
             HotkeyManager.Current.Remove("Stop");
         }

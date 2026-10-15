@@ -398,11 +398,11 @@ namespace InventoryKamera
 								break;
 							}
 
-							UserInterface.SetGearPictureBox(imageCollection.Bitmaps.Last());
+							UserInterface.SetGearPictureBox(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1]);
 
 							// Scan as weapon
 							Weapon weapon = weaponScraper.CatalogueFromBitmapsAsync(imageCollection.Bitmaps, imageCollection.Id).Result;
-							UserInterface.SetGear(imageCollection.Bitmaps.Last(), weapon);
+							UserInterface.SetGear(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1], weapon);
 
 							string weaponPath = $"./logging/weapons/weapon{weapon.Id}/";
 
@@ -462,7 +462,7 @@ namespace InventoryKamera
                                     Directory.CreateDirectory(weaponPath + "equipped");
                                     imageCollection.Bitmaps[4].Save(weaponPath + "equipped/equipped.png");
 
-                                    imageCollection.Bitmaps.Last().Save(weaponPath + "card.png");
+                                    imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1].Save(weaponPath + "card.png");
                                 }
                                 catch (Exception ex)
                                 {
@@ -476,17 +476,17 @@ namespace InventoryKamera
 							break;
 
 						case "artifact":
-							if (ArtifactScraper.IsEnhancementMaterial(imageCollection.Bitmaps.Last()))
+							if (ArtifactScraper.IsEnhancementMaterial(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1]))
 							{
 								Logger.Debug("Enhancement Material found for artifact #{artifactID}", imageCollection.Id);
 								artifactScraper.StopScanning = true;
 								break;
 							}
 
-							UserInterface.SetGearPictureBox(imageCollection.Bitmaps.Last());
+							UserInterface.SetGearPictureBox(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1]);
 							// Scan as artifact
 							Artifact artifact = ArtifactScraper.CatalogueFromBitmapsAsync(imageCollection.Bitmaps, imageCollection.Id).Result;
-							UserInterface.SetGear(imageCollection.Bitmaps.Last(), artifact);
+							UserInterface.SetGear(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1], artifact);
 
 							string artifactPath = $"./logging/artifacts/artifact{artifact.Id}/";
 
@@ -557,7 +557,7 @@ namespace InventoryKamera
 									Directory.CreateDirectory(artifactPath + "sanctify");
 									imageCollection.Bitmaps[7].Save(artifactPath + "sanctify/sanctify.png");
 
-									imageCollection.Bitmaps.Last().Save(artifactPath + "card.png");
+									imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1].Save(artifactPath + "card.png");
 								}
 								catch (Exception ex)
 								{

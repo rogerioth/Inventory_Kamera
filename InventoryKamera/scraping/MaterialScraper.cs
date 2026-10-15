@@ -171,7 +171,7 @@ namespace InventoryKamera
 				// page-advance work below is skipped when a repeat was found.
 				if (lastPageReached) break;
 
-				Navigation.SetCursor(r.Last().Center().X, r.Last().Center().Y);
+				Navigation.SetCursor(r[r.Count - 1].Center().X, r[r.Count - 1].Center().Y);
 				Navigation.Click();
 				Navigation.Wait(150);
 

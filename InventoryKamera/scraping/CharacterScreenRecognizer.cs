@@ -40,6 +40,12 @@ namespace InventoryKamera
     // character clicks or detail cleanup. Entry recovery is separately bounded.
     internal static class CharacterScreenRecognizer
     {
+        private const string AttributesLabel = "attributes";
+        private const string ConstellationLabel = "constellation";
+        private const string TalentsLabel = "talents";
+        private const string MaxHpLabel = "maxhp";
+        private const string MaxStaminaLabel = "maxstamina";
+
         internal static CharacterScreenRecognition Read(Bitmap frame)
         {
             if (frame == null) throw new ArgumentNullException(nameof(frame));
@@ -127,7 +133,7 @@ namespace InventoryKamera
                 }
                 if (!HasCharacterSidebar(sidebar))
                     sidebar = ReadLightSidebarRows(frame, geometry, evidence);
-                evidence.Add($"sidebar exact controls={CountExactSidebarLabels(sidebar)}, required>=4 including Constellation/Talents; Attributes word={HasExactLabel(sidebar, "attributes")}");
+                evidence.Add($"sidebar exact controls={CountExactSidebarLabels(sidebar)}, required>=4 including Constellation/Talents; Attributes word={HasExactLabel(sidebar, AttributesLabel)}");
                 if (HasCharacterSidebar(sidebar))
                 {
                     Rectangle rightRegion = geometry.TopRect(1430, 115, 440, 790);
@@ -312,7 +318,7 @@ namespace InventoryKamera
                         sidebar = ReadLightSidebarRows(frame, geometry, evidence);
                         menu = HasTolerantCharacterSidebar(sidebar);
                     }
-                    evidence.Add($"relaxed sidebar exact labels={CountExactSidebarLabels(sidebar)}, required>=3 including Constellation/Talents; Attributes word={HasExactLabel(sidebar, "attributes")}; selected marker plus independent pane content still required");
+                    evidence.Add($"relaxed sidebar exact labels={CountExactSidebarLabels(sidebar)}, required>=3 including Constellation/Talents; Attributes word={HasExactLabel(sidebar, AttributesLabel)}; selected marker plus independent pane content still required");
                 }
                 else evidence.Add("same-frame strict generic menu supplies verified sidebar evidence");
                 if (!menu) return Finish(result, strict.State, evidence);
@@ -454,7 +460,7 @@ namespace InventoryKamera
 
         private static int CountExactSidebarLabels(string text)
         {
-            string[] labels = { "attributes", "weapons", "artifacts", "constellation", "talents", "profile" };
+            string[] labels = { AttributesLabel, "weapons", "artifacts", ConstellationLabel, TalentsLabel, "profile" };
             return labels.Count(label => HasExactLabel(text, label));
         }
 
@@ -469,13 +475,13 @@ namespace InventoryKamera
             // unreadable while the other controls remain clear. The caller
             // additionally requires a selected marker and independent content.
             return CountExactSidebarLabels(text) >= 3 &&
-                (HasExactLabel(text, "constellation") || HasExactLabel(text, "talents"));
+                (HasExactLabel(text, ConstellationLabel) || HasExactLabel(text, TalentsLabel));
         }
 
         private static int CountAttributeLabels(string text)
         {
             string normalized = Normalize(text);
-            string[] labels = { "maxhp", "atk", "def", "elementalmastery", "maxstamina" };
+            string[] labels = { MaxHpLabel, "atk", "def", "elementalmastery", MaxStaminaLabel };
             return labels.Count(label => normalized.Contains(label));
         }
 
@@ -483,7 +489,7 @@ namespace InventoryKamera
         {
             string normalized = Normalize(text);
             return CountAttributeLabels(text) >= 2 &&
-                (normalized.Contains("maxhp") || normalized.Contains("maxstamina"));
+                (normalized.Contains(MaxHpLabel) || normalized.Contains(MaxStaminaLabel));
         }
 
         private static bool HasTolerantSelectedSidebarMarker(Bitmap frame, Geometry geometry, int centerY)
@@ -517,15 +523,15 @@ namespace InventoryKamera
             // label is obscured. Exact words preserve the multi-control guard;
             // the independent right pane still determines the specific state.
             return CountExactSidebarLabels(text) >= 4 &&
-                (HasExactLabel(text, "constellation") || HasExactLabel(text, "talents"));
+                (HasExactLabel(text, ConstellationLabel) || HasExactLabel(text, TalentsLabel));
         }
 
         private static bool HasAttributePane(string text)
         {
             string normalized = Normalize(text);
-            string[] labels = { "maxhp", "atk", "def", "elementalmastery", "maxstamina" };
+            string[] labels = { MaxHpLabel, "atk", "def", "elementalmastery", MaxStaminaLabel };
             return labels.Count(label => normalized.Contains(label)) >= 3 &&
-                (normalized.Contains("maxhp") || normalized.Contains("maxstamina"));
+                (normalized.Contains(MaxHpLabel) || normalized.Contains(MaxStaminaLabel));
         }
 
         private static bool HasPaimonProfile(string text)

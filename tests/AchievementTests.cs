@@ -123,13 +123,13 @@ namespace InventoryKamera.Tests
             var first = catalog.Categories.Single(category => category.Id == 0);
             var second = catalog.Categories.Single(category => category.Id == 1);
             Equal(0, catalog.MatchCategory("Wonders of the World").Id, "Matched category");
-            Equal(1001, catalog.Resolve(first, "Shared Name", "Reach the top of the tower.", 5).Tier.Id,
+            Equal(1001, AchievementCatalog.Resolve(first, "Shared Name", "Reach the top of the tower.", 5).Tier.Id,
                 "First category's duplicate title");
-            Equal(1002, catalog.Resolve(first, "Shared Name", "Open 10 chests.", 5).Tier.Id,
+            Equal(1002, AchievementCatalog.Resolve(first, "Shared Name", "Open 10 chests.", 5).Tier.Id,
                 "Description separates two same-title families");
-            Equal(2001, catalog.Resolve(second, "Shared Name", "Reach the top of the tower.", 5).Tier.Id,
+            Equal(2001, AchievementCatalog.Resolve(second, "Shared Name", "Reach the top of the tower.", 5).Tier.Id,
                 "Second category's duplicate title");
-            Check(!catalog.Resolve(first, "Shared Name", "", 5).Success,
+            Check(!AchievementCatalog.Resolve(first, "Shared Name", "", 5).Success,
                 "A duplicate title without distinguishing description must remain ambiguous.");
         }
 
@@ -137,14 +137,14 @@ namespace InventoryKamera.Tests
         {
             var catalog = FixtureCatalog();
             var category = catalog.Categories[0];
-            var match = catalog.Resolve(category, "Harvest", "Collect 50 flowers.", null);
+            var match = AchievementCatalog.Resolve(category, "Harvest", "Collect 50 flowers.", null);
             Check(match.Success, "An exact numeric goal should resolve the tier.");
             Equal(1102, match.Tier.Id, "Tier selected by goal 50");
-            Check(!catalog.Resolve(category, "Harvest", "Collect 51 flowers.", null).Success,
+            Check(!AchievementCatalog.Resolve(category, "Harvest", "Collect 51 flowers.", null).Success,
                 "A conflicting visible goal must not be corrected to a nearby tier.");
-            Check(!catalog.Resolve(category, "Harvest", "", null).Success,
+            Check(!AchievementCatalog.Resolve(category, "Harvest", "", null).Success,
                 "A repeated tier title without description or reward must remain ambiguous.");
-            var differentTitles = catalog.Resolve(category, "Tundra Gunsmith (II)", "Build 20 weapons.", 10);
+            var differentTitles = AchievementCatalog.Resolve(category, "Tundra Gunsmith (II)", "Build 20 weapons.", 10);
             Check(differentTitles.Success, "Families may use a different title on each tier.");
             Equal(1302, differentTitles.Tier.Id, "A family's renamed second tier");
         }
@@ -179,27 +179,27 @@ namespace InventoryKamera.Tests
                     Definition(84502, "Yo dala?", "Successfully conduct cultural exchange with the hilichurls in \"Poetry Exchange.\"", 5))
             }.ToString());
             var category = catalog.Categories[0];
-            var resolved = catalog.Resolve(category, "...0Odomu?", description, 5);
+            var resolved = AchievementCatalog.Resolve(category, "...0Odomu?", description, 5);
             Check(resolved.Success, "The duplicate 0/O glyph is recoverable with exact independent evidence.");
             Equal(84501, resolved.Tier.Id, "Canonical repaired Olah achievement ID");
-            Check(!catalog.Resolve(category, "...0Odomu?", description, null).Success,
+            Check(!AchievementCatalog.Resolve(category, "...0Odomu?", description, null).Success,
                 "OCR-confusable title repair requires a known reward.");
-            Check(!catalog.Resolve(category, "...0Odomu?", description, 10).Success,
+            Check(!AchievementCatalog.Resolve(category, "...0Odomu?", description, 10).Success,
                 "A conflicting reward must reject OCR-confusable title repair.");
-            Check(!catalog.Resolve(category, "...0Odomu?", "Successfully conduct cultural exchange with the hilichurls in \"Poetry Exchange.\"", 5).Success,
+            Check(!AchievementCatalog.Resolve(category, "...0Odomu?", "Successfully conduct cultural exchange with the hilichurls in \"Poetry Exchange.\"", 5).Success,
                 "A neighboring achievement's description must not justify the title repair.");
             var ambiguous = AchievementCatalog.FromJson(new JObject {
                 ["10"] = Category("Olah!: Series I", 1,
                     Definition(84501, "...Odomu?", description, 5),
                     Definition(84503, "...Odomu?", description, 5))
             }.ToString());
-            Check(!ambiguous.Resolve(ambiguous.Categories[0], "...0Odomu?", description, 5).Success,
+            Check(!AchievementCatalog.Resolve(ambiguous.Categories[0], "...0Odomu?", description, 5).Success,
                 "Indistinguishable repaired candidates must remain ambiguous.");
             var numeric = AchievementCatalog.FromJson(new JObject {
                 ["10"] = Category("Olah!: Series I", 1,
                     Definition(84501, "...Odomu?", "Collect 10 flowers from the northern garden.", 5))
             }.ToString());
-            Check(!numeric.Resolve(numeric.Categories[0], "...0Odomu?", "Collect 11 flowers from the northern garden.", 5).Success,
+            Check(!AchievementCatalog.Resolve(numeric.Categories[0], "...0Odomu?", "Collect 11 flowers from the northern garden.", 5).Success,
                 "Even nearly identical descriptions cannot repair conflicting numeric goals.");
         }
 
@@ -323,8 +323,8 @@ namespace InventoryKamera.Tests
             using (var image = new Bitmap(path))
             {
                 Equal(6, AchievementRecognizer.DetectRows(image).Count, "Only six full rows should be detected");
-                Check(recognizer.IsDetailScreen(image), "Reference image should be recognized as category details.");
-                Equal((int?)1605, recognizer.ReadCompletedTotal(image), "Global completed achievement counter");
+                Check(AchievementRecognizer.IsDetailScreen(image), "Reference image should be recognized as category details.");
+                Equal((int?)1605, AchievementRecognizer.ReadCompletedTotal(image), "Global completed achievement counter");
                 var rows = recognizer.ReadPage(image, catalog.Categories[0], 1);
                 Equal(6, recognizer.LastOcrRowCount, "The first viewport OCRs all six rows");
                 Equal(0, recognizer.LastReusedRowCount, "The first viewport has no cached rows");

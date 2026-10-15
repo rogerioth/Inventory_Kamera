@@ -142,7 +142,7 @@ namespace InventoryKamera
             UserInterface.FinishScanPhase(ScanPhase.Artifacts, cardsQueued, artifactCount);
 		}
 
-        private void ClearFilters()
+        private static void ClearFilters()
         {
 
             using (var x = Navigation.CaptureRegion(
@@ -238,7 +238,7 @@ namespace InventoryKamera
 			return true;
 		}
 
-        private Bitmap GetSubstatsBitmap(Bitmap card, bool isSanctified = false)
+        private static Bitmap GetSubstatsBitmap(Bitmap card, bool isSanctified = false)
         {
 			// Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6, fea6e1bb.
 			double baseY = Navigation.IsNormal ? 0.4216 : 0.3682;
@@ -255,7 +255,7 @@ namespace InventoryKamera
 				height:(int)(card.Height * (Navigation.IsNormal ? 0.2301 : 0.1573))));
         }
 
-        private Bitmap GetMainStatBitmap(Bitmap card)
+        private static Bitmap GetMainStatBitmap(Bitmap card)
         {
 			// Height is identical for 16:9 and 16:10 today; re-split it if
 			// real 16:10 values ever diverge.
@@ -266,7 +266,7 @@ namespace InventoryKamera
 				height: (int)(card.Height * 0.0416)));
         }
 
-        private Bitmap GetLevelBitmap(Bitmap card, bool isSanctified = false)
+        private static Bitmap GetLevelBitmap(Bitmap card, bool isSanctified = false)
         {
 			// Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6, fea6e1bb.
 			double baseY = Navigation.IsNormal ? 0.3634 : 0.3197;
@@ -280,7 +280,7 @@ namespace InventoryKamera
                 height: (int)(card.Height * (Navigation.IsNormal ? 0.0416 : 0.0347))));
         }
 
-        private Bitmap GetSanctifyBitmap(Bitmap card)
+        private static Bitmap GetSanctifyBitmap(Bitmap card)
         {
 			// Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6, fea6e1bb.
 			return GenshinProcesor.CopyBitmap(card, new Rectangle(
@@ -290,7 +290,7 @@ namespace InventoryKamera
 				height: (int)(card.Height * (Navigation.IsNormal ? 0.0526 : 0.0470))));
         }
 
-        private Bitmap GetGearSlotBitmap(Bitmap card)
+        private static Bitmap GetGearSlotBitmap(Bitmap card)
         {
             return GenshinProcesor.CopyBitmap(card, new Rectangle(
                 x: (int)(card.Width * 0.0405),
@@ -536,24 +536,25 @@ namespace InventoryKamera
 
 					string name = line.Contains("%") ? stat + "%" : stat;
 
-					substat.stat = GenshinProcesor.FindClosestStat(name, 80) ?? "";
+					substat.Stat = GenshinProcesor.FindClosestStat(name, 80) ?? "";
 
 					// Remove any non digits.
 					value = Regex.Replace(value, @"[^0-9]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
 
 					// Try to parse number
-					if (!decimal.TryParse(value, out substat.value))
+					if (!decimal.TryParse(value, out decimal parsedValue))
 					{
 						Logger.Debug("Failed to parse stat value from: {0}", line);
-						substat.value = -1;
+						parsedValue = -1;
 					}
+					substat.Value = parsedValue;
 
-					if (substat.value != -1 && substat.stat.Contains("_"))
+					if (substat.Value != -1 && substat.Stat.Contains("_"))
 					{
-						substat.value /= 10;
+						substat.Value /= 10;
 					}
 
-					if (string.IsNullOrWhiteSpace(substat.stat) || substat.value == -1)
+					if (string.IsNullOrWhiteSpace(substat.Stat) || substat.Value == -1)
 					{
 						Logger.Debug("Failed to parse stat from: {0}", line);
 					}

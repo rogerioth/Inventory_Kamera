@@ -143,6 +143,9 @@ namespace InventoryKamera
         private const string CategorySelectionIssue = "Category could not be selected or verified.";
         private const int MaximumSidebarRecoveries = 3;
         private const int MaximumNavigationEvidence = 160;
+        private const string CategoryEvidencePrefix = "category_";
+        private const string AchievementsLogDirectory = "logging/achievements";
+        private const string SidebarResetContext = "reset_";
         private readonly AchievementCatalog catalog;
         private readonly AchievementRecognizer recognizer;
         private readonly IAchievementNavigation navigation;
@@ -173,7 +176,7 @@ namespace InventoryKamera
             recognizer = new AchievementRecognizer(catalog);
             this.navigation = navigation ?? new AchievementNavigation();
             sidebarReader = readSidebar ?? new Func<Bitmap, List<AchievementCategoryEntryOnScreen>>(recognizer.ReadCategories);
-            detailScreenReader = isDetailScreen ?? new Func<Bitmap, bool>(recognizer.IsDetailScreen);
+            detailScreenReader = isDetailScreen ?? new Func<Bitmap, bool>(AchievementRecognizer.IsDetailScreen);
         }
 
         public void Scan(AchievementScanResult result, CancellationToken cancellationToken)
@@ -184,11 +187,11 @@ namespace InventoryKamera
             selectionFailures.Clear();
             var accumulator = new AchievementScanAccumulator(result);
             result.StartedAt = DateTime.UtcNow;
-            Directory.CreateDirectory("logging/achievements");
+            Directory.CreateDirectory(AchievementsLogDirectory);
             try
             {
                 OpenAchievements();
-                using (var frame = Capture()) result.ExpectedCompleted = recognizer.ReadCompletedTotal(frame);
+                using (var frame = Capture()) result.ExpectedCompleted = AchievementRecognizer.ReadCompletedTotal(frame);
                 if (!result.ExpectedCompleted.HasValue)
                     result.Issues.Add("The game's completed achievement total could not be read.");
                 ResetSidebar();
@@ -254,7 +257,7 @@ namespace InventoryKamera
                         Progress?.Invoke(result, category, coverage.Pages);
                     }
                 }
-                using (var frame = Capture()) result.FinalExpectedCompleted = recognizer.ReadCompletedTotal(frame);
+                using (var frame = Capture()) result.FinalExpectedCompleted = AchievementRecognizer.ReadCompletedTotal(frame);
             }
             catch (OperationCanceledException)
             {
@@ -275,7 +278,7 @@ namespace InventoryKamera
             {
                 if (!result.Cancelled && !cancellation.IsCancellationRequested && !result.FinalExpectedCompleted.HasValue)
                 {
-                    try { using (var frame = Capture()) result.FinalExpectedCompleted = recognizer.ReadCompletedTotal(frame); }
+                    try { using (var frame = Capture()) result.FinalExpectedCompleted = AchievementRecognizer.ReadCompletedTotal(frame); }
                     catch (Exception ex) { Logger.Debug(ex, "Could not read the final completed achievement total"); }
                 }
                 accumulator.Finish(catalog);
@@ -290,13 +293,13 @@ namespace InventoryKamera
         {
             using (var frame = Capture())
             {
-                if (recognizer.IsDetailScreen(frame)) return;
-                if (recognizer.ReadCompletedTotal(frame).HasValue)
+                if (AchievementRecognizer.IsDetailScreen(frame)) return;
+                if (AchievementRecognizer.ReadCompletedTotal(frame).HasValue)
                 {
                     navigation.Click(.10, .25);
                     Pause(800);
                     using (var details = Capture())
-                        if (recognizer.IsDetailScreen(details)) return;
+                        if (AchievementRecognizer.IsDetailScreen(details)) return;
                     throw new InvalidOperationException("Could not open an achievement category from the overview.");
                 }
             }
@@ -314,8 +317,8 @@ namespace InventoryKamera
                         Pause(900);
                         using (var overview = Capture())
                         {
-                            if (recognizer.IsDetailScreen(overview)) return;
-                            if (!recognizer.ReadCompletedTotal(overview).HasValue)
+                            if (AchievementRecognizer.IsDetailScreen(overview)) return;
+                            if (!AchievementRecognizer.ReadCompletedTotal(overview).HasValue)
                             {
                                 SaveNavigationFrame(overview, "achievements_click_failed");
                                 throw new InvalidOperationException("The Achievements screen could not be verified after clicking. See logging/achievements for the before/after screenshots.");
@@ -323,7 +326,7 @@ namespace InventoryKamera
                         }
                         navigation.Click(.10, .25);
                         Pause(800);
-                        using (var details = Capture()) if (recognizer.IsDetailScreen(details)) return;
+                        using (var details = Capture()) if (AchievementRecognizer.IsDetailScreen(details)) return;
                         throw new InvalidOperationException("The game did not open the achievement list.");
                     }
                 }
@@ -380,7 +383,7 @@ namespace InventoryKamera
                         }
                         // Use the verified tile from this capture for the first click. A second
                         // OCR pass can lose an otherwise clear Roman numeral in the same label.
-                        SaveNavigationFrame(frame, "category_" + category.Id + "_before_select");
+                        SaveNavigationFrame(frame, CategoryEvidencePrefix + category.Id + "_before_select");
                         return SelectVisibleCategory(category, entry, frame.Width, frame.Height);
                     }
                     direction = SidebarScrollDirection(category, entries);
@@ -407,10 +410,10 @@ namespace InventoryKamera
                                 localNudgeUsed = true;
                                 unreadWithinRange = stationary = previousDirection = 0;
                                 last = null;
-                                SaveNavigationFrame(frame, "category_" + category.Id + "_before_local_nudge");
+                                SaveNavigationFrame(frame, CategoryEvidencePrefix + category.Id + "_before_local_nudge");
                                 Logger.Info("Achievement category {0} label unreadable after three captures; nudging sidebar {1} notches around full tile {2}",
                                     category.Id, nudge, candidateBounds);
-                                ScrollSidebar(nudge, "category_" + category.Id + "_local_nudge");
+                                ScrollSidebar(nudge, CategoryEvidencePrefix + category.Id + "_local_nudge");
                                 continue;
                             }
                             LastSelectionFailureKind = AchievementSelectionFailureKind.LabelUnreadable;
@@ -453,7 +456,7 @@ namespace InventoryKamera
                 else
                 {
                     previousDirection = direction;
-                    ScrollSidebar(direction * step, "category_" + category.Id + "_search");
+                    ScrollSidebar(direction * step, CategoryEvidencePrefix + category.Id + "_search");
                 }
             }
             lastSelectionFailure = "Sidebar search exceeded its bounded attempt limit.";
@@ -545,7 +548,7 @@ namespace InventoryKamera
             if (detailScreenReader(frame)) return true;
             LastSelectionFailureKind = AchievementSelectionFailureKind.DetailMissing;
             lastSelectionFailure = "The achievement detail screen was not visible during sidebar selection.";
-            SaveNavigationFrame(frame, "category_" + category.Id + "_" + context + "_detail_missing");
+            SaveNavigationFrame(frame, CategoryEvidencePrefix + category.Id + "_" + context + "_detail_missing");
             Logger.Warn("Achievement category {0}: {1}", category.Id, lastSelectionFailure);
             return false;
         }
@@ -560,7 +563,7 @@ namespace InventoryKamera
         private void SaveCategoryFailure(Bitmap frame, int categoryId, string step,
             IEnumerable<AchievementCategoryEntryOnScreen> entries)
         {
-            string path = SaveNavigationFrame(frame, "category_" + categoryId + "_" + step);
+            string path = SaveNavigationFrame(frame, CategoryEvidencePrefix + categoryId + "_" + step);
             Logger.Warn("Achievement category {0} sidebar {1}: {2}; thumb {3}; evidence {4}; entries {5}",
                 categoryId, step, lastSelectionFailure, SidebarThumbBounds(frame)?.ToString() ?? "unreadable",
                 path ?? "navigation evidence limit reached", FormatSidebar(entries));
@@ -584,7 +587,7 @@ namespace InventoryKamera
                 CheckStop();
                 using (var frame = Capture())
                 {
-                    if (!recognizer.IsDetailScreen(frame))
+                    if (!AchievementRecognizer.IsDetailScreen(frame))
                         throw new InvalidOperationException("The achievement list closed or changed during scanning.");
                     var rows = recognizer.ReadPage(frame, category, page);
                     string signature = string.Join("|", rows.Select(x => AchievementScanAccumulator.Identity(x) + ":" + x.Top));
@@ -720,7 +723,7 @@ namespace InventoryKamera
             {
                 using (var frame = Capture())
                 {
-                    var entries = ReadSidebar(frame, "reset_" + context, null, attempt + 1);
+                    var entries = ReadSidebar(frame, SidebarResetContext + context, null, attempt + 1);
                     if (SidebarAtTop(frame))
                     {
                         Logger.Info("Achievement sidebar top verified ({0}), thumb {1}", context, SidebarThumbBounds(frame));
@@ -729,7 +732,7 @@ namespace InventoryKamera
                     string signature = SidebarSignature(frame, entries);
                     stationary = signature == last ? stationary + 1 : 0;
                     last = signature;
-                    if (!recognizer.IsDetailScreen(frame) || stationary >= 2 || attempt == 19)
+                    if (!AchievementRecognizer.IsDetailScreen(frame) || stationary >= 2 || attempt == 19)
                     {
                         string path = SaveNavigationFrame(frame, "sidebar_reset_" + context + "_failed");
                         Logger.Warn("Achievement sidebar reset failed ({0}), attempt {1}/20, stationary {2}, thumb {3}, top {4}, bottom {5}; evidence {6}; entries {7}",
@@ -738,9 +741,9 @@ namespace InventoryKamera
                         break;
                     }
                 }
-                ScrollSidebar(-24, "reset_" + context);
+                ScrollSidebar(-24, SidebarResetContext + context);
             }
-            if (allowRecovery && RecoverSidebar("reset_" + context)) return;
+            if (allowRecovery && RecoverSidebar(SidebarResetContext + context)) return;
             throw new InvalidOperationException("The achievement category list could not be reset to its top.");
         }
 
@@ -759,7 +762,7 @@ namespace InventoryKamera
                 {
                     var entries = ReadSidebar(frame, "before_recovery", null, sidebarRecoveries);
                     SaveNavigationFrame(frame, "sidebar_before_recovery_" + sidebarRecoveries);
-                    if (!recognizer.IsDetailScreen(frame))
+                    if (!AchievementRecognizer.IsDetailScreen(frame))
                     {
                         Logger.Warn("Achievement sidebar recovery stopped: detail screen was not verified; entries {0}", FormatSidebar(entries));
                         return false;
@@ -770,8 +773,8 @@ namespace InventoryKamera
                 Pause(800);
                 using (var overview = Capture())
                 {
-                    bool detail = recognizer.IsDetailScreen(overview);
-                    int? total = recognizer.ReadCompletedTotal(overview);
+                    bool detail = AchievementRecognizer.IsDetailScreen(overview);
+                    int? total = AchievementRecognizer.ReadCompletedTotal(overview);
                     SaveNavigationFrame(overview, "sidebar_recovery_overview_" + sidebarRecoveries);
                     Logger.Info("Achievement sidebar recovery overview: detail {0}, completed total {1}", detail, total?.ToString() ?? "unreadable");
                     if (detail || !total.HasValue) return false;
@@ -781,7 +784,7 @@ namespace InventoryKamera
                 Pause(800);
                 using (var detail = Capture())
                 {
-                    bool verified = recognizer.IsDetailScreen(detail);
+                    bool verified = AchievementRecognizer.IsDetailScreen(detail);
                     SaveNavigationFrame(detail, "sidebar_recovery_detail_" + sidebarRecoveries);
                     Logger.Info("Achievement sidebar recovery detail screen verified: {0}", verified);
                     if (!verified) return false;
@@ -989,7 +992,7 @@ namespace InventoryKamera
         }
         private static void SaveFrame(Bitmap frame, int category, int page)
         {
-            frame.Save(Path.Combine("logging/achievements", "category_" + category + "_page_" + page + ".png"));
+            frame.Save(Path.Combine(AchievementsLogDirectory, CategoryEvidencePrefix + category + "_page_" + page + ".png"));
         }
         private string SaveNavigationFrame(Bitmap frame, string step)
         {
@@ -1004,7 +1007,7 @@ namespace InventoryKamera
             }
             try
             {
-                string path = Path.GetFullPath(Path.Combine("logging/achievements", DateTime.UtcNow.ToString("yyyyMMdd_HHmmssfff") + "_" + step + ".png"));
+                string path = Path.GetFullPath(Path.Combine(AchievementsLogDirectory, DateTime.UtcNow.ToString("yyyyMMdd_HHmmssfff") + "_" + step + ".png"));
                 frame.Save(path, System.Drawing.Imaging.ImageFormat.Png);
                 navigationEvidence++;
                 Logger.Debug("Achievement navigation screenshot: {0}", path);

@@ -92,7 +92,7 @@ namespace InventoryKamera
 
 		private static List<SubStat> PositiveValues(List<SubStat> subStats, int capacity)
 		{
-			return subStats?.ToList().Where(e => e.value > 0).ToList() ?? new List<SubStat>(capacity);
+			return subStats?.ToList().Where(e => e.Value > 0).ToList() ?? new List<SubStat>(capacity);
 		}
 
 		public bool IsValid()
@@ -131,8 +131,8 @@ namespace InventoryKamera
 
 			SubStats.ForEach(s =>
 			{
-                if (!string.IsNullOrWhiteSpace(s.stat) &&
-                    (!GenshinProcesor.IsValidStat(s.stat) || s.value == (decimal)(-1.0)))
+                if (!string.IsNullOrWhiteSpace(s.Stat) &&
+                    (!GenshinProcesor.IsValidStat(s.Stat) || s.Value == (decimal)(-1.0)))
                 {
                     valid = false;
                 }
@@ -149,18 +149,20 @@ namespace InventoryKamera
 		[Serializable]
 		public struct SubStat
 		{
+			// The GOOD wire keys stay "key"/"value"; only the C# member names
+			// are PascalCase properties.
 			[JsonProperty("key")]
 			[DefaultValue("")]
-			public string stat;
+			public string Stat { get; set; }
 
 			[JsonProperty("value")]
 			[DefaultValue(-1)]
-			public decimal value;
+			public decimal Value { get; set; }
 
 			public override string ToString()
 			{
-				if (stat is null) return "NULL";
-				return stat.Contains("_") ? $"{stat} + {value}%" : $"{stat} + {value}";
+				if (Stat is null) return "NULL";
+				return Stat.Contains("_") ? $"{Stat} + {Value}%" : $"{Stat} + {Value}";
 			}
 		}
 

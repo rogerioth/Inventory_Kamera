@@ -29,6 +29,9 @@ namespace InventoryKamera
         private static InventoryKamera data = new InventoryKamera();
         private static DatabaseManager databaseManager = new DatabaseManager();
 
+        private const string UpdateFailedMessage = "Unable to update game data. Please check the log for more details";
+        private const string UpdateFailedCaption = "Update failed";
+
         private int Delay;
 
         private bool running = false;
@@ -93,7 +96,7 @@ namespace InventoryKamera
             });
         }
 
-        private double ScannerDelayValue(int value)
+        private static double ScannerDelayValue(int value)
         {
             switch (value)
             {
@@ -141,7 +144,7 @@ namespace InventoryKamera
             Logger.Info("Hotkey removed");
         }
 
-        private void RemoveHotkey()
+        private static void RemoveHotkey()
         {
             try
             {
@@ -168,7 +171,7 @@ namespace InventoryKamera
         // ready"), read-only folder or invalid path would otherwise crash the
         // scan after the data was gathered. Cheap probe: create the directory
         // and write+delete a temporary file in it.
-        private bool ValidateOutputDirectory(string path)
+        private static bool ValidateOutputDirectory(string path)
         {
             if (string.IsNullOrWhiteSpace(path))
             {
@@ -584,7 +587,7 @@ namespace InventoryKamera
             NLog.LogManager.Shutdown();
         }
 
-        private void SaveSettings()
+        private static void SaveSettings()
         {
             Properties.Settings.Default.Save();
         }
@@ -662,7 +665,7 @@ namespace InventoryKamera
             switch (status)
             {
                 case UpdateStatus.Fail:
-                    MessageBox.Show("Unable to update game data. Please check the log for more details", "Update failed", buttons: MessageBoxButtons.OK, icon: MessageBoxIcon.Stop);
+                    MessageBox.Show(UpdateFailedMessage, UpdateFailedCaption, buttons: MessageBoxButtons.OK, icon: MessageBoxIcon.Stop);
                     break;
                 case UpdateStatus.Success:
                     GenshinProcesor.ReloadData();
@@ -680,7 +683,7 @@ namespace InventoryKamera
                         switch (status)
                         {
                             case UpdateStatus.Fail:
-                                MessageBox.Show("Unable to update game data. Please check the log for more details", "Update failed", buttons: MessageBoxButtons.OK, icon: MessageBoxIcon.Stop);
+                                MessageBox.Show(UpdateFailedMessage, UpdateFailedCaption, buttons: MessageBoxButtons.OK, icon: MessageBoxIcon.Stop);
                                 break;
                             default:
                                 GenshinProcesor.ReloadData();
@@ -699,7 +702,7 @@ namespace InventoryKamera
 
         // Needed to display OEM keys as glyphs from keyboard. Should work for other languages
         // and keyboard layouts but only tested with QWERTY layout.
-        private string KeyCodeToUnicode(Keys key)
+        private static string KeyCodeToUnicode(Keys key)
         {
             byte[] keyboardState = new byte[255];
             bool keyboardStateStatus = GetKeyboardState(keyboardState);
@@ -750,7 +753,7 @@ namespace InventoryKamera
             CheckForGenshinUpdates();
         }
 
-        private async Task CheckForKameraUpdatesAsync()
+        private static async Task CheckForKameraUpdatesAsync()
         {
             var client = new GitHubClient(new ProductHeaderValue("Inventory_Kamera"));
             try
@@ -784,7 +787,7 @@ namespace InventoryKamera
             catch (Exception exception) { Logger.Warn(exception, "Could not check for Kamera updates; startup will continue."); }
         }
 
-        private void CheckForGenshinUpdates()
+        private static void CheckForGenshinUpdates()
         {
             // Local update manager; the shared `databaseManager` field stays
             // untouched for the update-manager UI path.
@@ -801,7 +804,7 @@ namespace InventoryKamera
                         switch (updateManager.UpdateGameData())
                         {
                             case UpdateStatus.Fail:
-                                MessageBox.Show("Unable to update game data. Please check the log for more details", "Update failed", buttons: MessageBoxButtons.OK, icon: MessageBoxIcon.Stop);
+                                MessageBox.Show(UpdateFailedMessage, UpdateFailedCaption, buttons: MessageBoxButtons.OK, icon: MessageBoxIcon.Stop);
                                 break;
                             case UpdateStatus.Success:
                                 // Reflect the freshly downloaded tables in
