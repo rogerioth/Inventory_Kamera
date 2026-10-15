@@ -37,8 +37,14 @@ jobs:
         env:
           RELEASE_COMMIT: ${{ inputs.commit || github.sha }}
         run: |
+          if [[ ! "$RELEASE_COMMIT" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Specify a full 40-character commit SHA."
+            exit 1
+          fi
           git fetch --no-tags origin master
-          version=$(node ./scripts/release-version.cjs "$RELEASE_COMMIT")
+          git rev-list --first-parent origin/master > "$RUNNER_TEMP/master-history.txt"
+          git show "$RELEASE_COMMIT:release-version.json" > "$RUNNER_TEMP/release-version.json"
+          version=$(node ./scripts/release-version.cjs "$RELEASE_COMMIT" "$RUNNER_TEMP/master-history.txt" "$RUNNER_TEMP/release-version.json")
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "commit=$RELEASE_COMMIT" >> "$GITHUB_OUTPUT"
       - name: Wait for the exact master build and quality gate

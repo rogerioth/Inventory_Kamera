@@ -766,8 +766,8 @@ namespace InventoryKamera
                     }
                 }
             }
-            catch (NotFoundException) { Logger.Debug("No published Kamera release is available yet."); }
-            catch (RateLimitExceededException) { Logger.Warn("GitHub rate limit exceeded while checking for Kamera updates. Try again later."); }
+            catch (NotFoundException exception) { Logger.Debug(exception, "No published Kamera release is available yet."); }
+            catch (RateLimitExceededException exception) { Logger.Warn(exception, "GitHub rate limit exceeded while checking for Kamera updates. Try again later."); }
             catch (Exception exception) { Logger.Warn(exception, "Could not check for Kamera updates; startup will continue."); }
         }
 

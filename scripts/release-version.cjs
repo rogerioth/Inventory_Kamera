@@ -1,14 +1,15 @@
 'use strict';
 
-const { execFileSync } = require('node:child_process');
+const { readFileSync } = require('node:fs');
 const { versionFromDistance } = require('./release-policy.cjs');
-const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
 const commit = process.argv[2];
 if (!/^[a-f0-9]{40}$/.test(commit || '')) throw new Error('Specify a full commit SHA.');
 // Read the baseline from the release commit so later version-policy changes do
 // not change the tag chosen by a rerun of an older release.
-const config = JSON.parse(git('show', `${commit}:release-version.json`));
-const history = git('rev-list', '--first-parent', 'origin/master').split('\n');
+// Git itself is invoked with fixed commands in the trusted workflow, before
+// this helper. This process only reads the two exported data files.
+const config = JSON.parse(readFileSync(process.argv[4], 'utf8'));
+const history = readFileSync(process.argv[3], 'utf8').trim().split(/\r?\n/);
 const commitIndex = history.indexOf(commit);
 const baselineIndex = history.indexOf(config.baselineCommit);
 if (commitIndex < 0 || baselineIndex < 0 || commitIndex >= baselineIndex) {
