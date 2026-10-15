@@ -85,9 +85,9 @@ checks or filled with invented values.
 The project is assigned **Inventory Kamera - new code**, a project-specific copy
 of Sonar way. Its new-code conditions require reliability, security, and
 maintainability ratings of A, 100% security-hotspot review, and at most 3%
-duplication. Its inherited 80% coverage condition remains in place pending an
-explicit decision about the initial policy without coverage reports. The
-organization's default gate is unchanged.
+duplication. Coverage is not a gate condition until genuine coverage reports are
+introduced. This avoids treating the current harness pass count as a coverage
+measurement. The organization's default gate is unchanged.
 
 The first uploaded analysis and PR gate result still need verification. Establish
 a `master` baseline before relying on PR comparisons. After successful `master`
