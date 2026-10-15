@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
+using Newtonsoft.Json.Linq;
 
 namespace InventoryKamera
 {
@@ -54,132 +55,187 @@ namespace InventoryKamera
 			}
 		}
 
+		/// <summary>Mutable roster-walk state shared by the ScanCharacters phases.</summary>
+		private sealed class RosterScanContext
+		{
+			internal List<Character> Characters;
+			internal readonly HashSet<string> Scanned = new HashSet<string>();
+			internal readonly HashSet<string> InspectedIdentities = new HashSet<string>();
+			internal int Viewed;
+			internal bool Wrapped;
+			internal int StalledSelections;
+			internal string LastInspectedIdentity;
+			internal string First;
+			internal int? RosterTotal;
+		}
+
 		public static void ScanCharacters(List<Character> Characters)
 		{
 			BeginRosterCoverage();
-			int viewed = 0;
-			HashSet<string> scanned = new HashSet<string>();
-			HashSet<string> inspectedIdentities = new HashSet<string>();
-			bool wrapped = false;
-			string lastInspectedIdentity = null;
-			int stalledSelections = 0;
-			string rosterStart;
+			var context = new RosterScanContext { Characters = Characters };
+			MeasureRosterCount(context);
+			UserInterface.ResetCharacterDisplay();
+			WalkCharacterRoster(context);
+			ReportRosterCoverage(context);
+			ApplyTartagliaTalentCorrection(Characters);
+		}
+
+		private static void MeasureRosterCount(RosterScanContext context)
+		{
 			UserInterface.ReportScanProgress(ScanPhase.Characters, 0, null, "Counting roster", totalIsProvisional: true);
-			int? rosterTotal = null;
 			try
 			{
-				rosterTotal = CountOwnedCharacters(out rosterStart);
+				context.RosterTotal = CountOwnedCharacters(out string rosterStart);
+				context.First = rosterStart;
 			}
 			finally
 			{
 				// An interrupted count must not leave its partial denominator in the pill.
-				UserInterface.ReportScanProgress(ScanPhase.Characters, 0, rosterTotal,
-					rosterTotal.HasValue ? "Scanning roster" : "Scanning roster (total unavailable)");
+				UserInterface.ReportScanProgress(ScanPhase.Characters, 0, context.RosterTotal,
+					context.RosterTotal.HasValue ? "Scanning roster" : "Scanning roster (total unavailable)");
 			}
-			string first = rosterStart;
+		}
 
-			UserInterface.ResetCharacterDisplay();
-
-			while (viewed < 256)
+		private static void WalkCharacterRoster(RosterScanContext context)
+		{
+			while (context.Viewed < 256)
 			{
-				Character character;
-				string currentIdentity = null;
-				bool omittedAfterNavigationFailure;
-				try
+				Character character = ScanCharacterSlot(context, out string currentIdentity, out bool omittedAfterNavigationFailure);
+				if (RetryStalledSelection(context, currentIdentity))
 				{
-					character = ScanCharacterWithRecovery(viewed == 0 ? null : first, lastInspectedIdentity,
-						identity => currentIdentity = identity, out omittedAfterNavigationFailure);
-				}
-				catch (ThreadAbortException) { throw; }
-				catch (CharacterNavigationException) { throw; }
-				catch (Exception ex)
-				{
-					// An unreadable or unknown character must never abort the whole scan.
-					// Log it and continue with an invalid character so the loop advances
-					// to the next one.
-					UserInterface.AddError($"    [FAILURE] Character at position {viewed + 1}: {ex.Message}. Skipping character.");
-					Logger.Debug(ex, "Character scan exception at position {0}", viewed + 1);
-					character = new Character();
-					omittedAfterNavigationFailure = false;
-				}
-				if (currentIdentity != null && currentIdentity == lastInspectedIdentity)
-				{
-					if (++stalledSelections > 2)
-						throw new CharacterNavigationException("advance character roster", CharacterScreenState.CharacterMenu,
-							null, "The roster did not advance after two verified retry clicks; stopping the scan.");
-					Logger.Warn("Character roster selection did not advance from {0}; retry {1}/2 without counting the slot again", currentIdentity, stalledSelections);
-					AdvanceCharacterWithRecovery(currentIdentity);
 					continue;
 				}
-				stalledSelections = 0;
-				if (first == null && currentIdentity != null) first = currentIdentity;
-				bool returnedToStart = currentIdentity != null && first != null && currentIdentity == first;
-				if (viewed > 0 && returnedToStart)
+				if (ReachedRosterWrapCheckpoint(context, currentIdentity))
 				{
-					// A lost Next click must not finish a previously measured larger roster.
-					wrapped = !rosterTotal.HasValue || viewed == rosterTotal.Value;
 					break;
 				}
-				if (currentIdentity != null && !inspectedIdentities.Add(currentIdentity))
-					throw new CharacterNavigationException("verify character roster cycle", CharacterScreenState.CharacterMenu,
-						null, "An already inspected character reappeared before the starting checkpoint; the roster cycle could not be verified.");
-				if (character.IsValid())
-				{
-                    if (scanned.Add(character.NameGOOD))
-					{
-						Characters.Add(character);
-						retainedRosterPositions[character] = viewed;
-						UserInterface.IncrementCharacterCount();
-						Logger.Info("    Completed scan of character {0} successfully", character.NameGOOD);
-					}
-					else
-                    {
-						Logger.Info("    Skipping duplicate character {0}", character.NameGOOD);
-                    }
-				}
-                else
-				{
-					string skipped = currentIdentity ?? "unreadable position " + (viewed + 1);
-					RecordSkippedIdentity(skipped);
-					string error = "";
-					if (!character.HasValidName()) error += "        Invalid character name\n";
-					if (!character.HasValidLevel()) error += "        Invalid level\n";
-					if (!character.HasValidElement()) error += "        Invalid element\n";
-					if (!character.HasValidConstellation()) error += "        Invalid constellation\n";
-					if (!character.HasValidTalents()) error += "        Invalid talents\n";
-					Logger.Error("    [FAILURE] Character {0} could not be validated and was skipped.\n{1}",
-						string.IsNullOrWhiteSpace(character.NameGOOD) ? "at position " + (viewed + 1) : character.NameGOOD,
-						error.TrimEnd());
-					Logger.Debug("Invalid character details: {0}", character);
-				}
+				RecordScannedCharacter(context, character, currentIdentity);
 
 				// The verified starting name remains the wrap sentinel even when its full
 				// detail read failed. Count inspected slots rather than only valid exports.
 				string readableIdentity = string.IsNullOrWhiteSpace(character.NameGOOD) ? "Unreadable character" : character.NameGOOD;
 				string scanDetail = omittedAfterNavigationFailure ? "Partial: skipped " + currentIdentity : readableIdentity;
-				UserInterface.ReportScanProgress(ScanPhase.Characters, ++viewed, rosterTotal, scanDetail);
-				lastInspectedIdentity = currentIdentity;
+				UserInterface.ReportScanProgress(ScanPhase.Characters, ++context.Viewed, context.RosterTotal, scanDetail);
+				context.LastInspectedIdentity = currentIdentity;
 				CharacterNavigation.ConfirmRosterProgress(currentIdentity);
 				AdvanceCharacterWithRecovery(currentIdentity);
 				UserInterface.ResetCharacterDisplay();
 			}
-			FinalizeRosterCoverage(wrapped);
+		}
+
+		private static Character ScanCharacterSlot(RosterScanContext context, out string currentIdentity,
+			out bool omittedAfterNavigationFailure)
+		{
+			string identityCheckpoint = null;
+			int viewed = context.Viewed;
+			try
+			{
+				Character character = ScanCharacterWithRecovery(viewed == 0 ? null : context.First, context.LastInspectedIdentity,
+					identity => identityCheckpoint = identity, out omittedAfterNavigationFailure);
+				currentIdentity = identityCheckpoint;
+				return character;
+			}
+			catch (ThreadAbortException) { throw; }
+			catch (CharacterNavigationException) { throw; }
+			catch (Exception ex)
+			{
+				// An unreadable or unknown character must never abort the whole scan.
+				// Log it and continue with an invalid character so the loop advances
+				// to the next one.
+				UserInterface.AddError($"    [FAILURE] Character at position {viewed + 1}: {ex.Message}. Skipping character.");
+				Logger.Debug(ex, "Character scan exception at position {0}", viewed + 1);
+				omittedAfterNavigationFailure = false;
+				currentIdentity = identityCheckpoint;
+				return new Character();
+			}
+		}
+
+		private static bool RetryStalledSelection(RosterScanContext context, string currentIdentity)
+		{
+			if (currentIdentity == null || currentIdentity != context.LastInspectedIdentity)
+			{
+				context.StalledSelections = 0;
+				return false;
+			}
+			if (++context.StalledSelections > 2)
+				throw new CharacterNavigationException("advance character roster", CharacterScreenState.CharacterMenu,
+					null, "The roster did not advance after two verified retry clicks; stopping the scan.");
+			Logger.Warn("Character roster selection did not advance from {0}; retry {1}/2 without counting the slot again", currentIdentity, context.StalledSelections);
+			AdvanceCharacterWithRecovery(currentIdentity);
+			return true;
+		}
+
+		private static bool ReachedRosterWrapCheckpoint(RosterScanContext context, string currentIdentity)
+		{
+			if (context.First == null && currentIdentity != null) context.First = currentIdentity;
+			bool returnedToStart = currentIdentity != null && context.First != null && currentIdentity == context.First;
+			if (context.Viewed > 0 && returnedToStart)
+			{
+				// A lost Next click must not finish a previously measured larger roster.
+				context.Wrapped = !context.RosterTotal.HasValue || context.Viewed == context.RosterTotal.Value;
+				return true;
+			}
+			if (currentIdentity != null && !context.InspectedIdentities.Add(currentIdentity))
+				throw new CharacterNavigationException("verify character roster cycle", CharacterScreenState.CharacterMenu,
+					null, "An already inspected character reappeared before the starting checkpoint; the roster cycle could not be verified.");
+			return false;
+		}
+
+		private static void RecordScannedCharacter(RosterScanContext context, Character character, string currentIdentity)
+		{
+			if (character.IsValid())
+			{
+				if (context.Scanned.Add(character.NameGOOD))
+				{
+					context.Characters.Add(character);
+					retainedRosterPositions[character] = context.Viewed;
+					UserInterface.IncrementCharacterCount();
+					Logger.Info("    Completed scan of character {0} successfully", character.NameGOOD);
+				}
+				else
+				{
+					Logger.Info("    Skipping duplicate character {0}", character.NameGOOD);
+				}
+			}
+			else
+			{
+				LogInvalidCharacter(context, character, currentIdentity);
+			}
+		}
+
+		private static void LogInvalidCharacter(RosterScanContext context, Character character, string currentIdentity)
+		{
+			string skipped = currentIdentity ?? "unreadable position " + (context.Viewed + 1);
+			RecordSkippedIdentity(skipped);
+			string error = "";
+			if (!character.HasValidName()) error += "        Invalid character name\n";
+			if (!character.HasValidLevel()) error += "        Invalid level\n";
+			if (!character.HasValidElement()) error += "        Invalid element\n";
+			if (!character.HasValidConstellation()) error += "        Invalid constellation\n";
+			if (!character.HasValidTalents()) error += "        Invalid talents\n";
+			Logger.Error("    [FAILURE] Character {0} could not be validated and was skipped.\n{1}",
+				string.IsNullOrWhiteSpace(character.NameGOOD) ? "at position " + (context.Viewed + 1) : character.NameGOOD,
+				error.TrimEnd());
+			Logger.Debug("Invalid character details: {0}", character);
+		}
+
+		private static void ReportRosterCoverage(RosterScanContext context)
+		{
+			FinalizeRosterCoverage(context.Wrapped);
 			if (LastScanComplete)
-				UserInterface.FinishScanPhase(ScanPhase.Characters, viewed, rosterTotal ?? viewed, "Roster cycle completed");
-			else if (wrapped)
+				UserInterface.FinishScanPhase(ScanPhase.Characters, context.Viewed, context.RosterTotal ?? context.Viewed, "Roster cycle completed");
+			else if (context.Wrapped)
 			{
 				Logger.Warn("Character roster cycle verified with partial data: inspected={0}, recorded={1}, skipped={2}: {3}",
-					viewed, Characters.Count, LastSkippedCount, string.Join(", ", skippedIdentities));
-				UserInterface.ReportScanProgress(ScanPhase.Characters, viewed, rosterTotal,
+					context.Viewed, context.Characters.Count, LastSkippedCount, string.Join(", ", skippedIdentities));
+				UserInterface.ReportScanProgress(ScanPhase.Characters, context.Viewed, context.RosterTotal,
 					"Partial roster: " + LastSkippedCount + " characters skipped");
 			}
 			else
 			{
-				Logger.Warn("Character roster scan ended without a verified cycle: inspected={0}, recorded={1}, total={2}", viewed, Characters.Count, rosterTotal?.ToString() ?? "unknown");
-				UserInterface.ReportScanProgress(ScanPhase.Characters, viewed, rosterTotal, "Roster cycle could not be verified");
+				Logger.Warn("Character roster scan ended without a verified cycle: inspected={0}, recorded={1}, total={2}", context.Viewed, context.Characters.Count, context.RosterTotal?.ToString() ?? "unknown");
+				UserInterface.ReportScanProgress(ScanPhase.Characters, context.Viewed, context.RosterTotal, "Roster cycle could not be verified");
 			}
-
-			ApplyTartagliaTalentCorrection(Characters);
 		}
 
 		internal static void ApplyTartagliaTalentCorrection(List<Character> Characters,
@@ -189,37 +245,54 @@ namespace InventoryKamera
 			// Apply this to retained characters even when navigation stops early.
 			for (int i = 0; i < Characters.Count; i++)
 			{
-				if (Characters[i].NameGOOD.ToLower() == "tartaglia" && Characters[i].Ascension >= 4)
+				if (!IsTartaglia(Characters[i])) continue;
+				if (Characters[i].Ascension >= 4)
 				{
-					int originalPosition;
-					bool positionKnown = positions.TryGetValue(Characters[i], out originalPosition);
-					// Offline callers without a production position map preserve the
-					// historical ordered-list contract. A populated production map
-					// must never substitute a compacted export index for a skipped slot.
-					if (!positionKnown && positions.Count == 0) { originalPosition = i; positionKnown = true; }
-					Logger.Info("Ascension 4+ Tartaglia found at original roster position {0}.", positionKnown ? originalPosition.ToString() : "unknown");
-					if (positionKnown && originalPosition < 4)
-					{
-						for (int j = 0; j < Characters.Count; j++)
-						{
-							int partyPosition;
-							bool knownPartyPosition = positions.TryGetValue(Characters[j], out partyPosition);
-							if (!knownPartyPosition && positions.Count == 0) { partyPosition = j; knownPartyPosition = true; }
-							if (!knownPartyPosition || partyPosition >= 4) continue;
-							Characters[j].Talents["auto"] -= 1;
-							Logger.Info("Applied Tartaglia auto attack fix to {0} at position {1}.", Characters[j].NameGOOD, j);
-						}
-						break;
-					}
-					else
-					{
-						Characters[i].Talents["auto"] -= 1;
-						Logger.Info("Applied Tartaglia auto attack fix to self only.");
-						break;
-					}
+					ApplyPartyWideTartagliaFix(Characters, i, positions);
 				}
-				else if (Characters[i].NameGOOD.ToLower() == "tartaglia") break;
-            }
+				break;
+			}
+		}
+
+		private static bool IsTartaglia(Character character)
+		{
+			return character.NameGOOD.ToLower() == "tartaglia";
+		}
+
+		private static void ApplyPartyWideTartagliaFix(List<Character> Characters, int index, IDictionary<Character, int> positions)
+		{
+			bool positionKnown = TryResolveRetainedPosition(positions, Characters[index], index, out int originalPosition);
+			// Offline callers without a production position map preserve the
+			// historical ordered-list contract. A populated production map
+			// must never substitute a compacted export index for a skipped slot.
+			Logger.Info("Ascension 4+ Tartaglia found at original roster position {0}.", positionKnown ? originalPosition.ToString() : "unknown");
+			if (positionKnown && originalPosition < 4)
+			{
+				for (int j = 0; j < Characters.Count; j++)
+				{
+					bool knownPartyPosition = TryResolveRetainedPosition(positions, Characters[j], j, out int partyPosition);
+					if (!knownPartyPosition || partyPosition >= 4) continue;
+					Characters[j].Talents["auto"] -= 1;
+					Logger.Info("Applied Tartaglia auto attack fix to {0} at position {1}.", Characters[j].NameGOOD, j);
+				}
+			}
+			else
+			{
+				Characters[index].Talents["auto"] -= 1;
+				Logger.Info("Applied Tartaglia auto attack fix to self only.");
+			}
+		}
+
+		private static bool TryResolveRetainedPosition(IDictionary<Character, int> positions, Character character,
+			int fallbackIndex, out int position)
+		{
+			bool positionKnown = positions.TryGetValue(character, out position);
+			if (!positionKnown && positions.Count == 0)
+			{
+				position = fallbackIndex;
+				positionKnown = true;
+			}
+			return positionKnown;
 		}
 
 		private static int? CountOwnedCharacters(out string startingName)
@@ -391,9 +464,7 @@ namespace InventoryKamera
 				{
 					return scanCharacter(identity =>
 					{
-						if (expectedTarget != null && identity != expectedTarget)
-							throw new CharacterNavigationException("verify interrupted character checkpoint", CharacterScreenState.Attributes,
-								null, "Expected " + expectedTarget + " after recovery, but read " + (identity ?? "an unreadable header") + ". This slot has not been counted.");
+						VerifyInterruptedCheckpoint(expectedTarget, identity);
 						target = identity;
 						checkpoint(identity);
 					});
@@ -402,29 +473,49 @@ namespace InventoryKamera
 				{
 					Logger.Warn(ex, "Character navigation interrupted: target={0}, attempt={1}/3; this slot has not been counted",
 						target ?? previousIdentity ?? "initial character", attempt + 1);
-					bool recovered = false;
-					if (attempt < 2)
-					{
-						try { recovered = recoverPosition(target ?? previousIdentity, target == null && previousIdentity != null); }
-						catch (CharacterNavigationException recoveryFailure)
-						{
-							Logger.Warn(recoveryFailure, "Character retry position could not be restored for {0}", target ?? "unreadable character");
-						}
-					}
+					bool recovered = TryRecoverRetryPosition(attempt, target, previousIdentity, recoverPosition);
 					if (!recovered)
 					{
 						// A failed detail read can be omitted only after a fresh positive
 						// menu and the exact known header checkpoint are restored.
 						if (target == null || !prepareSkip(target)) throw;
-						checkpoint(target);
-						skipped = true;
-						Logger.Error(ex, "Omitting character {0} after {1}/3 scan attempts; Attributes and its exact roster checkpoint were verified. Remaining characters will continue; evidence {2}",
-							target, attempt + 1, ex.EvidencePath ?? "unavailable");
-						UserInterface.AddError("    [PARTIAL] Could not read " + target + "; character omitted after bounded recovery.");
-						return new Character();
+						return OmitUnreadableCharacter(ex, target, attempt, checkpoint, ref skipped);
 					}
 				}
 			}
+		}
+
+		private static void VerifyInterruptedCheckpoint(string expectedTarget, string identity)
+		{
+			if (expectedTarget != null && identity != expectedTarget)
+				throw new CharacterNavigationException("verify interrupted character checkpoint", CharacterScreenState.Attributes,
+					null, "Expected " + expectedTarget + " after recovery, but read " + (identity ?? "an unreadable header") + ". This slot has not been counted.");
+		}
+
+		private static bool TryRecoverRetryPosition(int attempt, string target, string previousIdentity,
+			Func<string, bool, bool> recoverPosition)
+		{
+			if (attempt >= 2) return false;
+			try
+			{
+				return recoverPosition(target ?? previousIdentity, target == null && previousIdentity != null);
+			}
+			catch (CharacterNavigationException recoveryFailure)
+			{
+				Logger.Warn(recoveryFailure, "Character retry position could not be restored for {0}", target ?? "unreadable character");
+				return false;
+			}
+		}
+
+		private static Character OmitUnreadableCharacter(CharacterNavigationException ex, string target, int attempt,
+			Action<string> checkpoint, ref bool skipped)
+		{
+			checkpoint(target);
+			skipped = true;
+			Logger.Error(ex, "Omitting character {0} after {1}/3 scan attempts; Attributes and its exact roster checkpoint were verified. Remaining characters will continue; evidence {2}",
+				target, attempt + 1, ex.EvidencePath ?? "unavailable");
+			UserInterface.AddError("    [PARTIAL] Could not read " + target + "; character omitted after bounded recovery.");
+			return new Character();
 		}
 
 		private static bool PrepareSkippedCharacter(string identity)
@@ -480,6 +571,11 @@ namespace InventoryKamera
 			Navigation.SelectCharacterAttributes();
 		}
 
+		private enum RosterStepOutcome
+		{
+			Advance, ReachedTarget, SearchFailed
+		}
+
 		// Menu recovery may reopen on the first party member. A return to that
 		// member is not scan completion: restore the exact interrupted position.
 		internal static bool RestoreRosterPosition(string expectedIdentity, Func<string> readIdentity,
@@ -495,24 +591,33 @@ namespace InventoryKamera
 			for (int position = 0; position < boundedLimit; position++)
 			{
 				string identity = readIdentity();
-				if (identity == expectedIdentity) return true;
-				if (!string.IsNullOrWhiteSpace(identity))
-				{
-					if (identity == previous)
-					{
-						if (++stalled > 2) return false;
-					}
-					else
-					{
-						if (!visited.Add(identity)) return false;
-						stalled = 0;
-					}
-					previous = identity;
-				}
+				RosterStepOutcome outcome = StepRosterPosition(identity, expectedIdentity, visited, ref previous, ref stalled);
+				if (outcome == RosterStepOutcome.ReachedTarget) return true;
+				if (outcome == RosterStepOutcome.SearchFailed) return false;
 				selectNext();
 				moves++;
 			}
 			return false;
+		}
+
+		private static RosterStepOutcome StepRosterPosition(string identity, string expectedIdentity,
+			HashSet<string> visited, ref string previous, ref int stalled)
+		{
+			if (identity == expectedIdentity) return RosterStepOutcome.ReachedTarget;
+			if (!string.IsNullOrWhiteSpace(identity))
+			{
+				if (identity == previous)
+				{
+					if (++stalled > 2) return RosterStepOutcome.SearchFailed;
+				}
+				else
+				{
+					if (!visited.Add(identity)) return RosterStepOutcome.SearchFailed;
+					stalled = 0;
+				}
+				previous = identity;
+			}
+			return RosterStepOutcome.Advance;
 		}
 
 		private static string ReadRosterIdentity()
@@ -580,106 +685,122 @@ namespace InventoryKamera
 			// Check if character was first scanned
 			if (CharacterIdentity(name, element, name) != firstCharacter)
 			{
-				bool ascended = false;
-				// Scan Level and ascension
-				Logger.Debug("Starting scan of character {0} ({1}): scanning level and ascension...", character.NameGOOD, character.Element);
-				int level = ScanLevel(ref ascended);
-				if (level == -1)
-				{
-					UserInterface.AddError($"        [PARTIAL] Could not determine {character.NameGOOD}'s level. Character will be omitted.");
-					return character;
-				}
-				character.Level = level;
-				character.Ascended = ascended;
-
-				Logger.Info("        {0}: level {1}, ascended {2}", character.NameGOOD, character.Level, character.Ascended);
-
-				// Scan Experience
-
-				// Scan Constellation
-				Logger.Debug("    Scanning {0}'s constellations...", character.NameGOOD);
-				Navigation.SelectCharacterConstellation();
-				character.Constellation = ScanConstellations(character);
-				Logger.Info("        {0}: constellation {1}", character.NameGOOD, character.Constellation);
-				Navigation.SystemWait(Navigation.Speed.Normal);
-
-				// Scan Talents
-				Logger.Debug("    Scanning {0}'s talents...", character.NameGOOD);
-				Navigation.SelectCharacterTalents();
-				character.Talents = ScanTalents(character);
-				Logger.Debug("        {0}'s talents: {1}", character.NameGOOD, string.Join(", ", character.Talents.Select(kv => kv.Key + "=" + kv.Value).ToArray()));
-				Navigation.SystemWait(Navigation.Speed.Normal);
-				if (!character.HasValidTalents()) return character;
-
-				// Scale down talents due to constellations
-				if (character.Constellation >= 3)
-				{
-					if (GenshinProcesor.Characters.TryGetValue(name.ToLower(), out var characterData) &&
-						characterData != null &&
-						characterData.TryGetValue("ConstellationOrder", out var constellationOrder) &&
-						constellationOrder != null)
-					{
-						string talentLeveledAtConst3;
-						string talentLeveledAtConst5;
-
-						if (character.NameGOOD.Contains("Traveler"))
-						{
-							// The Traveler's constellation order is stored per element. Elements
-							// missing from the data (e.g. a new Traveler element on outdated tables)
-							// must not crash the scan.
-							var elementOrder = character.Element is null ? null : constellationOrder[character.Element.ToLower()];
-							if (elementOrder is null || elementOrder.First is null)
-							{
-								Logger.Warn("        [WARNING] {0} ({1}) is missing constellation order data. Keeping scanned talent levels.", character.NameGOOD, character.Element);
-								return character;
-							}
-							talentLeveledAtConst3 = (string)elementOrder[0];
-							talentLeveledAtConst5 = elementOrder.Count() > 1 ? (string)elementOrder[1] : null;
-						}
-						else
-						{
-							if (constellationOrder.First is null)
-							{
-								Logger.Warn("        [WARNING] {0} is missing constellation order data. Keeping scanned talent levels.", character.NameGOOD);
-								return character;
-							}
-							talentLeveledAtConst3 = (string)constellationOrder[0];
-							talentLeveledAtConst5 = constellationOrder.Count() > 1 ? (string)constellationOrder[1] : null;
-						}
-
-						// Scale down talents. Ported from taiwenlee/Inventory_Kamera (MIT): 191fa8f2
-						// C3 and C5 each raise one talent by 3 levels, and the character data records
-						// which talent each targets. That can be the normal attack ("auto") for
-						// characters such as Freminet, Sethos, Arlecchino or Neuvillette.
-						if (character.Constellation >= 3)
-						{
-							Logger.Info("        Adjusting {0}'s {1} talent by -3 levels for constellation 3", character.NameGOOD, talentLeveledAtConst3);
-							character.Talents[talentLeveledAtConst3] -= 3;
-						}
-
-						if (character.Constellation >= 5)
-						{
-							if (talentLeveledAtConst5 is null)
-							{
-								Logger.Warn("        [WARNING] {0} is missing constellation 5 order data. Keeping scanned talent levels.", character.NameGOOD);
-								return character;
-							}
-							Logger.Info("        Adjusting {0}'s {1} talent by -3 levels for constellation 5", character.NameGOOD, talentLeveledAtConst5);
-							character.Talents[talentLeveledAtConst5] -= 3;
-						}
-					}
-					else
-					{
-						Logger.Warn("        [WARNING] {0} is missing from the character data. Keeping scanned talent levels.", character.NameGOOD);
-						return character;
-					}
-				}
-
-
+				ScanCharacterDetails(character, name);
 				return character;
 			}
 			Logger.Info("Repeat character {0} detected. Finishing character scan...", name);
 			return character;
+		}
+
+		private static void ScanCharacterDetails(Character character, string name)
+		{
+			bool ascended = false;
+			// Scan Level and ascension
+			Logger.Debug("Starting scan of character {0} ({1}): scanning level and ascension...", character.NameGOOD, character.Element);
+			int level = ScanLevel(ref ascended);
+			if (level == -1)
+			{
+				UserInterface.AddError($"        [PARTIAL] Could not determine {character.NameGOOD}'s level. Character will be omitted.");
+				return;
+			}
+			character.Level = level;
+			character.Ascended = ascended;
+
+			Logger.Info("        {0}: level {1}, ascended {2}", character.NameGOOD, character.Level, character.Ascended);
+
+			// Scan Experience
+
+			// Scan Constellation
+			Logger.Debug("    Scanning {0}'s constellations...", character.NameGOOD);
+			Navigation.SelectCharacterConstellation();
+			character.Constellation = ScanConstellations(character);
+			Logger.Info("        {0}: constellation {1}", character.NameGOOD, character.Constellation);
+			Navigation.SystemWait(Navigation.Speed.Normal);
+
+			// Scan Talents
+			Logger.Debug("    Scanning {0}'s talents...", character.NameGOOD);
+			Navigation.SelectCharacterTalents();
+			character.Talents = ScanTalents(character);
+			Logger.Debug("        {0}'s talents: {1}", character.NameGOOD, string.Join(", ", character.Talents.Select(kv => kv.Key + "=" + kv.Value).ToArray()));
+			Navigation.SystemWait(Navigation.Speed.Normal);
+			if (!character.HasValidTalents()) return;
+
+			// Scale down talents due to constellations
+			if (character.Constellation >= 3)
+			{
+				if (!ApplyConstellationTalentAdjustments(character, name)) return;
+			}
+		}
+
+		private static bool ApplyConstellationTalentAdjustments(Character character, string name)
+		{
+			if (!GenshinProcesor.Characters.TryGetValue(name.ToLower(), out var characterData) ||
+				characterData == null ||
+				!characterData.TryGetValue("ConstellationOrder", out var constellationOrder) ||
+				constellationOrder == null)
+			{
+				Logger.Warn("        [WARNING] {0} is missing from the character data. Keeping scanned talent levels.", character.NameGOOD);
+				return false;
+			}
+			if (!TryResolveConstellationTalentOrder(character, constellationOrder, out string talentLeveledAtConst3, out string talentLeveledAtConst5))
+			{
+				return false;
+			}
+
+			// Scale down talents. Ported from taiwenlee/Inventory_Kamera (MIT): 191fa8f2
+			// C3 and C5 each raise one talent by 3 levels, and the character data records
+			// which talent each targets. That can be the normal attack ("auto") for
+			// characters such as Freminet, Sethos, Arlecchino or Neuvillette.
+			if (character.Constellation >= 3)
+			{
+				Logger.Info("        Adjusting {0}'s {1} talent by -3 levels for constellation 3", character.NameGOOD, talentLeveledAtConst3);
+				character.Talents[talentLeveledAtConst3] -= 3;
+			}
+
+			if (character.Constellation >= 5)
+			{
+				if (talentLeveledAtConst5 is null)
+				{
+					Logger.Warn("        [WARNING] {0} is missing constellation 5 order data. Keeping scanned talent levels.", character.NameGOOD);
+					return false;
+				}
+				Logger.Info("        Adjusting {0}'s {1} talent by -3 levels for constellation 5", character.NameGOOD, talentLeveledAtConst5);
+				character.Talents[talentLeveledAtConst5] -= 3;
+			}
+			return true;
+		}
+
+		private static bool TryResolveConstellationTalentOrder(Character character, JToken constellationOrder,
+			out string talentLeveledAtConst3, out string talentLeveledAtConst5)
+		{
+			if (character.NameGOOD.Contains("Traveler"))
+			{
+				// The Traveler's constellation order is stored per element. Elements
+				// missing from the data (e.g. a new Traveler element on outdated tables)
+				// must not crash the scan.
+				var elementOrder = character.Element is null ? null : constellationOrder[character.Element.ToLower()];
+				if (elementOrder is null || elementOrder.First is null)
+				{
+					Logger.Warn("        [WARNING] {0} ({1}) is missing constellation order data. Keeping scanned talent levels.", character.NameGOOD, character.Element);
+					talentLeveledAtConst3 = null;
+					talentLeveledAtConst5 = null;
+					return false;
+				}
+				talentLeveledAtConst3 = (string)elementOrder[0];
+				talentLeveledAtConst5 = elementOrder.Count() > 1 ? (string)elementOrder[1] : null;
+				return true;
+			}
+
+			if (constellationOrder.First is null)
+			{
+				Logger.Warn("        [WARNING] {0} is missing constellation order data. Keeping scanned talent levels.", character.NameGOOD);
+				talentLeveledAtConst3 = null;
+				talentLeveledAtConst5 = null;
+				return false;
+			}
+			talentLeveledAtConst3 = (string)constellationOrder[0];
+			talentLeveledAtConst5 = constellationOrder.Count() > 1 ? (string)constellationOrder[1] : null;
+			return true;
 		}
 
 		public static string ScanMainCharacterName()
@@ -753,6 +874,14 @@ namespace InventoryKamera
             return matched;
         }
 
+        private struct CharacterHeaderReading
+        {
+            internal bool Matched;
+            internal string Name;
+            internal string Element;
+            internal string RawName;
+        }
+
         internal static bool TryResolveCharacterHeaderReadings(string block, string line, bool nameClipped,
             out string name, out string element, out string rawName, out string evidence)
         {
@@ -760,36 +889,64 @@ namespace InventoryKamera
             element = null;
             rawName = null;
             evidence = "no complete catalog name matched";
-            bool lineMatched = TryResolveCharacterHeader(line, nameClipped, out string lineName,
-                out string lineElement, out string lineRawName);
-            bool blockMatched = TryResolveCharacterHeader(block, nameClipped, out string blockName,
-                out string blockElement, out string blockRawName);
-            string resolvedName = lineMatched ? lineName : blockName;
-            string agreement = "no name corroboration";
-            if ((lineMatched || blockMatched) && !string.IsNullOrEmpty(lineElement) && !string.IsNullOrEmpty(blockElement)
-                && (lineElement != blockElement || (lineMatched && blockMatched && lineName != blockName)
-                    || !CharacterHeaderReadingsAgree(lineRawName, blockRawName, nameClipped, resolvedName, out agreement)))
+            CharacterHeaderReading lineReading = ReadHeaderSide(line, nameClipped);
+            CharacterHeaderReading blockReading = ReadHeaderSide(block, nameClipped);
+            string resolvedName = lineReading.Matched ? lineReading.Name : blockReading.Name;
+            string agreement;
+            if (HasConflictingHeaderEvidence(lineReading, blockReading, nameClipped, resolvedName, out agreement))
             {
-                element = lineElement;
-                rawName = lineRawName;
-                if (lineElement != blockElement) evidence = "conflicting elements";
-                else if (lineMatched && blockMatched && lineName != blockName) evidence = "conflicting canonical characters";
-                else evidence = "unexplained name text; " + agreement;
+                element = lineReading.Element;
+                rawName = lineReading.RawName;
+                evidence = DescribeConflictingHeaderEvidence(lineReading, blockReading, agreement);
                 return false;
             }
-            if (lineMatched || blockMatched)
+            if (lineReading.Matched || blockReading.Matched)
             {
-                bool useLine = lineMatched && (!blockMatched || lineRawName.Length >= blockRawName.Length);
-                name = useLine ? lineName : blockName;
-                element = useLine ? lineElement : blockElement;
-                rawName = useLine ? lineRawName : blockRawName;
-                evidence = "matched " + (useLine ? "line" : "block") + "; wrapped-block=" +
-                    ((block ?? "").Contains("\n") || (block ?? "").Contains("\r")) + "; " + agreement;
+                bool useLine = ShouldUseLineHeaderReading(lineReading, blockReading);
+                name = useLine ? lineReading.Name : blockReading.Name;
+                element = useLine ? lineReading.Element : blockReading.Element;
+                rawName = useLine ? lineReading.RawName : blockReading.RawName;
+                evidence = DescribeMatchingHeaderEvidence(useLine, block, agreement);
                 return true;
             }
-            element = !string.IsNullOrEmpty(lineElement) ? lineElement : blockElement;
-            rawName = !string.IsNullOrEmpty(lineRawName) ? lineRawName : blockRawName;
+            element = !string.IsNullOrEmpty(lineReading.Element) ? lineReading.Element : blockReading.Element;
+            rawName = !string.IsNullOrEmpty(lineReading.RawName) ? lineReading.RawName : blockReading.RawName;
             return false;
+        }
+
+        private static CharacterHeaderReading ReadHeaderSide(string text, bool nameClipped)
+        {
+            CharacterHeaderReading reading;
+            reading.Matched = TryResolveCharacterHeader(text, nameClipped, out reading.Name, out reading.Element, out reading.RawName);
+            return reading;
+        }
+
+        private static bool HasConflictingHeaderEvidence(CharacterHeaderReading line, CharacterHeaderReading block,
+            bool nameClipped, string resolvedName, out string agreement)
+        {
+            agreement = "no name corroboration";
+            return (line.Matched || block.Matched) && !string.IsNullOrEmpty(line.Element) && !string.IsNullOrEmpty(block.Element)
+                && (line.Element != block.Element || (line.Matched && block.Matched && line.Name != block.Name)
+                    || !CharacterHeaderReadingsAgree(line.RawName, block.RawName, nameClipped, resolvedName, out agreement));
+        }
+
+        private static string DescribeConflictingHeaderEvidence(CharacterHeaderReading line, CharacterHeaderReading block,
+            string agreement)
+        {
+            if (line.Element != block.Element) return "conflicting elements";
+            if (line.Matched && block.Matched && line.Name != block.Name) return "conflicting canonical characters";
+            return "unexplained name text; " + agreement;
+        }
+
+        private static bool ShouldUseLineHeaderReading(CharacterHeaderReading line, CharacterHeaderReading block)
+        {
+            return line.Matched && (!block.Matched || line.RawName.Length >= block.RawName.Length);
+        }
+
+        private static string DescribeMatchingHeaderEvidence(bool useLine, string block, string agreement)
+        {
+            return "matched " + (useLine ? "line" : "block") + "; wrapped-block=" +
+                ((block ?? "").Contains("\n") || (block ?? "").Contains("\r")) + "; " + agreement;
         }
 
         internal static bool TryResolveCharacterHeader(string text, bool nameClipped,
@@ -818,20 +975,40 @@ namespace InventoryKamera
             return GenshinProcesor.CharacterMatchesElement(name, element);
         }
 
+        /// <summary>Candidate catalogs shared by the character-header name matching tiers.</summary>
+        private sealed class HeaderAliasCatalog
+        {
+            internal List<KeyValuePair<string, string>> Canonical;
+            internal List<KeyValuePair<string, string>> MatchingCanonical;
+            internal List<KeyValuePair<string, string>> Aliases;
+        }
+
         internal static string MatchCharacterHeaderName(string rawName, string element, bool nameClipped)
         {
             string observed = (rawName ?? "").FoldToOcrName();
             if (observed.Length == 0 || !GenshinProcesor.IsValidElement(element)) return "";
-            var canonical = GenshinProcesor.Characters.Where(pair => pair.Value?["GOOD"] != null)
+            HeaderAliasCatalog catalog = BuildHeaderAliasCatalog(element);
+            string match;
+            if (TryMatchExactCanonicalName(catalog.Canonical, observed, element, out match)) return match;
+            if (TryMatchExactAliasName(catalog.Aliases, observed, out match)) return match;
+            if (observed.Length < 4) return "";
+            if (TryRankHeaderAlias(catalog.Aliases, observed, out match)) return match;
+            // Recover only a physically clipped, long canonical prefix. The final
+            // partial glyph may have been substituted; full unknown/future names and
+            // custom aliases never receive this lower-confidence tail repair.
+            if (TryRepairClippedHeaderName(catalog.MatchingCanonical, observed, nameClipped, out match)) return match;
+            return "";
+        }
+
+        private static HeaderAliasCatalog BuildHeaderAliasCatalog(string element)
+        {
+            var catalog = new HeaderAliasCatalog();
+            catalog.Canonical = GenshinProcesor.Characters.Where(pair => pair.Value?["GOOD"] != null)
                 .Select(pair => new KeyValuePair<string, string>(pair.Key.FoldToOcrName(), (string)pair.Value["GOOD"]))
                 .ToList();
-            var exactCanonical = canonical.Where(candidate => candidate.Key == observed).Select(candidate => candidate.Value).Distinct().ToList();
-            if (exactCanonical.Count > 0)
-                return exactCanonical.Count == 1 && GenshinProcesor.CharacterMatchesElement(exactCanonical[0], element)
-                    ? exactCanonical[0] : "";
-            var matchingCanonical = canonical.Where(candidate => GenshinProcesor.CharacterMatchesElement(candidate.Value, element)).ToList();
-            var aliases = new List<KeyValuePair<string, string>>(matchingCanonical);
-            var reserved = new HashSet<string>(canonical.Select(candidate => candidate.Key), StringComparer.Ordinal);
+            catalog.MatchingCanonical = catalog.Canonical.Where(candidate => GenshinProcesor.CharacterMatchesElement(candidate.Value, element)).ToList();
+            var aliases = new List<KeyValuePair<string, string>>(catalog.MatchingCanonical);
+            var reserved = new HashSet<string>(catalog.Canonical.Select(candidate => candidate.Key), StringComparer.Ordinal);
             foreach (var pair in GenshinProcesor.Characters)
             {
                 string alias = ((string)pair.Value?["CustomName"])?.FoldToOcrName();
@@ -841,9 +1018,38 @@ namespace InventoryKamera
                 if (!string.IsNullOrEmpty(alias) && !reserved.Contains(alias) && GenshinProcesor.CharacterMatchesElement(good, element))
                     aliases.Add(new KeyValuePair<string, string>(alias, good));
             }
+            catalog.Aliases = aliases;
+            return catalog;
+        }
+
+        private static bool TryMatchExactCanonicalName(List<KeyValuePair<string, string>> canonical, string observed,
+            string element, out string match)
+        {
+            var exactCanonical = canonical.Where(candidate => candidate.Key == observed).Select(candidate => candidate.Value).Distinct().ToList();
+            if (exactCanonical.Count > 0)
+            {
+                match = exactCanonical.Count == 1 && GenshinProcesor.CharacterMatchesElement(exactCanonical[0], element)
+                    ? exactCanonical[0] : "";
+                return true;
+            }
+            match = null;
+            return false;
+        }
+
+        private static bool TryMatchExactAliasName(List<KeyValuePair<string, string>> aliases, string observed, out string match)
+        {
             var exact = aliases.Where(candidate => candidate.Key == observed).Select(candidate => candidate.Value).Distinct().ToList();
-            if (exact.Count > 0) return exact.Count == 1 ? exact[0] : "";
-            if (observed.Length < 4) return "";
+            if (exact.Count > 0)
+            {
+                match = exact.Count == 1 ? exact[0] : "";
+                return true;
+            }
+            match = null;
+            return false;
+        }
+
+        private static bool TryRankHeaderAlias(List<KeyValuePair<string, string>> aliases, string observed, out string match)
+        {
             var ranked = aliases.GroupBy(candidate => candidate.Value).Select(group => new
             {
                 Name = group.Key,
@@ -851,21 +1057,41 @@ namespace InventoryKamera
                     (double)Math.Max(observed.Length, candidate.Key.Length)))
             }).OrderByDescending(candidate => candidate.Score).ToList();
             if (ranked.Count > 0 && ranked[0].Score >= 90 &&
-                (ranked.Count == 1 || ranked[0].Score - ranked[1].Score >= 7)) return ranked[0].Name;
-            // Recover only a physically clipped, long canonical prefix. The final
-            // partial glyph may have been substituted; full unknown/future names and
-            // custom aliases never receive this lower-confidence tail repair.
-            if (!nameClipped || observed.Length < 8) return "";
+                (ranked.Count == 1 || ranked[0].Score - ranked[1].Score >= 7))
+            {
+                match = ranked[0].Name;
+                return true;
+            }
+            match = null;
+            return false;
+        }
+
+        private static bool TryRepairClippedHeaderName(List<KeyValuePair<string, string>> matchingCanonical, string observed,
+            bool nameClipped, out string match)
+        {
+            if (!nameClipped || observed.Length < 8)
+            {
+                match = null;
+                return false;
+            }
             var clipped = matchingCanonical.Where(candidate => candidate.Key.Length > observed.Length &&
                 candidate.Key.Length - observed.Length <= 4 && (candidate.Key.StartsWith(observed, StringComparison.Ordinal) ||
                     candidate.Key.StartsWith(observed.Substring(0, observed.Length - 1), StringComparison.Ordinal)))
                 .Select(candidate => candidate.Value).Distinct().ToList();
-            return clipped.Count == 1 ? clipped[0] : "";
+            match = clipped.Count == 1 ? clipped[0] : "";
+            return true;
         }
 
         private static bool CharacterHeaderTouchesRightEdge(Bitmap header)
         {
             int margin = Math.Max(3, (int)Math.Round(header.Height * .06));
+            bool[] textRows = ComputeHeaderTextRows(header, margin);
+            int minimumRun = Math.Max(8, (int)Math.Round(header.Height * .12));
+            return HasClippedHeaderInkRun(header, textRows, margin, minimumRun);
+        }
+
+        private static bool[] ComputeHeaderTextRows(Bitmap header, int margin)
+        {
             var textRows = new bool[header.Height];
             for (int y = header.Height / 6; y < header.Height * 5 / 6; ++y)
             {
@@ -876,7 +1102,11 @@ namespace InventoryKamera
                     if (IsCharacterHeaderGoldInk(header.GetPixel(x, y))) ++foreground;
                 textRows[y] = foreground >= 5;
             }
-            int minimumRun = Math.Max(8, (int)Math.Round(header.Height * .12));
+            return textRows;
+        }
+
+        private static bool HasClippedHeaderInkRun(Bitmap header, bool[] textRows, int margin, int minimumRun)
+        {
             for (int x = Math.Max(0, header.Width - margin); x < header.Width; ++x)
             {
                 int run = 0;
@@ -986,6 +1216,18 @@ namespace InventoryKamera
             return previous[right.Length];
         }
 
+		private sealed class HeaderScanState
+		{
+			internal const int MaxUnknownAttempts = 5;
+			internal int MaxAttempts;
+			internal bool Quiet;
+			internal bool HeaderMatched;
+			internal string UnknownName;
+			internal string UnknownElement;
+			internal int UnknownAttempts;
+			internal bool GiveUp;
+		}
+
 		private static void ScanNameAndElement(ref string name, ref string element, int maxAttempts = 75, bool quiet = false,
 			Action<string> checkpoint = null)
 		{
@@ -996,14 +1238,9 @@ namespace InventoryKamera
 			// game test avatars). Once OCR consistently reads the same unresolvable
 			// name/element pair, retrying is pointless, so bail out early and let the scan
 			// skip the character instead of exhausting the full attempt budget.
-			string unknownName = null;
-			string unknownElement = null;
-			int unknownAttempts = 0;
-			const int maxUnknownAttempts = 5;
+			var state = new HeaderScanState { MaxAttempts = maxAttempts, Quiet = quiet };
 
 			Rectangle region = CharacterHeaderRegion();
-
-			bool giveUp = false;
 
 			do
 			{
@@ -1013,74 +1250,90 @@ namespace InventoryKamera
 				using (Bitmap bm = Navigation.CaptureRegion(region))
 				{
 					string ocrName, headerText;
-                    bool matched = TryReadCharacterHeader(bm, out name, out element, out ocrName, out headerText);
+					state.HeaderMatched = TryReadCharacterHeader(bm, out name, out element, out ocrName, out headerText);
 					string identity = CharacterIdentity(name, element, ocrName);
 					if (identity != null) checkpoint?.Invoke(identity);
-					if (!string.IsNullOrWhiteSpace(ocrName) && !matched)
-					{
-						// A name that is not in the character data, or a known character
-						// whose read element is missing from its data, will never resolve
-						// no matter how many times it is read.
-						bool unknownCharacter = !string.IsNullOrWhiteSpace(ocrName) && !GenshinProcesor.IsValidCharacter(name);
-						bool unknownPair = !unknownCharacter && GenshinProcesor.IsValidCharacter(name) && GenshinProcesor.IsValidElement(element);
-
-						if (unknownCharacter || unknownPair)
-						{
-							if (ocrName == unknownName && element == unknownElement)
-								unknownAttempts++;
-							else
-							{
-								unknownName = ocrName;
-								unknownElement = element;
-								unknownAttempts = 1;
-							}
-                            if (unknownAttempts == 1)
-                                Logger.Debug("Character header mismatch: raw name '{0}', resolved '{1}', observed element '{2}', catalog elements [{3}]; {4}",
-                                    ocrName, name, element, string.Join(", ", GenshinProcesor.GetCharactersElements(name)), headerText);
-
-							if (unknownAttempts >= maxUnknownAttempts)
-							{
-								if (!quiet)
-								{
-                                    string evidence = $"./logging/characters/unknown_{ocrName}.png";
-									Logger.Error("    [FAILURE] Character '{0}' ({1}) could not be matched to the character data. Skipping character. Resolved name '{2}', catalog elements [{3}], header OCR {4}; evidence {5}",
-                                        ocrName, element, name, string.Join(", ", GenshinProcesor.GetCharactersElements(name)), headerText, Path.GetFullPath(evidence));
-									SaveDiagnosticBitmap(bm, evidence);
-								}
-								giveUp = true;
-							}
-						}
-						else
-						{
-							unknownName = null;
-							unknownElement = null;
-							unknownAttempts = 0;
-						}
-
-						// Clear the read on every failed match so a partially parsed
-						// name/element pair is never used
-						name = giveUp ? null : "";
-						element = giveUp ? null : "";
-					}
-					if (giveUp) return;
-
-					if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(element))
-					{
-						Logger.Debug("Scanned character name as {0} with element {1}; header OCR {2}", name, element, headerText);
-                        if (!quiet) UserInterface.SetCharacter_NameAndElement(bm, name, element);
+					TrackUnresolvedHeaderName(state, ref name, ref element, ocrName, headerText, bm);
+					HeaderReadOutcome outcome = ResolveHeaderReadOutcome(state, ref name, ref element, headerText, bm, attempts);
+					if (outcome != HeaderReadOutcome.Retry)
 						return;
-					}
-					else
-                    {
-                        Logger.Debug("Could not parse character name/element (Atempt {0}/{1}). Retrying...", attempts+1, maxAttempts);
-                        if (!quiet) SaveDiagnosticBitmap(bm, $"./logging/characters/{bm.GetHashCode()}.png");
-                    }
 				}
 				attempts++;
 				Navigation.SystemWait(Navigation.Speed.Fast);
 			} while ( attempts < maxAttempts );
 			name = null;
 			element = null;
+		}
+
+		private enum HeaderReadOutcome
+		{
+			Retry, Matched, Abandoned
+		}
+
+		private static void TrackUnresolvedHeaderName(HeaderScanState state, ref string name, ref string element,
+			string ocrName, string headerText, Bitmap header)
+		{
+			if (string.IsNullOrWhiteSpace(ocrName) || state.HeaderMatched) return;
+
+			// A name that is not in the character data, or a known character
+			// whose read element is missing from its data, will never resolve
+			// no matter how many times it is read.
+			bool unknownCharacter = !string.IsNullOrWhiteSpace(ocrName) && !GenshinProcesor.IsValidCharacter(name);
+			bool unknownPair = !unknownCharacter && GenshinProcesor.IsValidCharacter(name) && GenshinProcesor.IsValidElement(element);
+
+			if (unknownCharacter || unknownPair)
+			{
+				if (ocrName == state.UnknownName && element == state.UnknownElement)
+					state.UnknownAttempts++;
+				else
+				{
+					state.UnknownName = ocrName;
+					state.UnknownElement = element;
+					state.UnknownAttempts = 1;
+				}
+				if (state.UnknownAttempts == 1)
+					Logger.Debug("Character header mismatch: raw name '{0}', resolved '{1}', observed element '{2}', catalog elements [{3}]; {4}",
+						ocrName, name, element, string.Join(", ", GenshinProcesor.GetCharactersElements(name)), headerText);
+
+				if (state.UnknownAttempts >= HeaderScanState.MaxUnknownAttempts)
+				{
+					if (!state.Quiet)
+					{
+						string evidence = $"./logging/characters/unknown_{ocrName}.png";
+						Logger.Error("    [FAILURE] Character '{0}' ({1}) could not be matched to the character data. Skipping character. Resolved name '{2}', catalog elements [{3}], header OCR {4}; evidence {5}",
+						ocrName, element, name, string.Join(", ", GenshinProcesor.GetCharactersElements(name)), headerText, Path.GetFullPath(evidence));
+						SaveDiagnosticBitmap(header, evidence);
+					}
+					state.GiveUp = true;
+				}
+			}
+			else
+			{
+				state.UnknownName = null;
+				state.UnknownElement = null;
+				state.UnknownAttempts = 0;
+			}
+
+			// Clear the read on every failed match so a partially parsed
+			// name/element pair is never used
+			name = state.GiveUp ? null : "";
+			element = state.GiveUp ? null : "";
+		}
+
+		private static HeaderReadOutcome ResolveHeaderReadOutcome(HeaderScanState state, ref string name, ref string element,
+			string headerText, Bitmap header, int attempts)
+		{
+			if (state.GiveUp) return HeaderReadOutcome.Abandoned;
+
+			if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(element))
+			{
+				Logger.Debug("Scanned character name as {0} with element {1}; header OCR {2}", name, element, headerText);
+				if (!state.Quiet) UserInterface.SetCharacter_NameAndElement(header, name, element);
+				return HeaderReadOutcome.Matched;
+			}
+			Logger.Debug("Could not parse character name/element (Atempt {0}/{1}). Retrying...", attempts + 1, state.MaxAttempts);
+			if (!state.Quiet) SaveDiagnosticBitmap(header, $"./logging/characters/{header.GetHashCode()}.png");
+			return HeaderReadOutcome.Retry;
 		}
 
 		private static int ScanLevel(ref bool ascended)
@@ -1225,8 +1478,6 @@ namespace InventoryKamera
 				width:	(int)(0.2913 * Navigation.GetWidth() ),
 				height:	(int)(0.0711 * Navigation.GetHeight() ));
 
-			const int maxTalentAttempts = 50;
-
 			for (int i = 0; i < 3; i++)
 			{
 				string talent;
@@ -1248,53 +1499,61 @@ namespace InventoryKamera
 						break;
                 }
 
-				int talentAttempts = 0;
-				string lastTalentText = null;
-				Logger.Info("        Scanning {0}'s {1} talent level...", character.NameGOOD, talent);
-                while ((talents[talent] < 1 || talents[talent] > 15) && talentAttempts < maxTalentAttempts)
-				{
-					if (talentAttempts > 0 && talentAttempts % 10 == 0)
-						CharacterNavigation.Require(CharacterScreenState.TalentDetails, $"retry {character.NameGOOD} {talent} talent OCR");
-					Bitmap talentLevel;
-					using (Bitmap captured = Navigation.CaptureRegion(region))
-						talentLevel = GenshinProcesor.ResizeImage(captured, captured.Width * 2, captured.Height * 2);
-
-					Bitmap n = GenshinProcesor.ConvertToGrayscale(talentLevel);
-					GenshinProcesor.SetContrast(60, ref n);
-					GenshinProcesor.SetInvert(ref n);
-
-					lastTalentText = GenshinProcesor.AnalyzeText(n, Tesseract.PageSegMode.SingleBlock).Trim();
-					var text = lastTalentText.Split('\n').ToList();
-
-					if (int.TryParse(Regex.Replace(text[text.Count - 1], @"\D", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout), out int level)
-						&& level >= 1 && level <= 15)
-					{
-						talents[talent] = level;
-						UserInterface.SetCharacter_Talent(talentLevel, level.ToString(), i);
-					}
-
-					n.Dispose();
-					talentLevel.Dispose();
-
-					talentAttempts++;
-				}
-
-				if (talents[talent] < 1 || talents[talent] > 15)
-				{
-					string evidence = Path.GetFullPath($"./logging/characters/{character.NameGOOD}/talent_{talent}_{DateTime.UtcNow:yyyyMMdd_HHmmssfff}_failed.png");
-					using (Bitmap screenshot = Navigation.CaptureWindow()) SaveDiagnosticBitmap(screenshot, evidence);
-					CharacterNavigation.Require(CharacterScreenState.TalentDetails, "verify failed talent read before closing details");
-					// The talent level could not be read (e.g. navigation issues or characters
-					// without a usable talent page). Leave the talent invalid so this character
-					// is skipped, instead of looping forever and stalling the whole scan.
-					Logger.Error("        [FAILURE] Could not scan {0}'s {1} talent level after {2} attempts. Character will be skipped. Screen=TalentDetails, crop={3}, lastOCR='{4}', evidence={5}",
-						character.NameGOOD, talent, maxTalentAttempts, region, lastTalentText?.Replace("\n", "\\n"), evidence);
-					break;
-				}
+				if (!TryScanTalentLevel(character, talents, talent, i, region)) break;
 			}
 
 			CharacterNavigation.CloseDetail(CharacterScreenState.TalentDetails, "close talent details");
 			return talents;
+		}
+
+		private static bool TryScanTalentLevel(Character character, Dictionary<string, int> talents, string talent,
+			int talentIndex, Rectangle region)
+		{
+			const int maxTalentAttempts = 50;
+			int talentAttempts = 0;
+			string lastTalentText = null;
+			Logger.Info("        Scanning {0}'s {1} talent level...", character.NameGOOD, talent);
+			while ((talents[talent] < 1 || talents[talent] > 15) && talentAttempts < maxTalentAttempts)
+			{
+				if (talentAttempts > 0 && talentAttempts % 10 == 0)
+					CharacterNavigation.Require(CharacterScreenState.TalentDetails, $"retry {character.NameGOOD} {talent} talent OCR");
+				Bitmap talentLevel;
+				using (Bitmap captured = Navigation.CaptureRegion(region))
+					talentLevel = GenshinProcesor.ResizeImage(captured, captured.Width * 2, captured.Height * 2);
+
+				Bitmap n = GenshinProcesor.ConvertToGrayscale(talentLevel);
+				GenshinProcesor.SetContrast(60, ref n);
+				GenshinProcesor.SetInvert(ref n);
+
+				lastTalentText = GenshinProcesor.AnalyzeText(n, Tesseract.PageSegMode.SingleBlock).Trim();
+				var text = lastTalentText.Split('\n').ToList();
+
+				if (int.TryParse(Regex.Replace(text[text.Count - 1], @"\D", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout), out int level)
+					&& level >= 1 && level <= 15)
+				{
+					talents[talent] = level;
+					UserInterface.SetCharacter_Talent(talentLevel, level.ToString(), talentIndex);
+				}
+
+				n.Dispose();
+				talentLevel.Dispose();
+
+				talentAttempts++;
+			}
+
+			if (talents[talent] < 1 || talents[talent] > 15)
+			{
+				string evidence = Path.GetFullPath($"./logging/characters/{character.NameGOOD}/talent_{talent}_{DateTime.UtcNow:yyyyMMdd_HHmmssfff}_failed.png");
+				using (Bitmap screenshot = Navigation.CaptureWindow()) SaveDiagnosticBitmap(screenshot, evidence);
+				CharacterNavigation.Require(CharacterScreenState.TalentDetails, "verify failed talent read before closing details");
+				// The talent level could not be read (e.g. navigation issues or characters
+				// without a usable talent page). Leave the talent invalid so this character
+				// is skipped, instead of looping forever and stalling the whole scan.
+				Logger.Error("        [FAILURE] Could not scan {0}'s {1} talent level after {2} attempts. Character will be skipped. Screen=TalentDetails, crop={3}, lastOCR='{4}', evidence={5}",
+					character.NameGOOD, talent, maxTalentAttempts, region, lastTalentText?.Replace("\n", "\\n"), evidence);
+				return false;
+			}
+			return true;
 		}
 	}
 }

@@ -46,6 +46,16 @@ namespace InventoryKamera
         private const string MaxHpLabel = "maxhp";
         private const string MaxStaminaLabel = "maxstamina";
 
+        /// <summary>Live-HUD probes reused by the gameplay confirmation fallback.</summary>
+        private sealed class HudProbe
+        {
+            internal Rectangle? Health;
+            internal int PartyKeys;
+            internal string Controls;
+            internal bool ActionKey;
+            internal bool GameplayConfirmed;
+        }
+
         internal static CharacterScreenRecognition Read(Bitmap frame)
         {
             if (frame == null) throw new ArgumentNullException(nameof(frame));
@@ -64,167 +74,19 @@ namespace InventoryKamera
             var evidence = new List<string>();
             try
             {
-                // The live HUD's health bar, numbered party keycaps and chat/
-                // action control are spatially independent. Paimon and the
-                // character menu hide those controls. Confirm this combination
-                // before asking OCR to interpret the much larger world scene;
-                // HP digit accuracy is not required to establish screen state.
-                Rectangle? health = FindHealthBar(frame);
-                int partyKeys = -1;
-                string controls = null;
-                bool actionKey = false;
-                if (health.HasValue)
-                {
-                    partyKeys = CountPartySlotKeys(frame, geometry);
-                    if (partyKeys >= 2)
-                    {
-                        controls = ReadHudControls(frame, geometry, out actionKey);
-                        evidence.Add($"health-bar={health.Value}, party-slot-keys={partyKeys}, hud-controls='{controls}'");
-                        if (actionKey)
-                        {
-                            evidence.Add("gameplay established by three HUD controls; HP OCR not required");
-                            return Finish(result, CharacterScreenState.Gameplay, evidence);
-                        }
-                    }
-                }
-
-                // Detail overlays replace the normal sidebar. The saved
-                // Xiangling screenshots show a sharp panel edge at x520/1920.
-                // Talent overlays can use the slightly wider x560/1920 panel.
-                int? panelEdge = FindDetailPanelEdge(frame, geometry);
-                if (panelEdge.HasValue)
-                {
-                    string detail = ReadText(frame, geometry.TopRect(20, 130, 480, 260));
-                    evidence.Add($"detail-panel x={panelEdge.Value}, title='{detail}'");
-                    if (Regex.IsMatch(detail, @"\bconstellation\s*(?:lv|level)\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout))
-                        return Finish(result, CharacterScreenState.ConstellationDetails, evidence);
-
-                    // A talent level on the left is combined with the separate
-                    // talent-list levels on the right; a generic 'Lv.' alone is
-                    // not sufficient to authorize closing an overlay.
-                    if (CountLevelLabels(detail) > 0)
-                    {
-                        string right = ReadText(frame, geometry.TopRect(1430, 115, 440, 790));
-                        evidence.Add("right-list='" + right + "'");
-                        if (CountLevelLabels(right) >= 2)
-                            return Finish(result, CharacterScreenState.TalentDetails, evidence);
-                        int levels = Math.Max(CountLevelLabels(right), ReadLightTalentLevelRows(frame, geometry, evidence));
-                        if (levels >= 2 || levels >= 1 && ReadTalentDetailTabs(frame, geometry, evidence))
-                        {
-                            evidence.Add("talent detail established by panel edge, left Lv and " + levels +
-                                " independent right Lv rows; one-row fallback additionally requires both detail tabs");
-                            return Finish(result, CharacterScreenState.TalentDetails, evidence);
-                        }
-                    }
-                    // A drawer can retain readable controls from the base pane
-                    // during animation. Its edge blocks base-pane recognition
-                    // until independent detail controls identify the overlay.
-                    evidence.Add("strict overlay evidence incomplete; base-pane promotion forbidden");
-                    return Finish(result, CharacterScreenState.Unknown, evidence);
-                }
-
-                Rectangle sidebarRegion = geometry.TopRect(88, 128, 410, 435);
-                string sidebar = ReadText(frame, sidebarRegion);
-                evidence.Add("sidebar='" + sidebar + "'");
-                if (!HasCharacterSidebar(sidebar))
-                {
-                    sidebar = ReadRawText(frame, sidebarRegion);
-                    evidence.Add("sidebar-raw='" + sidebar + "'");
-                }
-                if (!HasCharacterSidebar(sidebar))
-                    sidebar = ReadLightSidebarRows(frame, geometry, evidence);
-                evidence.Add($"sidebar exact controls={CountExactSidebarLabels(sidebar)}, required>=4 including Constellation/Talents; Attributes word={HasExactLabel(sidebar, AttributesLabel)}");
-                if (HasCharacterSidebar(sidebar))
-                {
-                    Rectangle rightRegion = geometry.TopRect(1430, 115, 440, 790);
-                    string right = ReadText(frame, rightRegion);
-                    evidence.Add("right-pane='" + right + "'");
-                    if (!HasAttributePane(right) && CountLevelLabels(right) < 3)
-                    {
-                        right = ReadRawText(frame, rightRegion);
-                        evidence.Add("right-pane-raw='" + right + "'");
-                    }
-                    if (HasAttributePane(right))
-                        return Finish(result, CharacterScreenState.Attributes, evidence);
-                    if (CountLevelLabels(right) >= 3)
-                        return Finish(result, CharacterScreenState.Talents, evidence);
-                    if (HasUniqueSelectedTalentsMarker(frame, geometry))
-                    {
-                        int levels = Math.Max(CountLevelLabels(right), ReadLightTalentLevelRows(frame, geometry, evidence));
-                        if (levels >= 3 || levels >= 1 && ReadTalentDemoControl(frame, geometry, evidence))
-                        {
-                            evidence.Add("Talents established by verified sidebar, unique selected Talents marker and " + levels +
-                                " right Lv rows; fewer-than-three-row alternative additionally requires Talent Demo");
-                            return Finish(result, CharacterScreenState.Talents, evidence);
-                        }
-                    }
-                    bool constellationSelected = HasSelectedConstellationMarker(frame, geometry);
-                    int circles = CountConstellationCircles(frame, geometry, constellationSelected);
-                    evidence.Add("constellation selected-marker=" + constellationSelected + ", medallions=" + circles);
-                    if (circles >= 4)
-                        return Finish(result, CharacterScreenState.Constellation, evidence);
-                    // This positively establishes the menu, but not its selected
-                    // subtab. Navigation may choose a tab; it must not Escape.
-                    return Finish(result, CharacterScreenState.CharacterMenu, evidence);
-                }
-
-                // Menu labels sit on solid tiles, whereas profile text can
-                // overlap a bright, detailed namecard. Read the same tile grid
-                // used by achievement entry before trying the profile fallback.
-                string menuTiles;
-                using (Bitmap tiles = frame.Clone(geometry.TopRect(120, 350, 620, 650),
-                    System.Drawing.Imaging.PixelFormat.Format24bppRgb))
-                    menuTiles = GenshinProcesor.AnalyzeText(tiles, PageSegMode.SparseText).Trim();
-                evidence.Add("menu-tiles='" + menuTiles + "'");
-                bool paimon = HasPaimonTiles(menuTiles);
-                if (!paimon)
-                {
-                    Rectangle profileRegion = geometry.TopRect(290, 145, 465, 182);
-                    string profile = ReadText(frame, profileRegion);
-                    evidence.Add("profile='" + profile + "'");
-                    if (!HasPaimonProfile(profile))
-                    {
-                        profile = ReadText(frame, profileRegion, false);
-                        evidence.Add("profile-grayscale='" + profile + "'");
-                    }
-                    paimon = HasPaimonProfile(profile);
-                }
-                if (paimon)
-                {
-                    Rectangle tileRegion = geometry.TopRect(438, 580, 132, 35);
-                    string tile;
-                    using (Bitmap crop = frame.Clone(tileRegion, System.Drawing.Imaging.PixelFormat.Format24bppRgb))
-                        tile = GenshinProcesor.AnalyzeText(crop, PageSegMode.SingleLine).Trim();
-                    evidence.Add("character-tile='" + tile + "'");
-                    if (Normalize(tile) != "character")
-                    {
-                        tile = ReadText(frame, tileRegion);
-                        evidence.Add("character-tile-threshold='" + tile + "'");
-                    }
-                    if (Normalize(tile) == "character")
-                        result.CharacterTileBounds = geometry.TopRect(432, 494, 144, 130);
-                    return Finish(result, CharacterScreenState.PaimonMenu, evidence);
-                }
-
-                // CaptureWindow masks UID. Health digits also interrupt the
-                // colored fill, and Lunar characters add another bar above it.
-                // Read the HP line separately and corroborate it with controls
-                // that belong to the live HUD, rather than world colors alone.
-                Rectangle healthText = geometry.BottomRect(790, 80, 335, 25);
-                string hp = ReadWhiteHudText(frame, healthText);
-                bool healthFraction = HasHealthFraction(hp);
-                if (!healthFraction)
-                {
-                    hp = ReadText(frame, healthText, false);
-                    healthFraction = HasHealthFraction(hp);
-                }
-                if (partyKeys < 0) partyKeys = CountPartySlotKeys(frame, geometry);
-                if (controls == null) controls = ReadHudControls(frame, geometry, out actionKey);
-                evidence.Add($"health-bar={(health.HasValue ? health.Value.ToString() : "absent")}, " +
-                    $"health='{hp}', party-slot-keys={partyKeys}, hud-controls='{controls}'");
-                if ((healthFraction && (health.HasValue || partyKeys >= 2 || actionKey)) ||
-                    (partyKeys >= 3 && actionKey))
+                HudProbe hud = ProbeGameplayHud(frame, geometry, evidence);
+                if (hud.GameplayConfirmed)
                     return Finish(result, CharacterScreenState.Gameplay, evidence);
+
+                CharacterScreenRecognition resolved = TryResolveDetailOverlay(frame, geometry, evidence, result);
+                if (resolved != null) return resolved;
+                resolved = TryResolveCharacterMenuPane(frame, geometry, evidence, result);
+                if (resolved != null) return resolved;
+                resolved = TryResolvePaimonMenu(frame, geometry, evidence, result);
+                if (resolved != null) return resolved;
+
+                resolved = ConfirmGameplayFallback(frame, geometry, evidence, result, hud);
+                if (resolved != null) return resolved;
             }
             catch (ThreadAbortException) { throw; }
             catch (Exception exception)
@@ -232,6 +94,186 @@ namespace InventoryKamera
                 evidence.Add("screen OCR error=" + exception.GetType().Name + ": " + exception.Message);
             }
             return Finish(result, CharacterScreenState.Unknown, evidence);
+        }
+
+        private static HudProbe ProbeGameplayHud(Bitmap frame, Geometry geometry, List<string> evidence)
+        {
+            var probe = new HudProbe
+            {
+                Health = FindHealthBar(frame),
+                PartyKeys = -1,
+                Controls = null,
+                ActionKey = false
+            };
+            if (!probe.Health.HasValue) return probe;
+            probe.PartyKeys = CountPartySlotKeys(frame, geometry);
+            if (probe.PartyKeys < 2) return probe;
+            probe.Controls = ReadHudControls(frame, geometry, out probe.ActionKey);
+            evidence.Add($"health-bar={probe.Health.Value}, party-slot-keys={probe.PartyKeys}, hud-controls='{probe.Controls}'");
+            if (!probe.ActionKey) return probe;
+            evidence.Add("gameplay established by three HUD controls; HP OCR not required");
+            probe.GameplayConfirmed = true;
+            return probe;
+        }
+
+        private static CharacterScreenRecognition TryResolveDetailOverlay(Bitmap frame, Geometry geometry,
+            List<string> evidence, CharacterScreenRecognition result)
+        {
+            // Detail overlays replace the normal sidebar. The saved
+            // Xiangling screenshots show a sharp panel edge at x520/1920.
+            // Talent overlays can use the slightly wider x560/1920 panel.
+            int? panelEdge = FindDetailPanelEdge(frame, geometry);
+            if (!panelEdge.HasValue) return null;
+
+            string detail = ReadText(frame, geometry.TopRect(20, 130, 480, 260));
+            evidence.Add($"detail-panel x={panelEdge.Value}, title='{detail}'");
+            if (Regex.IsMatch(detail, @"\bconstellation\s*(?:lv|level)\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout))
+                return Finish(result, CharacterScreenState.ConstellationDetails, evidence);
+
+            // A talent level on the left is combined with the separate
+            // talent-list levels on the right; a generic 'Lv.' alone is
+            // not sufficient to authorize closing an overlay.
+            if (CountLevelLabels(detail) > 0)
+            {
+                string right = ReadText(frame, geometry.TopRect(1430, 115, 440, 790));
+                evidence.Add("right-list='" + right + "'");
+                if (CountLevelLabels(right) >= 2)
+                    return Finish(result, CharacterScreenState.TalentDetails, evidence);
+                int levels = Math.Max(CountLevelLabels(right), ReadLightTalentLevelRows(frame, geometry, evidence));
+                if (levels >= 2 || levels >= 1 && ReadTalentDetailTabs(frame, geometry, evidence))
+                {
+                    evidence.Add("talent detail established by panel edge, left Lv and " + levels +
+                        " independent right Lv rows; one-row fallback additionally requires both detail tabs");
+                    return Finish(result, CharacterScreenState.TalentDetails, evidence);
+                }
+            }
+            // A drawer can retain readable controls from the base pane
+            // during animation. Its edge blocks base-pane recognition
+            // until independent detail controls identify the overlay.
+            evidence.Add("strict overlay evidence incomplete; base-pane promotion forbidden");
+            return Finish(result, CharacterScreenState.Unknown, evidence);
+        }
+
+        private static CharacterScreenRecognition TryResolveCharacterMenuPane(Bitmap frame, Geometry geometry,
+            List<string> evidence, CharacterScreenRecognition result)
+        {
+            Rectangle sidebarRegion = geometry.TopRect(88, 128, 410, 435);
+            string sidebar = ReadText(frame, sidebarRegion);
+            evidence.Add("sidebar='" + sidebar + "'");
+            if (!HasCharacterSidebar(sidebar))
+            {
+                sidebar = ReadRawText(frame, sidebarRegion);
+                evidence.Add("sidebar-raw='" + sidebar + "'");
+            }
+            if (!HasCharacterSidebar(sidebar))
+                sidebar = ReadLightSidebarRows(frame, geometry, evidence);
+            evidence.Add($"sidebar exact controls={CountExactSidebarLabels(sidebar)}, required>=4 including Constellation/Talents; Attributes word={HasExactLabel(sidebar, AttributesLabel)}");
+            if (!HasCharacterSidebar(sidebar)) return null;
+
+            Rectangle rightRegion = geometry.TopRect(1430, 115, 440, 790);
+            string right = ReadText(frame, rightRegion);
+            evidence.Add("right-pane='" + right + "'");
+            if (!HasAttributePane(right) && CountLevelLabels(right) < 3)
+            {
+                right = ReadRawText(frame, rightRegion);
+                evidence.Add("right-pane-raw='" + right + "'");
+            }
+            if (HasAttributePane(right))
+                return Finish(result, CharacterScreenState.Attributes, evidence);
+            if (CountLevelLabels(right) >= 3)
+                return Finish(result, CharacterScreenState.Talents, evidence);
+            if (HasUniqueSelectedTalentsMarker(frame, geometry))
+            {
+                int levels = Math.Max(CountLevelLabels(right), ReadLightTalentLevelRows(frame, geometry, evidence));
+                if (levels >= 3 || levels >= 1 && ReadTalentDemoControl(frame, geometry, evidence))
+                {
+                    evidence.Add("Talents established by verified sidebar, unique selected Talents marker and " + levels +
+                        " right Lv rows; fewer-than-three-row alternative additionally requires Talent Demo");
+                    return Finish(result, CharacterScreenState.Talents, evidence);
+                }
+            }
+            bool constellationSelected = HasSelectedConstellationMarker(frame, geometry);
+            int circles = CountConstellationCircles(frame, geometry, constellationSelected);
+            evidence.Add("constellation selected-marker=" + constellationSelected + ", medallions=" + circles);
+            if (circles >= 4)
+                return Finish(result, CharacterScreenState.Constellation, evidence);
+            // This positively establishes the menu, but not its selected
+            // subtab. Navigation may choose a tab; it must not Escape.
+            return Finish(result, CharacterScreenState.CharacterMenu, evidence);
+        }
+
+        private static CharacterScreenRecognition TryResolvePaimonMenu(Bitmap frame, Geometry geometry,
+            List<string> evidence, CharacterScreenRecognition result)
+        {
+            // Menu labels sit on solid tiles, whereas profile text can
+            // overlap a bright, detailed namecard. Read the same tile grid
+            // used by achievement entry before trying the profile fallback.
+            string menuTiles;
+            using (Bitmap tiles = frame.Clone(geometry.TopRect(120, 350, 620, 650),
+                System.Drawing.Imaging.PixelFormat.Format24bppRgb))
+                menuTiles = GenshinProcesor.AnalyzeText(tiles, PageSegMode.SparseText).Trim();
+            evidence.Add("menu-tiles='" + menuTiles + "'");
+            bool paimon = HasPaimonTiles(menuTiles);
+            if (!paimon)
+            {
+                Rectangle profileRegion = geometry.TopRect(290, 145, 465, 182);
+                string profile = ReadText(frame, profileRegion);
+                evidence.Add("profile='" + profile + "'");
+                if (!HasPaimonProfile(profile))
+                {
+                    profile = ReadText(frame, profileRegion, false);
+                    evidence.Add("profile-grayscale='" + profile + "'");
+                }
+                paimon = HasPaimonProfile(profile);
+            }
+            if (!paimon) return null;
+
+            Rectangle tileRegion = geometry.TopRect(438, 580, 132, 35);
+            string tile;
+            using (Bitmap crop = frame.Clone(tileRegion, System.Drawing.Imaging.PixelFormat.Format24bppRgb))
+                tile = GenshinProcesor.AnalyzeText(crop, PageSegMode.SingleLine).Trim();
+            evidence.Add("character-tile='" + tile + "'");
+            if (Normalize(tile) != "character")
+            {
+                tile = ReadText(frame, tileRegion);
+                evidence.Add("character-tile-threshold='" + tile + "'");
+            }
+            if (Normalize(tile) == "character")
+                result.CharacterTileBounds = geometry.TopRect(432, 494, 144, 130);
+            return Finish(result, CharacterScreenState.PaimonMenu, evidence);
+        }
+
+        private static CharacterScreenRecognition ConfirmGameplayFallback(Bitmap frame, Geometry geometry,
+            List<string> evidence, CharacterScreenRecognition result, HudProbe hud)
+        {
+            // CaptureWindow masks UID. Health digits also interrupt the
+            // colored fill, and Lunar characters add another bar above it.
+            // Read the HP line separately and corroborate it with controls
+            // that belong to the live HUD, rather than world colors alone.
+            Rectangle healthText = geometry.BottomRect(790, 80, 335, 25);
+            string hp = ReadWhiteHudText(frame, healthText);
+            bool healthFraction = HasHealthFraction(hp);
+            if (!healthFraction)
+            {
+                hp = ReadText(frame, healthText, false);
+                healthFraction = HasHealthFraction(hp);
+            }
+            if (hud.PartyKeys < 0) hud.PartyKeys = CountPartySlotKeys(frame, geometry);
+            if (hud.Controls == null) hud.Controls = ReadHudControls(frame, geometry, out hud.ActionKey);
+            evidence.Add($"health-bar={(hud.Health.HasValue ? hud.Health.Value.ToString() : "absent")}, " +
+                $"health='{hp}', party-slot-keys={hud.PartyKeys}, hud-controls='{hud.Controls}'");
+            if ((healthFraction && (hud.Health.HasValue || hud.PartyKeys >= 2 || hud.ActionKey)) ||
+                (hud.PartyKeys >= 3 && hud.ActionKey))
+                return Finish(result, CharacterScreenState.Gameplay, evidence);
+            return null;
+        }
+
+        /// <summary>Relaxed selected-sidebar diamond/label markers, all mutually exclusive by construction.</summary>
+        private struct SidebarMarkers
+        {
+            internal bool Attributes;
+            internal bool Constellation;
+            internal bool Talents;
         }
 
         internal static CharacterScreenRecognition ReadTolerant(Bitmap frame, CharacterScreenState expected,
@@ -264,102 +306,12 @@ namespace InventoryKamera
             };
             try
             {
-                int? edge = FindTolerantDetailPanelEdge(frame, geometry);
-                if (edge.HasValue)
-                {
-                    evidence.Add($"relaxed detail-edge x={edge.Value}: contrast>=10, dark-left<190, matching rows>=50%");
-                    Rectangle detailRegion = geometry.TopRect(10, 100, 570, 390);
-                    string detailGray = ReadText(frame, detailRegion, false);
-                    string detailRaw = ReadRawText(frame, detailRegion);
-                    evidence.Add("wide detail-grayscale='" + detailGray + "', detail-raw='" + detailRaw + "'");
-                    bool constellationLabel = HasConstellationDetailLabel(detailGray) || HasConstellationDetailLabel(detailRaw);
-                    if (constellationLabel && (expected == CharacterScreenState.ConstellationDetails ||
-                        expected == CharacterScreenState.CharacterMenu))
-                    {
-                        int circles = CountConstellationCircles(frame, geometry, true);
-                        evidence.Add($"specific Constellation Lv label plus independent right medallions={circles}, required>=3");
-                        if (circles >= 3)
-                            return Finish(result, CharacterScreenState.ConstellationDetails, evidence);
-                    }
-                    else if (!constellationLabel && (expected == CharacterScreenState.TalentDetails ||
-                        expected == CharacterScreenState.CharacterMenu) &&
-                        Math.Max(CountLevelLabels(detailGray), CountLevelLabels(detailRaw)) >= 1)
-                    {
-                        string right = ReadTolerantPaneText(frame, geometry.TopRect(1400, 100, 485, 815),
-                            text => CountLevelLabels(text) >= 2, evidence, "detail right-list", CountLevelLabels);
-                        int levels = Math.Max(CountLevelLabels(right), ReadLightTalentLevelRows(frame, geometry, evidence));
-                        evidence.Add($"detail left Lv>=1 plus independent right Lv labels={levels}; requires >=2, or >=1 plus both exact detail tabs");
-                        if (levels >= 2 || levels >= 1 && ReadTalentDetailTabs(frame, geometry, evidence))
-                        {
-                            if (levels < 2) evidence.Add("one right Lv row independently corroborated by both Talent Info and Skill Attributes tabs");
-                            return Finish(result, CharacterScreenState.TalentDetails, evidence);
-                        }
-                    }
-                    // An overlay-shaped frame must retain its uncertainty. In
-                    // particular, it cannot become a generic/base menu merely
-                    // because sidebar words remain readable during animation.
-                    evidence.Add("overlay evidence incomplete; base-pane promotion forbidden");
-                    return Finish(result, strict.State, evidence);
-                }
-                if (expected == CharacterScreenState.ConstellationDetails || expected == CharacterScreenState.TalentDetails)
-                {
-                    evidence.Add("detail promotion rejected: no independent panel edge");
-                    return Finish(result, strict.State, evidence);
-                }
+                CharacterScreenRecognition resolved = TryResolveTolerantDetailOverlay(frame, geometry, evidence, result, expected, strict);
+                if (resolved != null) return resolved;
 
-                bool menu = strict.State == CharacterScreenState.CharacterMenu;
-                if (!menu)
-                {
-                    string sidebar = ReadTolerantPaneText(frame, geometry.TopRect(84, 110, 430, 485),
-                        HasTolerantCharacterSidebar, evidence, "sidebar");
-                    menu = HasTolerantCharacterSidebar(sidebar);
-                    if (!menu)
-                    {
-                        sidebar = ReadLightSidebarRows(frame, geometry, evidence);
-                        menu = HasTolerantCharacterSidebar(sidebar);
-                    }
-                    evidence.Add($"relaxed sidebar exact labels={CountExactSidebarLabels(sidebar)}, required>=3 including Constellation/Talents; Attributes word={HasExactLabel(sidebar, AttributesLabel)}; selected marker plus independent pane content still required");
-                }
-                else evidence.Add("same-frame strict generic menu supplies verified sidebar evidence");
-                if (!menu) return Finish(result, strict.State, evidence);
+                resolved = ResolveTolerantPane(frame, geometry, evidence, result, expected, strict);
+                if (resolved != null) return resolved;
 
-                bool attributes = HasTolerantSelectedSidebarMarker(frame, geometry, 154);
-                bool constellation = HasTolerantSelectedSidebarMarker(frame, geometry, 364);
-                bool talents = HasTolerantSelectedSidebarMarker(frame, geometry, 434);
-                evidence.Add($"relaxed selected diamond+white-label markers: Attributes={attributes}, Constellation={constellation}, Talents={talents}; bright fractions>=1.5%/2.5%");
-                if ((attributes ? 1 : 0) + (constellation ? 1 : 0) + (talents ? 1 : 0) != 1)
-                {
-                    evidence.Add("pane promotion rejected: selected marker absent or ambiguous");
-                    return Finish(result, strict.State, evidence);
-                }
-                bool anyPane = expected == CharacterScreenState.CharacterMenu;
-                if (attributes && (anyPane || expected == CharacterScreenState.Attributes))
-                {
-                    string right = ReadTolerantPaneText(frame, geometry.TopRect(1400, 100, 485, 815),
-                        HasTolerantAttributePane, evidence, "attribute right-pane");
-                    evidence.Add($"relaxed stat labels={CountAttributeLabels(right)}, required>=2 including Max HP/Max Stamina");
-                    if (HasTolerantAttributePane(right))
-                        return Finish(result, CharacterScreenState.Attributes, evidence);
-                }
-                else if (constellation && (anyPane || expected == CharacterScreenState.Constellation))
-                {
-                    int circles = CountConstellationCircles(frame, geometry, true);
-                    evidence.Add($"relaxed right medallions={circles}, required>=3 (strict requires4)");
-                    if (circles >= 3)
-                        return Finish(result, CharacterScreenState.Constellation, evidence);
-                }
-                else if (talents && (anyPane || expected == CharacterScreenState.Talents))
-                {
-                    string right = ReadTolerantPaneText(frame, geometry.TopRect(1400, 100, 485, 815),
-                        text => CountLevelLabels(text) >= 2, evidence, "talent right-pane", CountLevelLabels);
-                    int levels = Math.Max(CountLevelLabels(right), ReadLightTalentLevelRows(frame, geometry, evidence));
-                    evidence.Add($"relaxed talent Lv labels={levels}; requires >=2, or >=1 plus Talent Demo (strict requires3 or the same control alternative)");
-                    if (levels >= 2 || levels >= 1 && ReadTalentDemoControl(frame, geometry, evidence))
-                    {
-                        if (levels < 2) evidence.Add("one right Lv row independently corroborated by Talent Demo control");
-                        return Finish(result, CharacterScreenState.Talents, evidence);
-                    }
-                }
                 evidence.Add("expected pane lacks independent qualification; generic promotion forbidden");
             }
             catch (ThreadAbortException) { throw; }
@@ -368,6 +320,155 @@ namespace InventoryKamera
                 evidence.Add("tolerant screen OCR error=" + exception.GetType().Name + ": " + exception.Message);
             }
             return Finish(result, strict.State, evidence);
+        }
+
+        private static CharacterScreenRecognition TryResolveTolerantDetailOverlay(Bitmap frame, Geometry geometry,
+            List<string> evidence, CharacterScreenRecognition result, CharacterScreenState expected,
+            CharacterScreenRecognition strict)
+        {
+            int? edge = FindTolerantDetailPanelEdge(frame, geometry);
+            if (edge.HasValue)
+            {
+                evidence.Add($"relaxed detail-edge x={edge.Value}: contrast>=10, dark-left<190, matching rows>=50%");
+                Rectangle detailRegion = geometry.TopRect(10, 100, 570, 390);
+                string detailGray = ReadText(frame, detailRegion, false);
+                string detailRaw = ReadRawText(frame, detailRegion);
+                evidence.Add("wide detail-grayscale='" + detailGray + "', detail-raw='" + detailRaw + "'");
+                bool constellationLabel = HasConstellationDetailLabel(detailGray) || HasConstellationDetailLabel(detailRaw);
+                if (constellationLabel && (expected == CharacterScreenState.ConstellationDetails ||
+                    expected == CharacterScreenState.CharacterMenu))
+                {
+                    return ResolveTolerantConstellationDetail(frame, geometry, evidence, result);
+                }
+                else if (!constellationLabel && (expected == CharacterScreenState.TalentDetails ||
+                    expected == CharacterScreenState.CharacterMenu) &&
+                    Math.Max(CountLevelLabels(detailGray), CountLevelLabels(detailRaw)) >= 1)
+                {
+                    return ResolveTolerantTalentDetail(frame, geometry, evidence, result);
+                }
+                // An overlay-shaped frame must retain its uncertainty. In
+                // particular, it cannot become a generic/base menu merely
+                // because sidebar words remain readable during animation.
+                evidence.Add("overlay evidence incomplete; base-pane promotion forbidden");
+                return Finish(result, strict.State, evidence);
+            }
+            if (expected == CharacterScreenState.ConstellationDetails || expected == CharacterScreenState.TalentDetails)
+            {
+                evidence.Add("detail promotion rejected: no independent panel edge");
+                return Finish(result, strict.State, evidence);
+            }
+            return null;
+        }
+
+        private static CharacterScreenRecognition ResolveTolerantConstellationDetail(Bitmap frame, Geometry geometry,
+            List<string> evidence, CharacterScreenRecognition result)
+        {
+            int circles = CountConstellationCircles(frame, geometry, true);
+            evidence.Add($"specific Constellation Lv label plus independent right medallions={circles}, required>=3");
+            if (circles < 3) return null;
+            return Finish(result, CharacterScreenState.ConstellationDetails, evidence);
+        }
+
+        private static CharacterScreenRecognition ResolveTolerantTalentDetail(Bitmap frame, Geometry geometry,
+            List<string> evidence, CharacterScreenRecognition result)
+        {
+            string right = ReadTolerantPaneText(frame, geometry.TopRect(1400, 100, 485, 815),
+                text => CountLevelLabels(text) >= 2, evidence, "detail right-list", CountLevelLabels);
+            int levels = Math.Max(CountLevelLabels(right), ReadLightTalentLevelRows(frame, geometry, evidence));
+            evidence.Add($"detail left Lv>=1 plus independent right Lv labels={levels}; requires >=2, or >=1 plus both exact detail tabs");
+            if (levels >= 2 || levels >= 1 && ReadTalentDetailTabs(frame, geometry, evidence))
+            {
+                if (levels < 2) evidence.Add("one right Lv row independently corroborated by both Talent Info and Skill Attributes tabs");
+                return Finish(result, CharacterScreenState.TalentDetails, evidence);
+            }
+            return null;
+        }
+
+        private static CharacterScreenRecognition ResolveTolerantPane(Bitmap frame, Geometry geometry,
+            List<string> evidence, CharacterScreenRecognition result, CharacterScreenState expected,
+            CharacterScreenRecognition strict)
+        {
+            bool menu = strict.State == CharacterScreenState.CharacterMenu;
+            if (!menu)
+            {
+                string sidebar = ReadTolerantPaneText(frame, geometry.TopRect(84, 110, 430, 485),
+                    HasTolerantCharacterSidebar, evidence, "sidebar");
+                menu = HasTolerantCharacterSidebar(sidebar);
+                if (!menu)
+                {
+                    sidebar = ReadLightSidebarRows(frame, geometry, evidence);
+                    menu = HasTolerantCharacterSidebar(sidebar);
+                }
+                evidence.Add($"relaxed sidebar exact labels={CountExactSidebarLabels(sidebar)}, required>=3 including Constellation/Talents; Attributes word={HasExactLabel(sidebar, AttributesLabel)}; selected marker plus independent pane content still required");
+            }
+            else evidence.Add("same-frame strict generic menu supplies verified sidebar evidence");
+            if (!menu) return Finish(result, strict.State, evidence);
+
+            SidebarMarkers markers;
+            markers.Attributes = HasTolerantSelectedSidebarMarker(frame, geometry, 154);
+            markers.Constellation = HasTolerantSelectedSidebarMarker(frame, geometry, 364);
+            markers.Talents = HasTolerantSelectedSidebarMarker(frame, geometry, 434);
+            evidence.Add($"relaxed selected diamond+white-label markers: Attributes={markers.Attributes}, Constellation={markers.Constellation}, Talents={markers.Talents}; bright fractions>=1.5%/2.5%");
+            if ((markers.Attributes ? 1 : 0) + (markers.Constellation ? 1 : 0) + (markers.Talents ? 1 : 0) != 1)
+            {
+                evidence.Add("pane promotion rejected: selected marker absent or ambiguous");
+                return Finish(result, strict.State, evidence);
+            }
+            return ResolveTolerantSelectedPane(frame, geometry, evidence, result, expected, markers);
+        }
+
+        private static CharacterScreenRecognition ResolveTolerantSelectedPane(Bitmap frame, Geometry geometry,
+            List<string> evidence, CharacterScreenRecognition result, CharacterScreenState expected,
+            SidebarMarkers markers)
+        {
+            bool anyPane = expected == CharacterScreenState.CharacterMenu;
+            if (markers.Attributes && (anyPane || expected == CharacterScreenState.Attributes))
+            {
+                return ResolveTolerantAttributesPane(frame, geometry, evidence, result);
+            }
+            else if (markers.Constellation && (anyPane || expected == CharacterScreenState.Constellation))
+            {
+                return ResolveTolerantConstellationPane(frame, geometry, evidence, result);
+            }
+            else if (markers.Talents && (anyPane || expected == CharacterScreenState.Talents))
+            {
+                return ResolveTolerantTalentsPane(frame, geometry, evidence, result);
+            }
+            return null;
+        }
+
+        private static CharacterScreenRecognition ResolveTolerantAttributesPane(Bitmap frame, Geometry geometry,
+            List<string> evidence, CharacterScreenRecognition result)
+        {
+            string right = ReadTolerantPaneText(frame, geometry.TopRect(1400, 100, 485, 815),
+                HasTolerantAttributePane, evidence, "attribute right-pane");
+            evidence.Add($"relaxed stat labels={CountAttributeLabels(right)}, required>=2 including Max HP/Max Stamina");
+            if (!HasTolerantAttributePane(right)) return null;
+            return Finish(result, CharacterScreenState.Attributes, evidence);
+        }
+
+        private static CharacterScreenRecognition ResolveTolerantConstellationPane(Bitmap frame, Geometry geometry,
+            List<string> evidence, CharacterScreenRecognition result)
+        {
+            int circles = CountConstellationCircles(frame, geometry, true);
+            evidence.Add($"relaxed right medallions={circles}, required>=3 (strict requires4)");
+            if (circles < 3) return null;
+            return Finish(result, CharacterScreenState.Constellation, evidence);
+        }
+
+        private static CharacterScreenRecognition ResolveTolerantTalentsPane(Bitmap frame, Geometry geometry,
+            List<string> evidence, CharacterScreenRecognition result)
+        {
+            string right = ReadTolerantPaneText(frame, geometry.TopRect(1400, 100, 485, 815),
+                text => CountLevelLabels(text) >= 2, evidence, "talent right-pane", CountLevelLabels);
+            int levels = Math.Max(CountLevelLabels(right), ReadLightTalentLevelRows(frame, geometry, evidence));
+            evidence.Add($"relaxed talent Lv labels={levels}; requires >=2, or >=1 plus Talent Demo (strict requires3 or the same control alternative)");
+            if (levels >= 2 || levels >= 1 && ReadTalentDemoControl(frame, geometry, evidence))
+            {
+                if (levels < 2) evidence.Add("one right Lv row independently corroborated by Talent Demo control");
+                return Finish(result, CharacterScreenState.Talents, evidence);
+            }
+            return null;
         }
 
         private static string ReadTolerantPaneText(Bitmap frame, Rectangle region, Func<string, bool> qualified,
@@ -655,34 +756,46 @@ namespace InventoryKamera
             // member's name or which row is active. The active key can be gray.
             for (int y = (int)(frame.Height * 0.20); y < frame.Height * 0.62; y++)
             {
-                bool key = true;
-                foreach (int dx in new[] { -offsetX, offsetX })
-                    foreach (int dy in new[] { -offsetY, offsetY })
-                    {
-                        Color color = frame.GetPixel(centerX + dx, y + dy);
-                        if (Math.Min(color.R, Math.Min(color.G, color.B)) < 235 ||
-                            Math.Max(color.R, Math.Max(color.G, color.B)) -
-                            Math.Min(color.R, Math.Min(color.G, color.B)) > 15) key = false;
-                    }
+                bool key = IsPartyKeycapEdgeWhite(frame, centerX, y, offsetX, offsetY);
                 Color center = frame.GetPixel(centerX, y);
                 key &= Math.Max(center.R, Math.Max(center.G, center.B)) < 140;
-                if (key) { if (start < 0) start = y; }
+                if (key)
+                {
+                    if (start < 0) start = y;
+                }
                 else if (start >= 0)
                 {
-                    if (y - start >= Math.Max(2, geometry.ScaleY(3)))
-                    {
-                        int centerY = (start + y - 1) / 2;
-                        Rectangle keyRegion = new Rectangle(centerX - geometry.ScaleX(14),
-                            centerY - geometry.ScaleY(12), Math.Max(1, geometry.ScaleX(28)),
-                            Math.Max(1, geometry.ScaleY(24)));
-                        string text = ReadKeyText(frame, keyRegion, true);
-                        int number;
-                        if (Regex.IsMatch(text, @"^[1-4]$", RegexOptions.None, RegexTimeouts.RegexTimeout) && int.TryParse(text, out number)) keys.Add(number);
-                    }
+                    RecordPartyKeycap(frame, geometry, keys, centerX, start, y);
                     start = -1;
                 }
             }
             return keys.Count;
+        }
+
+        private static bool IsPartyKeycapEdgeWhite(Bitmap frame, int centerX, int y, int offsetX, int offsetY)
+        {
+            foreach (int dx in new[] { -offsetX, offsetX })
+                foreach (int dy in new[] { -offsetY, offsetY })
+                {
+                    Color color = frame.GetPixel(centerX + dx, y + dy);
+                    if (Math.Min(color.R, Math.Min(color.G, color.B)) < 235 ||
+                        Math.Max(color.R, Math.Max(color.G, color.B)) -
+                        Math.Min(color.R, Math.Min(color.G, color.B)) > 15) return false;
+                }
+            return true;
+        }
+
+        private static void RecordPartyKeycap(Bitmap frame, Geometry geometry, HashSet<int> keys,
+            int centerX, int start, int y)
+        {
+            if (y - start < Math.Max(2, geometry.ScaleY(3))) return;
+            int centerY = (start + y - 1) / 2;
+            Rectangle keyRegion = new Rectangle(centerX - geometry.ScaleX(14),
+                centerY - geometry.ScaleY(12), Math.Max(1, geometry.ScaleX(28)),
+                Math.Max(1, geometry.ScaleY(24)));
+            string text = ReadKeyText(frame, keyRegion, true);
+            int number;
+            if (Regex.IsMatch(text, @"^[1-4]$", RegexOptions.None, RegexTimeouts.RegexTimeout) && int.TryParse(text, out number)) keys.Add(number);
         }
 
         private static int? FindDetailPanelEdge(Bitmap frame, Geometry geometry)
@@ -742,48 +855,65 @@ namespace InventoryKamera
             {
                 int expectedY = (int)Math.Round(((geometry.Wide ? 180 : 225) + row * 75) * frame.Height /
                     (geometry.Wide ? 720.0 : 800.0));
-                bool circle = false;
-                for (int x = geometry.ScaleX(1478); x <= geometry.ScaleX(1645) && !circle; x += Math.Max(2, geometry.ScaleX(5)))
-                    for (int y = expectedY - geometry.ScaleY(18); y <= expectedY + geometry.ScaleY(18) && !circle; y += Math.Max(2, geometry.ScaleY(5)))
-                    {
-                        bool glyph = selected && HasMedallionGlyph(frame, geometry, x, y);
-                        for (int radius = 27; radius <= 38 && !circle; radius += 3)
-                        {
-                            int matches = 0, borderMatches = 0;
-                            for (int angle = 0; angle < 24; angle++)
-                            {
-                                double radians = angle * Math.PI / 12;
-                                int sampleX = x + (int)Math.Round(Math.Cos(radians) * geometry.ScaleX(radius));
-                                int sampleY = y + (int)Math.Round(Math.Sin(radians) * geometry.ScaleX(radius));
-                                if (sampleX < 0 || sampleY < 0 || sampleX >= frame.Width || sampleY >= frame.Height) continue;
-                                Color color = frame.GetPixel(sampleX, sampleY);
-                                if (Math.Max(color.R, Math.Max(color.G, color.B)) >= 205 &&
-                                    Math.Min(color.R, Math.Min(color.G, color.B)) >= 165) matches++;
-                                int innerX = x + (int)Math.Round(Math.Cos(radians) * geometry.ScaleX(radius - 5));
-                                int innerY = y + (int)Math.Round(Math.Sin(radians) * geometry.ScaleX(radius - 5));
-                                int outerX = x + (int)Math.Round(Math.Cos(radians) * geometry.ScaleX(radius + 5));
-                                int outerY = y + (int)Math.Round(Math.Sin(radians) * geometry.ScaleX(radius + 5));
-                                if (innerX < 0 || innerY < 0 || outerX < 0 || outerY < 0 ||
-                                    innerX >= frame.Width || innerY >= frame.Height || outerX >= frame.Width || outerY >= frame.Height) continue;
-                                Color inner = frame.GetPixel(innerX, innerY), outer = frame.GetPixel(outerX, outerY);
-                                if (ColorDifference(color, inner) >= 30 && ColorDifference(color, outer) >= 30) borderMatches++;
-                            }
-                            // C0 medallions use dark gray/element-colored rings
-                            // around a white lock, not an activated white ring.
-                            circle = matches >= 18 || borderMatches >= 14 && HasMedallionLock(frame, geometry, x, y);
-                            // Activated elemental rings have a very narrow
-                            // white rim inside a colored, animated halo. A
-                            // coarse center grid can miss that rim entirely.
-                            // The selected tab and interior icon corroborate
-                            // the tolerant radial edge test; four separate
-                            // expected rows are still required by the caller.
-                            if (!circle && glyph)
-                                circle = HasMedallionRing(frame, geometry, x, y, radius);
-                        }
-                    }
-                if (circle) found++;
+                if (FindMedallionAtRow(frame, geometry, expectedY, selected)) found++;
             }
             return found;
+        }
+
+        private static bool FindMedallionAtRow(Bitmap frame, Geometry geometry, int expectedY, bool selected)
+        {
+            bool circle = false;
+            for (int x = geometry.ScaleX(1478); x <= geometry.ScaleX(1645) && !circle; x += Math.Max(2, geometry.ScaleX(5)))
+                for (int y = expectedY - geometry.ScaleY(18); y <= expectedY + geometry.ScaleY(18) && !circle; y += Math.Max(2, geometry.ScaleY(5)))
+                {
+                    bool glyph = selected && HasMedallionGlyph(frame, geometry, x, y);
+                    for (int radius = 27; radius <= 38 && !circle; radius += 3)
+                        circle = MatchesMedallionCircle(frame, geometry, x, y, radius, glyph);
+                }
+            return circle;
+        }
+
+        private static bool MatchesMedallionCircle(Bitmap frame, Geometry geometry, int x, int y, int radius, bool glyph)
+        {
+            int matches, borderMatches;
+            SampleMedallionRing(frame, geometry, x, y, radius, out matches, out borderMatches);
+            // C0 medallions use dark gray/element-colored rings
+            // around a white lock, not an activated white ring.
+            bool circle = matches >= 18 || borderMatches >= 14 && HasMedallionLock(frame, geometry, x, y);
+            // Activated elemental rings have a very narrow
+            // white rim inside a colored, animated halo. A
+            // coarse center grid can miss that rim entirely.
+            // The selected tab and interior icon corroborate
+            // the tolerant radial edge test; four separate
+            // expected rows are still required by the caller.
+            if (!circle && glyph)
+                circle = HasMedallionRing(frame, geometry, x, y, radius);
+            return circle;
+        }
+
+        private static void SampleMedallionRing(Bitmap frame, Geometry geometry, int x, int y, int radius,
+            out int matches, out int borderMatches)
+        {
+            matches = 0;
+            borderMatches = 0;
+            for (int angle = 0; angle < 24; angle++)
+            {
+                double radians = angle * Math.PI / 12;
+                int sampleX = x + (int)Math.Round(Math.Cos(radians) * geometry.ScaleX(radius));
+                int sampleY = y + (int)Math.Round(Math.Sin(radians) * geometry.ScaleX(radius));
+                if (sampleX < 0 || sampleY < 0 || sampleX >= frame.Width || sampleY >= frame.Height) continue;
+                Color color = frame.GetPixel(sampleX, sampleY);
+                if (Math.Max(color.R, Math.Max(color.G, color.B)) >= 205 &&
+                    Math.Min(color.R, Math.Min(color.G, color.B)) >= 165) matches++;
+                int innerX = x + (int)Math.Round(Math.Cos(radians) * geometry.ScaleX(radius - 5));
+                int innerY = y + (int)Math.Round(Math.Sin(radians) * geometry.ScaleX(radius - 5));
+                int outerX = x + (int)Math.Round(Math.Cos(radians) * geometry.ScaleX(radius + 5));
+                int outerY = y + (int)Math.Round(Math.Sin(radians) * geometry.ScaleX(radius + 5));
+                if (innerX < 0 || innerY < 0 || outerX < 0 || outerY < 0 ||
+                    innerX >= frame.Width || innerY >= frame.Height || outerX >= frame.Width || outerY >= frame.Height) continue;
+                Color inner = frame.GetPixel(innerX, innerY), outer = frame.GetPixel(outerX, outerY);
+                if (ColorDifference(color, inner) >= 30 && ColorDifference(color, outer) >= 30) borderMatches++;
+            }
         }
 
         private static bool HasMedallionGlyph(Bitmap frame, Geometry geometry, int x, int y)
@@ -862,28 +992,35 @@ namespace InventoryKamera
             int maximumRun = Math.Max(minimumRun, frame.Width / 5);
             for (int y = (int)(frame.Height * 0.89); y < frame.Height * 0.965; y++)
             {
-                int start = -1, lastGreen = -1, greenPixels = 0;
-                for (int x = (int)(frame.Width * 0.39); x < frame.Width * 0.64; x++)
+                Rectangle? run = FindHealthBarRun(frame, y, minimumRun, maximumGap, maximumRun);
+                if (run.HasValue) return run;
+            }
+            return null;
+        }
+
+        private static Rectangle? FindHealthBarRun(Bitmap frame, int y, int minimumRun, int maximumGap, int maximumRun)
+        {
+            int start = -1, lastGreen = -1, greenPixels = 0;
+            for (int x = (int)(frame.Width * 0.39); x < frame.Width * 0.64; x++)
+            {
+                Color color = frame.GetPixel(x, y);
+                bool green = color.G >= 140 && color.G > color.R * 1.18 && color.G > color.B * 1.15;
+                if (green)
                 {
-                    Color color = frame.GetPixel(x, y);
-                    bool green = color.G >= 140 && color.G > color.R * 1.18 && color.G > color.B * 1.15;
-                    if (green)
-                    {
-                        if (start < 0) start = x;
-                        lastGreen = x;
-                        greenPixels++;
-                    }
-                    if (start >= 0 && ((!green && x - lastGreen > maximumGap) || x == (int)(frame.Width * 0.64) - 1))
-                    {
-                        int width = lastGreen - start + 1;
-                        // Bridge only short glyph-width gaps, then require a
-                        // predominantly green horizontal span. The Lunar bar
-                        // cannot qualify because its fill is blue/purple.
-                        if (width >= minimumRun && width <= maximumRun && greenPixels >= width * 0.60)
-                            return new Rectangle(start, y, width, 3);
-                        start = -1;
-                        greenPixels = 0;
-                    }
+                    if (start < 0) start = x;
+                    lastGreen = x;
+                    greenPixels++;
+                }
+                if (start >= 0 && ((!green && x - lastGreen > maximumGap) || x == (int)(frame.Width * 0.64) - 1))
+                {
+                    int width = lastGreen - start + 1;
+                    // Bridge only short glyph-width gaps, then require a
+                    // predominantly green horizontal span. The Lunar bar
+                    // cannot qualify because its fill is blue/purple.
+                    if (width >= minimumRun && width <= maximumRun && greenPixels >= width * 0.60)
+                        return new Rectangle(start, y, width, 3);
+                    start = -1;
+                    greenPixels = 0;
                 }
             }
             return null;

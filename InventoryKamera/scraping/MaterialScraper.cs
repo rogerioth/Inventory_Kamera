@@ -66,6 +66,29 @@ namespace InventoryKamera
 			if (materialPages.Contains(page)) inventoryPage = page;
 		}
 
+		/// <summary>Mutable material-walk state shared by the Scan_Materials phases.</summary>
+		private sealed class MaterialScanContext
+		{
+			internal readonly Inventory Inventory;
+			internal readonly HashSet<string> VisitedNames;
+			internal readonly ScanPhase Phase;
+			internal int Recorded;
+			internal Material Material = new Material(null, 0);
+			internal Material PreviousMaterial = new Material(null, -1);
+
+			internal MaterialScanContext(Inventory inventory, HashSet<string> visitedNames, ScanPhase phase)
+			{
+				Inventory = inventory;
+				VisitedNames = visitedNames;
+				Phase = phase;
+			}
+		}
+
+		private enum FinalMaterialStep
+		{
+			Normal, Disposed, SkipRest
+		}
+
 		public void Scan_Materials(Inventory inventory)
 		{
             var phase = inventoryPage == InventoryPage.CharacterDevelopmentItems
@@ -81,22 +104,15 @@ namespace InventoryKamera
 				inventory.Materials.Add(new Material("Mora", ScanMora()));
 			}
 
+			var context = new MaterialScanContext(inventory, visitedNames, phase);
 			int scrollCount = 0;
-
-			Material material = new Material(null, 0);
-			Material previousMaterial = new Material(null, -1);
-
-			List<Rectangle> rectangles;
 			int page = 1;
-
-			// Set when a repeat material ends the page walk; execution then falls
-			// through to the final-page pass (the former `goto LastPage`).
-			bool lastPageReached = false;
 
 			// Keep scanning while not repeating any items names
 			while (true)
 			{
 				int rows, cols;
+				List<Rectangle> rectangles;
 				// Find all items on the screen
 				(rectangles, cols, rows) = GetPageOfItems(page, acceptLess: true);
 
@@ -108,68 +124,9 @@ namespace InventoryKamera
 				Logger.Info("    Scanning {0} inventory page {1}...", inventoryPage, page);
 				Logger.Debug("Located {0} possible item locations on page.", rectangles.Count);
 
-				foreach (var rectangle in r)
-				{
-					// Select Material
-					Navigation.SetCursor(rectangle.Center().X, rectangle.Center().Y);
-					Navigation.Click();
-					Navigation.SystemWait(Navigation.Speed.SelectNextInventoryItem);
-
-					material.name = ScanMaterialName(out Bitmap nameplate);
-					material.count = 0;
-
-					// Check if new material has been found
-					if (!string.IsNullOrEmpty(material.name) && visitedNames.Contains(material.name))
-					{
-						Logger.Debug("Repeat material found. Scrolling until end");
-						nameplate.Dispose();
-						// Skip the rest of this page and the scroll to the next one;
-						// the final-page pass below takes over.
-						lastPageReached = true;
-						break;
-					}
-					else
-					{
-						if (!string.IsNullOrEmpty(material.name))
-						{
-							if (!GenshinProcesor.IsValidMaterial(material.name))
-							{
-								// Unknown material (e.g. a newly added item that is missing from
-								// the material data). Report and skip instead of aborting or
-								// exporting an unrecognized name.
-								Logger.Error("        [FAILURE] Material '{0}' could not be matched to the material data. Skipping material.", material.name);
-							}
-							else
-							{
-								// Scan Material Quantity
-								Logger.Info("        Scanning {0}'s quantity...", material.name);
-                                visitedNames.Add(material.name);
-                                int? count = ScanMaterialCountWithContext(rectangle, page,
-                                    r.IndexOf(rectangle) + 1, material.name, out Bitmap quantity);
-                                using (quantity)
-                                {
-                                    if (count.HasValue)
-                                    {
-                                        material.count = count.Value;
-                                        if (inventory.Materials.Add(material))
-                                            UserInterface.ReportScanProgress(phase, ++recorded);
-                                        Logger.Info("            {0}: quantity {1}", material.name, material.count);
-                                        UserInterface.ResetCharacterDisplay();
-                                        UserInterface.SetMaterial(nameplate, quantity, material.name, material.count);
-                                    }
-                                }
-
-								previousMaterial.name = material.name;
-							}
-						}
-					}
-					nameplate.Dispose();
-					Navigation.Wait(150);
-				}
-
 				// Same exit point as the former `goto LastPage`: the remaining
 				// page-advance work below is skipped when a repeat was found.
-				if (lastPageReached) break;
+				if (ScanMaterialPageItems(context, r, page)) break;
 
 				Navigation.SetCursor(r[r.Count - 1].Center().X, r[r.Count - 1].Center().Y);
 				Navigation.Click();
@@ -177,39 +134,7 @@ namespace InventoryKamera
 
 				Logger.Debug("Finished page of materials. Scrolling...");
 
-				// Scroll to next page
-				for (int i = 0; i < rows - 1; i++)
-				{
-					scrollCount++;
-
-					// scroll down
-					// While-loop form of the former `for (k = 0; k < 10; k++)`: the
-					// skip below bumps `k` inside the body, and the increment at the
-					// loop end preserves the original 0..7,9 iteration sequence.
-					int k = 0;
-					while (k < 10)
-					{
-						Navigation.sim.Mouse.VerticalScroll(-1);
-						// skip a scroll
-						if (( k == 7 ) && ( ( scrollCount % 3 ) == 0 ))
-						{
-							k++;
-							if (scrollCount % 9 == 0)
-							{
-								if (scrollCount == 18)
-								{
-									scrollCount = 0;
-								}
-								else
-								{
-									Navigation.sim.Mouse.VerticalScroll(-1);
-								}
-							}
-						}
-						Navigation.SystemWait(Navigation.Speed.InventoryScroll);
-						k++;
-					}
-				}
+				ScrollToNextMaterialPage(rows, ref scrollCount);
 				Navigation.SystemWait(Navigation.Speed.Normal);
 				++page;
 			}
@@ -224,7 +149,114 @@ namespace InventoryKamera
 
 			Navigation.Wait(500);
 
-			(rectangles, _, _) = GetPageOfItems(page, acceptLess: true);
+			List<Rectangle> finalRectangles;
+			(finalRectangles, _, _) = GetPageOfItems(page, acceptLess: true);
+			ScanFinalMaterialPage(context, finalRectangles, page);
+			UserInterface.FinishScanPhase(phase, context.Recorded);
+		}
+
+		private bool ScanMaterialPageItems(MaterialScanContext context, List<Rectangle> r, int page)
+		{
+			foreach (var rectangle in r)
+			{
+				// Select Material
+				Navigation.SetCursor(rectangle.Center().X, rectangle.Center().Y);
+				Navigation.Click();
+				Navigation.SystemWait(Navigation.Speed.SelectNextInventoryItem);
+
+				context.Material.name = ScanMaterialName(out Bitmap nameplate);
+				context.Material.count = 0;
+
+				// Check if new material has been found
+				if (!string.IsNullOrEmpty(context.Material.name) && context.VisitedNames.Contains(context.Material.name))
+				{
+					Logger.Debug("Repeat material found. Scrolling until end");
+					nameplate.Dispose();
+					// Skip the rest of this page and the scroll to the next one;
+					// the final-page pass below takes over.
+					return true;
+				}
+				ScanNamedMaterial(context, rectangle, page, r.IndexOf(rectangle) + 1, nameplate);
+				nameplate.Dispose();
+				Navigation.Wait(150);
+			}
+			return false;
+		}
+
+		private void ScanNamedMaterial(MaterialScanContext context, Rectangle rectangle, int page, int item, Bitmap nameplate)
+		{
+			if (string.IsNullOrEmpty(context.Material.name)) return;
+			if (!GenshinProcesor.IsValidMaterial(context.Material.name))
+			{
+				// Unknown material (e.g. a newly added item that is missing from
+				// the material data). Report and skip instead of aborting or
+				// exporting an unrecognized name.
+				Logger.Error("        [FAILURE] Material '{0}' could not be matched to the material data. Skipping material.", context.Material.name);
+				return;
+			}
+
+			// Scan Material Quantity
+			Logger.Info("        Scanning {0}'s quantity...", context.Material.name);
+			context.VisitedNames.Add(context.Material.name);
+			int? count = ScanMaterialCountWithContext(rectangle, page, item,
+				context.Material.name, out Bitmap quantity);
+			ExportMaterialQuantity(context, nameplate, quantity, count);
+			context.PreviousMaterial.name = context.Material.name;
+		}
+
+		private static void ExportMaterialQuantity(MaterialScanContext context, Bitmap nameplate, Bitmap quantity, int? count)
+		{
+			using (quantity)
+			{
+				if (!count.HasValue) return;
+				context.Material.count = count.Value;
+				if (context.Inventory.Materials.Add(context.Material))
+					UserInterface.ReportScanProgress(context.Phase, ++context.Recorded);
+				Logger.Info("            {0}: quantity {1}", context.Material.name, context.Material.count);
+				UserInterface.ResetCharacterDisplay();
+				UserInterface.SetMaterial(nameplate, quantity, context.Material.name, context.Material.count);
+			}
+		}
+
+		private static void ScrollToNextMaterialPage(int rows, ref int scrollCount)
+		{
+			// Scroll to next page
+			for (int i = 0; i < rows - 1; i++)
+			{
+				scrollCount++;
+
+				// scroll down
+				// While-loop form of the former `for (k = 0; k < 10; k++)`: the
+				// skip below bumps `k` inside the body, and the increment at the
+				// loop end preserves the original 0..7,9 iteration sequence.
+				int k = 0;
+				while (k < 10)
+				{
+					Navigation.sim.Mouse.VerticalScroll(-1);
+					// skip a scroll
+					if (( k == 7 ) && ( ( scrollCount % 3 ) == 0 ))
+					{
+						k++;
+						if (scrollCount % 9 == 0)
+						{
+							if (scrollCount == 18)
+							{
+								scrollCount = 0;
+							}
+							else
+							{
+								Navigation.sim.Mouse.VerticalScroll(-1);
+							}
+						}
+					}
+					Navigation.SystemWait(Navigation.Speed.InventoryScroll);
+					k++;
+				}
+			}
+		}
+
+		private void ScanFinalMaterialPage(MaterialScanContext context, List<Rectangle> rectangles, int page)
+		{
 			bool passby = true;
 			for (int i = rectangles.Count - 1; i >= 0; i--) // Click through but backwards to short-circuit after new materials
 			{
@@ -234,60 +266,58 @@ namespace InventoryKamera
 				Navigation.Click();
 				Navigation.SystemWait(Navigation.Speed.SelectNextInventoryItem);
 
-				material.name = ScanMaterialName(out Bitmap nameplate);
-				material.count = 0;
+				context.Material.name = ScanMaterialName(out Bitmap nameplate);
+				context.Material.count = 0;
 
-				bool visited = !string.IsNullOrEmpty(material.name) && visitedNames.Contains(material.name);
+				bool visited = !string.IsNullOrEmpty(context.Material.name) && context.VisitedNames.Contains(context.Material.name);
 				if (visited && passby)
                 {
                     nameplate.Dispose();
                     continue;
                 }
 
-				if (!visited)
+				FinalMaterialStep step = StepFinalMaterial(context, rectangle, page, i + 1, nameplate, visited, ref passby);
+				if (step == FinalMaterialStep.SkipRest)
 				{
-					if (!string.IsNullOrEmpty(material.name))
-					{
-						if (!GenshinProcesor.IsValidMaterial(material.name))
-						{
-							// Unknown material (e.g. a newly added item that is missing from
-							// the material data). Report and skip instead of aborting or
-							// exporting an unrecognized name.
-							Logger.Error("        [FAILURE] Material '{0}' could not be matched to the material data. Skipping material.", material.name);
-							nameplate.Dispose();
-							continue;
-						}
-
-						// Scan Material Number
-						Logger.Info("        Scanning {0}'s quantity...", material.name);
-                        visitedNames.Add(material.name);
-                        int? count = ScanMaterialCountWithContext(rectangle, page, i + 1,
-                            material.name, out Bitmap quantity);
-                        using (quantity)
-                        {
-                            if (count.HasValue)
-                            {
-                                material.count = count.Value;
-                                if (inventory.Materials.Add(material))
-                                    UserInterface.ReportScanProgress(phase, ++recorded);
-                                Logger.Info("            {0}: quantity {1}", material.name, material.count);
-                                UserInterface.ResetCharacterDisplay();
-                                UserInterface.SetMaterial(nameplate, quantity, material.name, material.count);
-                            }
-                        }
-						passby = false; // New material found so break on next old material
-					}
-				}
-				else
-				{
-					Logger.Debug("Last material visited, {0}.", material.name);
-					nameplate.Dispose();
 					break;
 				}
+				if (step == FinalMaterialStep.Disposed)
+                {
+					continue;
+                }
 				Navigation.Wait(150);
 				nameplate.Dispose();
 			}
-            UserInterface.FinishScanPhase(phase, recorded);
+		}
+
+		private FinalMaterialStep StepFinalMaterial(MaterialScanContext context, Rectangle rectangle, int page, int item,
+			Bitmap nameplate, bool visited, ref bool passby)
+		{
+			if (visited)
+			{
+				Logger.Debug("Last material visited, {0}.", context.Material.name);
+				nameplate.Dispose();
+				return FinalMaterialStep.SkipRest;
+			}
+			if (string.IsNullOrEmpty(context.Material.name)) return FinalMaterialStep.Normal;
+			if (!GenshinProcesor.IsValidMaterial(context.Material.name))
+			{
+				// Unknown material (e.g. a newly added item that is missing from
+				// the material data). Report and skip instead of aborting or
+				// exporting an unrecognized name.
+				Logger.Error("        [FAILURE] Material '{0}' could not be matched to the material data. Skipping material.", context.Material.name);
+				nameplate.Dispose();
+				return FinalMaterialStep.Disposed;
+			}
+
+			// Scan Material Number
+			Logger.Info("        Scanning {0}'s quantity...", context.Material.name);
+			context.VisitedNames.Add(context.Material.name);
+			int? count = ScanMaterialCountWithContext(rectangle, page, item,
+				context.Material.name, out Bitmap quantity);
+			ExportMaterialQuantity(context, nameplate, quantity, count);
+			passby = false; // New material found so break on next old material
+			return FinalMaterialStep.Normal;
 		}
 
 		private int ScanMora()
@@ -458,6 +488,27 @@ namespace InventoryKamera
         {
             var reads = new List<string>();
             var votes = new Dictionary<int, int>();
+            int? exact = VoteLegacyScales(screenshot, reads, votes, out diagnostics);
+            if (exact.HasValue) return exact;
+            int? winner = ResolveQuantityVotes(votes);
+            if (winner.HasValue)
+            {
+                diagnostics = string.Join("; ", reads) + $"; decision=vote:{winner.Value}; votes={FormatQuantityVotes(votes)}";
+                return winner;
+            }
+
+            // The card-bottom capture can contain rarity stars and the selected
+            // card's bottom border. Locate the complete digit line from its ink
+            // rather than cutting at a fixed percentage of the capture height.
+            MeasureFocusedQuantityCrop(screenshot, reads, votes);
+            winner = ResolveQuantityVotes(votes);
+            diagnostics = string.Join("; ", reads) + $"; decision={(winner.HasValue ? winner.Value.ToString() : "unresolved")}; votes={FormatQuantityVotes(votes)}";
+            return winner;
+        }
+
+        private static int? VoteLegacyScales(Bitmap screenshot, List<string> reads, Dictionary<int, int> votes,
+            out string diagnostics)
+        {
             var range = new Accord.IntRange(0, 150);
             for (double scale = 1; scale <= 3; scale += 0.5)
             {
@@ -494,50 +545,41 @@ namespace InventoryKamera
                     finally { copy.Dispose(); }
                 }
             }
-            int? winner = ResolveQuantityVotes(votes);
-            if (winner.HasValue)
-            {
-                diagnostics = string.Join("; ", reads) + $"; decision=vote:{winner.Value}; votes={FormatQuantityVotes(votes)}";
-                return winner;
-            }
+            diagnostics = null;
+            return null;
+        }
 
-            // The card-bottom capture can contain rarity stars and the selected
-            // card's bottom border. Locate the complete digit line from its ink
-            // rather than cutting at a fixed percentage of the capture height.
+        private static void MeasureFocusedQuantityCrop(Bitmap screenshot, List<string> reads, Dictionary<int, int> votes)
+        {
             Rectangle? ink = FindQuantityInkBounds(screenshot);
             reads.Add("focused-crop=" + (ink.HasValue ? ink.Value.ToString() : "no digit ink"));
             votes.Clear();
-            if (ink.HasValue)
+            if (!ink.HasValue) return;
+            using (Bitmap digits = screenshot.Clone(ink.Value, System.Drawing.Imaging.PixelFormat.Format24bppRgb))
+            using (Bitmap scaled = GenshinProcesor.ResizeImage(digits, digits.Width * 4, digits.Height * 4))
+            using (Bitmap gray = GenshinProcesor.ConvertToGrayscale(scaled))
             {
-                using (Bitmap digits = screenshot.Clone(ink.Value, System.Drawing.Imaging.PixelFormat.Format24bppRgb))
-                using (Bitmap scaled = GenshinProcesor.ResizeImage(digits, digits.Width * 4, digits.Height * 4))
-                using (Bitmap gray = GenshinProcesor.ConvertToGrayscale(scaled))
+                // A clear border improves segmentation for tiny quantities.
+                using (Bitmap padded = new Bitmap(gray.Width + 24, gray.Height + 24))
                 {
-                    // A clear border improves segmentation for tiny quantities.
-                    using (Bitmap padded = new Bitmap(gray.Width + 24, gray.Height + 24))
+                    using (Graphics graphics = Graphics.FromImage(padded))
                     {
-                        using (Graphics graphics = Graphics.FromImage(padded))
+                        graphics.Clear(Color.White);
+                        graphics.DrawImageUnscaled(gray, 12, 12);
+                    }
+                    foreach (var mode in new[] { Tesseract.PageSegMode.SingleLine, Tesseract.PageSegMode.SingleWord })
+                    {
+                        string raw = ReadQuantityText(padded, mode, true, "focused grayscale " + mode, reads);
+                        if (TryPositiveQuantity(raw, out int candidate)) AddQuantityVote(votes, candidate);
+                        using (Bitmap paddedGray = GenshinProcesor.ConvertToGrayscale(padded))
+                        using (Bitmap binary = new Threshold(160).Apply(paddedGray))
                         {
-                            graphics.Clear(Color.White);
-                            graphics.DrawImageUnscaled(gray, 12, 12);
-                        }
-                        foreach (var mode in new[] { Tesseract.PageSegMode.SingleLine, Tesseract.PageSegMode.SingleWord })
-                        {
-                            string raw = ReadQuantityText(padded, mode, true, "focused grayscale " + mode, reads);
-                            if (TryPositiveQuantity(raw, out int candidate)) AddQuantityVote(votes, candidate);
-                            using (Bitmap paddedGray = GenshinProcesor.ConvertToGrayscale(padded))
-                            using (Bitmap binary = new Threshold(160).Apply(paddedGray))
-                            {
-                                raw = ReadQuantityText(binary, mode, true, "focused threshold160 " + mode, reads);
-                                if (TryPositiveQuantity(raw, out candidate)) AddQuantityVote(votes, candidate);
-                            }
+                            raw = ReadQuantityText(binary, mode, true, "focused threshold160 " + mode, reads);
+                            if (TryPositiveQuantity(raw, out candidate)) AddQuantityVote(votes, candidate);
                         }
                     }
                 }
             }
-            winner = ResolveQuantityVotes(votes);
-            diagnostics = string.Join("; ", reads) + $"; decision={(winner.HasValue ? winner.Value.ToString() : "unresolved")}; votes={FormatQuantityVotes(votes)}";
-            return winner;
         }
 
         private static string ReadQuantityText(Bitmap image, Tesseract.PageSegMode mode, bool numbersOnly,
@@ -584,6 +626,13 @@ namespace InventoryKamera
             return string.Join(",", votes.OrderBy(v => v.Key).Select(v => v.Key + "x" + v.Value));
         }
 
+        private struct QuantityInkRow
+        {
+            internal int Left;
+            internal int Right;
+            internal int InkCount;
+        }
+
         private static Rectangle? FindQuantityInkBounds(Bitmap image)
         {
             int margin = Math.Max(2, image.Width / 30);
@@ -593,46 +642,61 @@ namespace InventoryKamera
             int left = image.Width, right = -1, top = -1, bottom = -1;
             for (int y = 0; y <= image.Height; y++)
             {
-                int rowLeft = image.Width, rowRight = -1, inkCount = 0;
+                QuantityInkRow row = new QuantityInkRow { Left = image.Width, Right = -1, InkCount = 0 };
                 if (y < image.Height)
-                {
-                    for (int x = margin; x < image.Width - margin; x++)
-                    {
-                        Color color = image.GetPixel(x, y);
-                        int high = Math.Max(color.R, Math.Max(color.G, color.B));
-                        int low = Math.Min(color.R, Math.Min(color.G, color.B));
-                        if (high > 175 || high - low > 75) continue;
-                        inkCount++;
-                        rowLeft = Math.Min(rowLeft, x); rowRight = Math.Max(rowRight, x);
-                    }
-                }
+                    row = ScanQuantityInkRow(image, y, margin);
                 // Broad horizontal ink is a frame/background, not quantity
                 // glyphs. It must not enlarge the text crop to the whole tile.
-                bool textRow = inkCount > 0 && inkCount < interiorWidth * 0.6;
+                bool textRow = row.InkCount > 0 && row.InkCount < interiorWidth * 0.6;
                 if (textRow)
                 {
                     if (top < 0) top = y;
                     bottom = y;
-                    left = Math.Min(left, rowLeft); right = Math.Max(right, rowRight);
+                    left = Math.Min(left, row.Left); right = Math.Max(right, row.Right);
                     continue;
                 }
-                if (top >= 0 && top > 0 && bottom < image.Height - 1 &&
-                    bottom - top + 1 >= Math.Max(3, (int)(image.Height * 0.12)) &&
-                    right - left + 1 < interiorWidth * 0.85 &&
-                    left <= image.Width * 0.6 && right >= image.Width * 0.4)
+                if (IsCompleteQuantityLine(image, interiorWidth, left, right, top, bottom))
                 {
                     // Quantities are centered below the stars. The lowest
                     // eligible line wins; edge fragments and wide star bands
                     // cannot stand in for the complete quantity line.
-                    int paddedLeft = Math.Max(margin, left - 2);
-                    int paddedRight = Math.Min(image.Width - margin - 1, right + 2);
-                    int paddedTop = Math.Max(0, top - 2);
-                    int paddedBottom = Math.Min(image.Height - 1, bottom + 2);
-                    candidate = Rectangle.FromLTRB(paddedLeft, paddedTop, paddedRight + 1, paddedBottom + 1);
+                    candidate = PadQuantityLine(image, margin, left, right, top, bottom);
                 }
                 left = image.Width; right = -1; top = -1; bottom = -1;
             }
             return candidate;
+        }
+
+        private static QuantityInkRow ScanQuantityInkRow(Bitmap image, int y, int margin)
+        {
+            var row = new QuantityInkRow { Left = image.Width, Right = -1, InkCount = 0 };
+            for (int x = margin; x < image.Width - margin; x++)
+            {
+                Color color = image.GetPixel(x, y);
+                int high = Math.Max(color.R, Math.Max(color.G, color.B));
+                int low = Math.Min(color.R, Math.Min(color.G, color.B));
+                if (high > 175 || high - low > 75) continue;
+                row.InkCount++;
+                row.Left = Math.Min(row.Left, x); row.Right = Math.Max(row.Right, x);
+            }
+            return row;
+        }
+
+        private static bool IsCompleteQuantityLine(Bitmap image, int interiorWidth, int left, int right, int top, int bottom)
+        {
+            return top >= 0 && top > 0 && bottom < image.Height - 1 &&
+                bottom - top + 1 >= Math.Max(3, (int)(image.Height * 0.12)) &&
+                right - left + 1 < interiorWidth * 0.85 &&
+                left <= image.Width * 0.6 && right >= image.Width * 0.4;
+        }
+
+        private static Rectangle PadQuantityLine(Bitmap image, int margin, int left, int right, int top, int bottom)
+        {
+            int paddedLeft = Math.Max(margin, left - 2);
+            int paddedRight = Math.Min(image.Width - margin - 1, right + 2);
+            int paddedTop = Math.Max(0, top - 2);
+            int paddedBottom = Math.Min(image.Height - 1, bottom + 2);
+            return Rectangle.FromLTRB(paddedLeft, paddedTop, paddedRight + 1, paddedBottom + 1);
         }
     }
 }

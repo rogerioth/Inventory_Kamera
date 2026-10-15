@@ -692,9 +692,7 @@ namespace InventoryKamera
 
             try
             {
-                string path = Path.Combine(ListsDir, CharactersJson);
-                if (!force && File.Exists(path))
-                    data = JObject.Parse(File.ReadAllText(path)).ToObject<ConcurrentDictionary<string, JObject>>();
+                data = LoadExistingCharacterData(force);
                 var avatars = JArray.Parse(LoadJsonFromURLAsync(CharactersURL));
                 var characters = avatars.ToObject<List<JObject>>();
                 var constellations = JArray.Parse(LoadJsonFromURLAsync(ConstellationsURL)).ToObject<List<JObject>>();
@@ -704,27 +702,14 @@ namespace InventoryKamera
                 var skills = skillDefinitions.ToObject<List<JObject>>();
                 traveler = BuildTravelerData(avatars, JArray.Parse(LoadJsonFromURLAsync(SkillDepotsURL)),
                     skillDefinitions, talentDefinitions, Mappings);
-                var rebuilt = JObject.FromObject(data);
-                bool travelerChanged = UpsertTraveler(rebuilt, traveler);
-                data = rebuilt.ToObject<ConcurrentDictionary<string, JObject>>();
+                bool travelerChanged;
+                data = MergeTravelerData(data, traveler, out travelerChanged);
                 if (travelerChanged || TravelerUpdateRequiredCore()) status = UpdateStatus.Success;
 
-                characters.RemoveAll(c => !c.ContainsKey("useType") || c["useType"].ToString() != "AVATAR_FORMAL"
-                    || (int?)c["id"] == 10000005 || (int?)c["id"] == 10000007);
+                RemoveNonPlayableAvatars(characters);
 
                 Logger.Debug("Found {0} playable characters available", characters.Count);
-                characters.AsParallel().ForAll(character =>
-                {
-                    // One unmapped hash must not abort the whole parallel update.
-                    if (!Mappings.TryGetValue(character[NameTextMapHashKey]?.ToString() ?? string.Empty, out string mappedName) || string.IsNullOrWhiteSpace(mappedName))
-                    {
-                        Logger.Warn("Skipping avatar {0}: name hash {1} has no TextMap entry.", character["id"], character[NameTextMapHashKey]?.ToString());
-                        return;
-                    }
-
-                    if (RecordNewCharacter(character, mappedName, data, skills, talents, constellations))
-                        status = UpdateStatus.Success;
-                });
+                status = RecordPlayableCharacters(characters, data, skills, talents, constellations, status);
             }
             catch (Exception ex)
             {
@@ -734,13 +719,59 @@ namespace InventoryKamera
 
             if (status == UpdateStatus.Success)
             {
-                bool saved = IsPlausibleCount(ListType.Characters, data.Count)
-                    && SaveJsonToFile(JsonConvert.SerializeObject(new SortedDictionary<string, JObject>(data)), CharactersJson);
-
-                if (!saved || !SaveTravelerMetadata(traveler)) status = UpdateStatus.Fail;
+                status = SaveUpdatedCharacters(data, traveler);
             }
 
             return status;
+        }
+
+        private ConcurrentDictionary<string, JObject> LoadExistingCharacterData(bool force)
+        {
+            string path = Path.Combine(ListsDir, CharactersJson);
+            if (!force && File.Exists(path))
+                return JObject.Parse(File.ReadAllText(path)).ToObject<ConcurrentDictionary<string, JObject>>();
+            return new ConcurrentDictionary<string, JObject>();
+        }
+
+        private static ConcurrentDictionary<string, JObject> MergeTravelerData(ConcurrentDictionary<string, JObject> data,
+            JObject traveler, out bool travelerChanged)
+        {
+            var rebuilt = JObject.FromObject(data);
+            travelerChanged = UpsertTraveler(rebuilt, traveler);
+            return rebuilt.ToObject<ConcurrentDictionary<string, JObject>>();
+        }
+
+        private static void RemoveNonPlayableAvatars(List<JObject> characters)
+        {
+            characters.RemoveAll(c => !c.ContainsKey("useType") || c["useType"].ToString() != "AVATAR_FORMAL"
+                || (int?)c["id"] == 10000005 || (int?)c["id"] == 10000007);
+        }
+
+        private UpdateStatus RecordPlayableCharacters(List<JObject> characters, ConcurrentDictionary<string, JObject> data,
+            List<JObject> skills, List<JObject> talents, List<JObject> constellations, UpdateStatus status)
+        {
+            characters.AsParallel().ForAll(character =>
+            {
+                // One unmapped hash must not abort the whole parallel update.
+                if (!Mappings.TryGetValue(character[NameTextMapHashKey]?.ToString() ?? string.Empty, out string mappedName) || string.IsNullOrWhiteSpace(mappedName))
+                {
+                    Logger.Warn("Skipping avatar {0}: name hash {1} has no TextMap entry.", character["id"], character[NameTextMapHashKey]?.ToString());
+                    return;
+                }
+
+                if (RecordNewCharacter(character, mappedName, data, skills, talents, constellations))
+                    status = UpdateStatus.Success;
+            });
+            return status;
+        }
+
+        private UpdateStatus SaveUpdatedCharacters(ConcurrentDictionary<string, JObject> data, JObject traveler)
+        {
+            bool saved = IsPlausibleCount(ListType.Characters, data.Count)
+                && SaveJsonToFile(JsonConvert.SerializeObject(new SortedDictionary<string, JObject>(data)), CharactersJson);
+
+            if (!saved || !SaveTravelerMetadata(traveler)) return UpdateStatus.Fail;
+            return UpdateStatus.Success;
         }
 
         private bool RecordNewCharacter(JObject character, string mappedName, ConcurrentDictionary<string, JObject> data,

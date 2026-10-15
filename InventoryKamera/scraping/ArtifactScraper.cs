@@ -64,37 +64,11 @@ namespace InventoryKamera
 					Navigation.Click();
 					Navigation.SystemWait(Navigation.Speed.SelectNextInventoryItem);
 
-					// Queue card for scanning. If the card could not be read, re-capture
-					// it a bounded number of times before skipping the item so that a
-					// single unreadable (e.g. sanctified) artifact can never stop or
-					// stall the rest of the scan.
-					int attempts = 1;
-					while (!QueueScan(cardsQueued))
-					{
-						if (attempts >= MaxCardReadAttempts)
-						{
-							Logger.Error("    [FAILURE] Artifact #{0}: card could not be read after {1} attempts. Skipping artifact.", cardsQueued, attempts);
-							break;
-						}
-						attempts++;
-						Navigation.SetCursor(item.Center().X, item.Center().Y);
-						Navigation.Click();
-						Navigation.SystemWait(Navigation.Speed.SelectNextInventoryItem);
-					}
+					QueueArtifactCard(item, cardsQueued);
 					cardsQueued++;
                     UserInterface.ReportScanProgress(ScanPhase.Artifacts, cardsQueued, artifactCount);
-					if (cardsQueued >= artifactCount || StopScanning)
+					if (FinishArtifactCapture(cardsQueued, artifactCount))
 					{
-						if (StopScanning)
-						{
-							Logger.Info("    Artifact capture finished at the configured filters");
-						}
-						else
-						{
-							Logger.Info("    Artifact capture finished: {0} of {1} cards queued", cardsQueued, artifactCount);
-						}
-                        UserInterface.FinishScanPhase(ScanPhase.Artifacts, cardsQueued, artifactCount,
-                            StopScanning ? "Stopped at configured filters" : null);
 						return;
 					}
 				}
@@ -103,43 +77,85 @@ namespace InventoryKamera
 
 				rowsQueued += rows;
 
-				// Page done, now scroll
-				// If the number of remaining scans is shorter than a full page then
-				// only scroll a few rows
-				if (totalRows - rowsQueued <= rows)
-				{
-					for (int i = 0; i < 10 * ( totalRows - rowsQueued ) - 1; i++)
-					{
-						Navigation.sim.Mouse.VerticalScroll(-1);
-						Navigation.Wait(1);
-					}
-					Navigation.SystemWait(Navigation.Speed.Fast);
-				}
-				else
-				{
-                    
-                    for (int i = 0; i < 10 * rows - 1; i++)
-					{
-						Navigation.sim.Mouse.VerticalScroll(-1);
-						Navigation.Wait(1);
-					}
-                    // Scroll back one to keep it from getting too crazy.
-                    // On 16:10 the artifact grid pages differently, so roll back
-                    // more often to keep the scroll position from drifting.
-                    // (Ported from taiwenlee/Inventory_Kamera (MIT): a5d1c776)
-                    var rollbackPeriod = Navigation.IsNormal ? 12 : 3;
-                    if (page % rollbackPeriod == 0)
-                    {
-						Logger.Debug("Scrolled back one");
-						Navigation.sim.Mouse.VerticalScroll(1);
-						Navigation.Wait(1);
-                    }
-                    Navigation.SystemWait(Navigation.Speed.Fast);
-				}
+				ScrollArtifactPage(page, rowsQueued, totalRows, rows);
 				++page;
 				(rectangles, cols, rows) = GetPageOfItems(page, acceptLess: totalRows - rowsQueued <= fullPage);
 			}
             UserInterface.FinishScanPhase(ScanPhase.Artifacts, cardsQueued, artifactCount);
+		}
+
+		private void QueueArtifactCard(Rectangle item, int cardsQueued)
+		{
+			// Queue card for scanning. If the card could not be read, re-capture
+			// it a bounded number of times before skipping the item so that a
+			// single unreadable (e.g. sanctified) artifact can never stop or
+			// stall the rest of the scan.
+			int attempts = 1;
+			while (!QueueScan(cardsQueued))
+			{
+				if (attempts >= MaxCardReadAttempts)
+				{
+					Logger.Error("    [FAILURE] Artifact #{0}: card could not be read after {1} attempts. Skipping artifact.", cardsQueued, attempts);
+					break;
+				}
+				attempts++;
+				Navigation.SetCursor(item.Center().X, item.Center().Y);
+				Navigation.Click();
+				Navigation.SystemWait(Navigation.Speed.SelectNextInventoryItem);
+			}
+		}
+
+		private bool FinishArtifactCapture(int cardsQueued, int artifactCount)
+		{
+			if (cardsQueued < artifactCount && !StopScanning) return false;
+			if (StopScanning)
+			{
+				Logger.Info("    Artifact capture finished at the configured filters");
+			}
+			else
+			{
+				Logger.Info("    Artifact capture finished: {0} of {1} cards queued", cardsQueued, artifactCount);
+			}
+            UserInterface.FinishScanPhase(ScanPhase.Artifacts, cardsQueued, artifactCount,
+                StopScanning ? "Stopped at configured filters" : null);
+			return true;
+		}
+
+		private static void ScrollArtifactPage(int page, int rowsQueued, int totalRows, int rows)
+		{
+			// Page done, now scroll
+			// If the number of remaining scans is shorter than a full page then
+			// only scroll a few rows
+			if (totalRows - rowsQueued <= rows)
+			{
+				for (int i = 0; i < 10 * ( totalRows - rowsQueued ) - 1; i++)
+				{
+					Navigation.sim.Mouse.VerticalScroll(-1);
+					Navigation.Wait(1);
+				}
+				Navigation.SystemWait(Navigation.Speed.Fast);
+			}
+			else
+			{
+
+                for (int i = 0; i < 10 * rows - 1; i++)
+				{
+					Navigation.sim.Mouse.VerticalScroll(-1);
+					Navigation.Wait(1);
+				}
+                // Scroll back one to keep it from getting too crazy.
+                // On 16:10 the artifact grid pages differently, so roll back
+                // more often to keep the scroll position from drifting.
+                // (Ported from taiwenlee/Inventory_Kamera (MIT): a5d1c776)
+                var rollbackPeriod = Navigation.IsNormal ? 12 : 3;
+                if (page % rollbackPeriod == 0)
+                {
+					Logger.Debug("Scrolled back one");
+					Navigation.sim.Mouse.VerticalScroll(1);
+					Navigation.Wait(1);
+                }
+                Navigation.SystemWait(Navigation.Speed.Fast);
+			}
 		}
 
         private static void ClearFilters()
@@ -536,43 +552,8 @@ namespace InventoryKamera
             {
                 var line = Regex.Replace(lines[i], @"(?:^[^a-zA-Z]*)", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout).Replace(" ", string.Empty);
 
-				if (line.Any(char.IsDigit))
-				{
-					Logger.Debug("Parsing artifact substat: {0}", line);
-
-					SubStat substat = new SubStat();
-					Regex re = new Regex(@"^(.*?)(\d+.*)", RegexOptions.None, RegexTimeouts.RegexTimeout);
-					var result = re.Match(line);
-					var stat = Regex.Replace(result.Groups[1].Value, @"[^\w]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
-					var value = result.Groups[2].Value;
-
-					string name = line.Contains("%") ? stat + "%" : stat;
-
-					substat.Stat = GenshinProcesor.FindClosestStat(name, 80) ?? "";
-
-					// Remove any non digits.
-					value = Regex.Replace(value, @"[^0-9]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
-
-					// Try to parse number
-					if (!decimal.TryParse(value, out decimal parsedValue))
-					{
-						Logger.Debug("Failed to parse stat value from: {0}", line);
-						parsedValue = -1;
-					}
-					substat.Value = parsedValue;
-
-					if (substat.Value != -1 && substat.Stat.Contains("_"))
-					{
-						substat.Value /= 10;
-					}
-
-					if (string.IsNullOrWhiteSpace(substat.Stat) || substat.Value == -1)
-					{
-						Logger.Debug("Failed to parse stat from: {0}", line);
-					}
-
-					substats.Insert(i, substat);
-				}
+                SubStat? parsedSubstat = ParseSubStatLine(line);
+                if (parsedSubstat.HasValue) substats.Insert(i, parsedSubstat.Value);
             }
 
 			// (Ported from taiwenlee/Inventory_Kamera (MIT): 63ba93ff)
@@ -595,6 +576,47 @@ namespace InventoryKamera
             return (substats, unactivated);
         }
 
+        // Parses one artifact substat row into a SubStat, or returns null when the
+        // line carries no digit (headers, separators, OCR noise).
+        private static SubStat? ParseSubStatLine(string line)
+        {
+            if (!line.Any(char.IsDigit)) return null;
+
+            Logger.Debug("Parsing artifact substat: {0}", line);
+
+            SubStat substat = new SubStat();
+            Regex re = new Regex(@"^(.*?)(\d+.*)", RegexOptions.None, RegexTimeouts.RegexTimeout);
+            var result = re.Match(line);
+            var stat = Regex.Replace(result.Groups[1].Value, @"[^\w]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
+            var value = result.Groups[2].Value;
+
+            string name = line.Contains("%") ? stat + "%" : stat;
+
+            substat.Stat = GenshinProcesor.FindClosestStat(name, 80) ?? "";
+
+            // Remove any non digits.
+            value = Regex.Replace(value, @"[^0-9]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
+
+            // Try to parse number
+            if (!decimal.TryParse(value, out decimal parsedValue))
+            {
+                Logger.Debug("Failed to parse stat value from: {0}", line);
+                parsedValue = -1;
+            }
+            substat.Value = parsedValue;
+
+            if (substat.Value != -1 && substat.Stat.Contains("_"))
+            {
+                substat.Value /= 10;
+            }
+
+            if (string.IsNullOrWhiteSpace(substat.Stat) || substat.Value == -1)
+            {
+                Logger.Debug("Failed to parse stat from: {0}", line);
+            }
+
+            return substat;
+        }
         private static string ScanArtifactEquippedCharacter(Bitmap bm)
 		{
 			Bitmap n = GenshinProcesor.ConvertToGrayscale(bm);

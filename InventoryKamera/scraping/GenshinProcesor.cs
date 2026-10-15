@@ -971,23 +971,21 @@ namespace InventoryKamera
 				for (int j = 0; j < bmap.Height; j++)
 				{
 					c = bmap.GetPixel(i, j);
-					int cR = c.R + brightness;
-					int cG = c.G + brightness;
-					int cB = c.B + brightness;
-
-					if (cR < 0) cR = 1;
-					if (cR > 255) cR = 255;
-
-					if (cG < 0) cG = 1;
-					if (cG > 255) cG = 255;
-
-					if (cB < 0) cB = 1;
-					if (cB > 255) cB = 255;
+					int cR = ClampBrightnessChannel(c.R + brightness);
+					int cG = ClampBrightnessChannel(c.G + brightness);
+					int cB = ClampBrightnessChannel(c.B + brightness);
 
 					bmap.SetPixel(i, j, Color.FromArgb((byte)cR, (byte)cG, (byte)cB));
 				}
 			}
 			bitmap = (Bitmap)bmap.Clone();
+		}
+
+		private static int ClampBrightnessChannel(int channel)
+		{
+			if (channel < 0) return 1;
+			if (channel > 255) return 255;
+			return channel;
 		}
 
 		internal static void SetThreshold(int threshold, ref Bitmap bitmap)

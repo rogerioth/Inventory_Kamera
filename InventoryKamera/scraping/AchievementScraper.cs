@@ -393,6 +393,15 @@ namespace InventoryKamera
             internal int NudgeNotches;
         }
 
+        /// <summary>Outcome of one bounded sidebar-selection attempt.</summary>
+        private sealed class CategoryStepEvaluation
+        {
+            internal SidebarStepOutcome Outcome;
+            internal bool? Resolved;
+            internal int Direction;
+            internal int Step;
+        }
+
         internal bool SelectCategory(AchievementCategory category)
         {
             var search = new SidebarSearchState();
@@ -402,53 +411,28 @@ namespace InventoryKamera
             for (int attempt = 0; attempt < 32; attempt++)
             {
                 CheckStop();
-                int direction, step;
+                int direction = 0, step = 0;
                 using (var frame = Capture())
                 {
                     if (!VerifySelectionDetail(frame, category, "select"))
                     {
                         return false;
                     }
-                    var entries = ReadSidebar(frame, "select", category.Id, attempt + 1);
-                    if (search.BeforeNudge != null)
+                    CategoryStepEvaluation evaluation = EvaluateSidebarSelectionStep(frame, category, attempt, search);
+                    if (evaluation.Resolved.HasValue)
                     {
-                        if (!VerifySidebarNudge(frame, category, entries, search.BeforeNudge, search.NudgeNotches, search.NudgeBounds))
-                        {
-                            return false;
-                        }
-                        search.BeforeNudge = null;
+                        return evaluation.Resolved.Value;
                     }
-                    var entry = FindFullSidebarEntry(entries, category, frame);
-                    bool? resolved = ResolveVisibleEntry(category, entry, frame);
-                    if (resolved.HasValue)
+                    if (evaluation.Outcome == SidebarStepOutcome.NextAttempt)
                     {
-                        return resolved.Value;
+                        continue;
                     }
-                    direction = SidebarScrollDirection(category, entries);
-                    string signature = SidebarSignature(frame, entries);
-                    search.Stationary = NextStationaryCount(signature, search.Last, search.Stationary);
-                    search.Last = signature;
-                    if (direction == 0)
-                    {
-                        var outcome = HandleUnreadableWithinRange(frame, category, entries, search);
-                        if (outcome == SidebarStepOutcome.NextAttempt)
-                        {
-                            continue;
-                        }
-                        if (outcome == SidebarStepOutcome.StopUnselected)
-                        {
-                            return false;
-                        }
-                    }
-                    else if (HandleScrolledDirection(frame, category, entries, ref direction, search) == SidebarStepOutcome.StopUnselected)
+                    if (evaluation.Outcome == SidebarStepOutcome.StopUnselected)
                     {
                         return false;
                     }
-                    if (direction != 0 && search.PreviousDirection != 0 && direction != search.PreviousDirection)
-                    {
-                        search.Stationary = ResetStationaryOnReversal(category, search.PreviousDirection, direction);
-                    }
-                    step = SidebarScrollStep(entries, category);
+                    direction = evaluation.Direction;
+                    step = evaluation.Step;
                 }
                 ScrollForSidebarSearch(category, direction, step, search);
             }
@@ -456,6 +440,52 @@ namespace InventoryKamera
             LastSelectionFailureKind = AchievementSelectionFailureKind.SearchLimit;
             using (var frame = Capture()) SaveCategoryFailure(frame, category.Id, "search_limit", ReadSidebar(frame, "search_limit", category.Id, 32));
             return false;
+        }
+
+        private CategoryStepEvaluation EvaluateSidebarSelectionStep(Bitmap frame, AchievementCategory category,
+            int attempt, SidebarSearchState search)
+        {
+            var evaluation = new CategoryStepEvaluation { Outcome = SidebarStepOutcome.FallThrough };
+            var entries = ReadSidebar(frame, "select", category.Id, attempt + 1);
+            if (search.BeforeNudge != null)
+            {
+                if (!VerifySidebarNudge(frame, category, entries, search.BeforeNudge, search.NudgeNotches, search.NudgeBounds))
+                {
+                    evaluation.Outcome = SidebarStepOutcome.StopUnselected;
+                    return evaluation;
+                }
+                search.BeforeNudge = null;
+            }
+            var entry = FindFullSidebarEntry(entries, category, frame);
+            bool? resolved = ResolveVisibleEntry(category, entry, frame);
+            if (resolved.HasValue)
+            {
+                evaluation.Resolved = resolved;
+                return evaluation;
+            }
+            evaluation.Direction = SidebarScrollDirection(category, entries);
+            string signature = SidebarSignature(frame, entries);
+            search.Stationary = NextStationaryCount(signature, search.Last, search.Stationary);
+            search.Last = signature;
+            if (evaluation.Direction == 0)
+            {
+                evaluation.Outcome = HandleUnreadableWithinRange(frame, category, entries, search);
+                if (evaluation.Outcome != SidebarStepOutcome.FallThrough)
+                {
+                    return evaluation;
+                }
+            }
+            else if (HandleScrolledDirection(frame, category, entries, ref evaluation.Direction, search) == SidebarStepOutcome.StopUnselected)
+            {
+                evaluation.Outcome = SidebarStepOutcome.StopUnselected;
+                return evaluation;
+            }
+            if (evaluation.Direction != 0 && search.PreviousDirection != 0 && evaluation.Direction != search.PreviousDirection)
+            {
+                search.Stationary = ResetStationaryOnReversal(category, search.PreviousDirection, evaluation.Direction);
+            }
+            evaluation.Step = SidebarScrollStep(entries, category);
+            return evaluation;
         }
 
         private bool VerifySidebarNudge(Bitmap frame, AchievementCategory category,
