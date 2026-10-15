@@ -27,7 +27,7 @@ namespace InventoryKamera
 				all.UnionWith(DevMaterials);
 				return all;
 			}
-			private set { }
+			private set => _ = value;
 		}
 
 		public int Size

@@ -31,7 +31,7 @@ namespace InventoryKamera.Properties
         public override string ApplicationName
         {
             get => Path.GetFileNameWithoutExtension(Application.ExecutablePath);
-            set { }
+            set => _ = value;
         }
 
         public override string Name => "JsonUserSettingsProvider";

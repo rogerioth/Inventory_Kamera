@@ -7,7 +7,7 @@ using Newtonsoft.Json;
 namespace InventoryKamera
 {
 	[Serializable]
-	public class Artifact
+	public sealed class Artifact : IEquatable<Artifact>
 	{
 		[JsonProperty("setKey")]
 		public string SetName { get; private set; }
