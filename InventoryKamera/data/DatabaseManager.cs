@@ -54,6 +54,17 @@ namespace InventoryKamera
         private const int TravelerGeneratorRevision = 1;
         private const string MaterialsJson = "materials.json";
 
+        // JSON property names shared by the generated lookup tables and metadata.
+        private const string NameTextMapHashKey = "nameTextMapHash";
+        private const string GoodKey = "GOOD";
+        private const string ElementKey = "Element";
+        private const string TravelerKey = "traveler";
+        private const string FormatKey = "format";
+        private const string GeneratorRevisionKey = "generatorRevision";
+        private const string TalentAuto = "auto";
+        private const string TalentSkill = "skill";
+        private const string TalentBurst = "burst";
+
         private readonly string NewVersion = "version.txt";
 
         // Sanity thresholds: a generated table far below these counts means the
@@ -118,7 +129,7 @@ namespace InventoryKamera
                 : RemoteVersion.CompareTo(LocalVersion) > 0;
         }
 
-        private Version CheckRemoteVersion()
+        private static Version CheckRemoteVersion()
         {
             // Commit titles follow "CNRELWin<game version>_<build hashes>",
             // e.g. "CNRELWin5.8.0_R48379043_S48511369_D48533839", so the first
@@ -311,8 +322,8 @@ namespace InventoryKamera
                 var table = JObject.Parse(File.ReadAllText(tablePath));
                 var metadata = JObject.Parse(File.ReadAllText(metadataPath));
                 return table.Count < MinimumArtifacts
-                    || (string)metadata["format"] != "InventoryKameraArtifactCatalog"
-                    || (int?)metadata["generatorRevision"] != ArtifactGeneratorRevision
+                    || (string)metadata[FormatKey] != "InventoryKameraArtifactCatalog"
+                    || (int?)metadata[GeneratorRevisionKey] != ArtifactGeneratorRevision
                     || (int?)metadata["setCount"] != table.Count
                     || !string.Equals((string)metadata["tableSha256"], ArtifactTableHash(tablePath), StringComparison.OrdinalIgnoreCase);
             }
@@ -353,7 +364,7 @@ namespace InventoryKamera
                     bool changed = UpsertTraveler(data, traveler);
                     if (changed && !SaveJsonToFile(data.ToString(Formatting.None), CharactersJson)) return UpdateStatus.Fail;
                     if (!SaveTravelerMetadata(traveler)) return UpdateStatus.Fail;
-                    Logger.Info("Repaired Traveler data: {0} elements, generator revision {1}", ((JArray)traveler["Element"]).Count, TravelerGeneratorRevision);
+                    Logger.Info("Repaired Traveler data: {0} elements, generator revision {1}", ((JArray)traveler[ElementKey]).Count, TravelerGeneratorRevision);
                     return UpdateStatus.Success;
                 }
                 catch (Exception ex)
@@ -373,21 +384,21 @@ namespace InventoryKamera
                 string metadataPath = Path.Combine(ListsDir, TravelerMetadataJson);
                 if (!File.Exists(tablePath) || !File.Exists(metadataPath)) return true;
                 var data = JObject.Parse(File.ReadAllText(tablePath));
-                var traveler = data["traveler"] as JObject;
+                var traveler = data[TravelerKey] as JObject;
                 var metadata = JObject.Parse(File.ReadAllText(metadataPath));
-                if (traveler == null || (string)traveler["GOOD"] != "Traveler"
+                if (traveler == null || (string)traveler[GoodKey] != "Traveler"
                     || data.Properties().Count(IsTravelerProperty) != 1) return true;
-                var supported = traveler["Element"] as JArray;
+                var supported = traveler[ElementKey] as JArray;
                 var orders = traveler["ConstellationOrder"] as JObject;
                 if (supported == null || orders == null || supported.Count != elements.Count || orders.Count != elements.Count) return true;
                 foreach (string element in elements.Select(x => x.ToLowerInvariant()))
                 {
                     if (supported.Count(x => (string)x == element) != 1) return true;
                     var order = orders[element] as JArray;
-                    if (order == null || order.Count != 2 || order.Any(x => !new[] { "auto", "skill", "burst" }.Contains((string)x))) return true;
+                    if (order == null || order.Count != 2 || order.Any(x => !new[] { TalentAuto, TalentSkill, TalentBurst }.Contains((string)x))) return true;
                 }
-                return (string)metadata["format"] != "InventoryKameraTravelerCatalog"
-                    || (int?)metadata["generatorRevision"] != TravelerGeneratorRevision
+                return (string)metadata[FormatKey] != "InventoryKameraTravelerCatalog"
+                    || (int?)metadata[GeneratorRevisionKey] != TravelerGeneratorRevision
                     || !string.Equals((string)metadata["entrySha256"], TravelerDataHash(traveler), StringComparison.OrdinalIgnoreCase);
             }
             catch { return true; }
@@ -397,8 +408,8 @@ namespace InventoryKamera
         {
             var metadata = new JObject
             {
-                ["format"] = "InventoryKameraTravelerCatalog",
-                ["generatorRevision"] = TravelerGeneratorRevision,
+                [FormatKey] = "InventoryKameraTravelerCatalog",
+                [GeneratorRevisionKey] = TravelerGeneratorRevision,
                 ["entrySha256"] = TravelerDataHash(traveler),
                 ["updatedAtUtc"] = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)
             };
@@ -414,16 +425,16 @@ namespace InventoryKamera
 
         private static bool IsTravelerProperty(JProperty property)
         {
-            string good = (string)property.Value["GOOD"];
+            string good = (string)property.Value[GoodKey];
             return good == "Traveler" || good == "PlayerBoy" || good == "PlayerGirl";
         }
 
         private static bool UpsertTraveler(JObject data, JObject traveler)
         {
             var existing = data.Properties().Where(IsTravelerProperty).ToList();
-            bool changed = existing.Count != 1 || existing[0].Name != "traveler" || !JToken.DeepEquals(existing[0].Value, traveler);
+            bool changed = existing.Count != 1 || existing[0].Name != TravelerKey || !JToken.DeepEquals(existing[0].Value, traveler);
             foreach (var property in existing) property.Remove();
-            data["traveler"] = traveler.DeepClone();
+            data[TravelerKey] = traveler.DeepClone();
             return changed;
         }
 
@@ -475,9 +486,9 @@ namespace InventoryKamera
                         throw new InvalidDataException("Traveler depot " + depotId + " reuses a talent skill ID.");
                     var auto = RequireTravelerRow(skillsById[autoId], "normal attack " + autoId);
                     var skill = RequireTravelerRow(skillsById[skillId], "elemental skill " + skillId);
-                    string autoName = RequireTravelerText(auto["nameTextMapHash"], textmap, "normal attack " + autoId);
-                    string skillName = RequireTravelerText(skill["nameTextMapHash"], textmap, "elemental skill " + skillId);
-                    string burstName = RequireTravelerText(burst["nameTextMapHash"], textmap, "burst " + burstId);
+                    string autoName = RequireTravelerText(auto[NameTextMapHashKey], textmap, "normal attack " + autoId);
+                    string skillName = RequireTravelerText(skill[NameTextMapHashKey], textmap, "elemental skill " + skillId);
+                    string burstName = RequireTravelerText(burst[NameTextMapHashKey], textmap, "burst " + burstId);
                     var ids = talentIds.Select(x => RequireTravelerId(x, "constellation in depot " + depotId)).ToList();
                     if (ids.Distinct().Count() != 6) throw new InvalidDataException("Traveler depot " + depotId + " repeats a constellation ID.");
                     var c3 = RequireTravelerRow(talentsById[ids[2]], "C3 talent " + ids[2]);
@@ -497,8 +508,8 @@ namespace InventoryKamera
             }
             return new JObject
             {
-                ["GOOD"] = "Traveler",
-                ["Element"] = new JArray(orders.Keys),
+                [GoodKey] = "Traveler",
+                [ElementKey] = new JArray(orders.Keys),
                 ["ConstellationName"] = new JArray("Viator", "Viatrix"),
                 ["ConstellationOrder"] = new JObject(orders.Select(pair => new JProperty(pair.Key, pair.Value))),
                 ["WeaponType"] = (int)WeaponType.Sword
@@ -537,16 +548,16 @@ namespace InventoryKamera
             {
                 if (links.Any(x => x != autoId && x != skillId && x != burstId))
                     throw new InvalidDataException("Traveler constellation links to a skill outside its depot.");
-                if (links.Contains(autoId)) matches.Add("auto");
-                if (links.Contains(skillId)) matches.Add("skill");
-                if (links.Contains(burstId)) matches.Add("burst");
+                if (links.Contains(autoId)) matches.Add(TalentAuto);
+                if (links.Contains(skillId)) matches.Add(TalentSkill);
+                if (links.Contains(burstId)) matches.Add(TalentBurst);
             }
             else
             {
                 // Older elemental constellations embed exact mapped names instead of links.
-                if (description.IndexOf(autoName, StringComparison.OrdinalIgnoreCase) >= 0) matches.Add("auto");
-                if (description.IndexOf(skillName, StringComparison.OrdinalIgnoreCase) >= 0) matches.Add("skill");
-                if (description.IndexOf(burstName, StringComparison.OrdinalIgnoreCase) >= 0) matches.Add("burst");
+                if (description.IndexOf(autoName, StringComparison.OrdinalIgnoreCase) >= 0) matches.Add(TalentAuto);
+                if (description.IndexOf(skillName, StringComparison.OrdinalIgnoreCase) >= 0) matches.Add(TalentSkill);
+                if (description.IndexOf(burstName, StringComparison.OrdinalIgnoreCase) >= 0) matches.Add(TalentBurst);
             }
             if (matches.Count != 1) throw new InvalidDataException("Traveler constellation has no unambiguous talent upgrade.");
             return matches[0];
@@ -571,7 +582,7 @@ namespace InventoryKamera
             Mappings.Clear();
         }
 
-        private string LoadJsonFromURLAsync(string url)
+        private static string LoadJsonFromURLAsync(string url)
         {
             string json = "";
 
@@ -669,9 +680,9 @@ namespace InventoryKamera
                 characters.AsParallel().ForAll(character =>
                 {
                     // One unmapped hash must not abort the whole parallel update.
-                    if (!Mappings.TryGetValue(character["nameTextMapHash"]?.ToString() ?? string.Empty, out string mappedName) || string.IsNullOrWhiteSpace(mappedName))
+                    if (!Mappings.TryGetValue(character[NameTextMapHashKey]?.ToString() ?? string.Empty, out string mappedName) || string.IsNullOrWhiteSpace(mappedName))
                     {
-                        Logger.Warn("Skipping avatar {0}: name hash {1} has no TextMap entry.", character["id"], character["nameTextMapHash"]?.ToString());
+                        Logger.Warn("Skipping avatar {0}: name hash {1} has no TextMap entry.", character["id"], character[NameTextMapHashKey]?.ToString());
                         return;
                     }
 
@@ -704,7 +715,8 @@ namespace InventoryKamera
 
                             // Some characters have different internal names.
                             // Ex: Jean -> Qin, Yanfei -> Feiyan, etc.
-                            name = character["iconName"].ToString().Split('_').Last(); // UI_AvatarIcon_[Qin] -> Qin
+                            string[] iconParts = character["iconName"].ToString().Split('_'); // UI_AvatarIcon_[Qin] -> Qin
+                            name = iconParts[iconParts.Length - 1];
 
                             // Traveler was rebuilt once above from explicit source-ID joins.
                             {
@@ -719,7 +731,7 @@ namespace InventoryKamera
                                     return;
                                 }
 
-                                skill = Mappings[characterSkill["nameTextMapHash"].ToString()].ToString();
+                                skill = Mappings[characterSkill[NameTextMapHashKey].ToString()].ToString();
 
 
                                 value.Add("ConstellationName", new JArray
@@ -738,15 +750,15 @@ namespace InventoryKamera
 
                                 if (const3Description.Contains(auto))
                                 {
-                                    constellationOrder.Add("auto");
+                                    constellationOrder.Add(TalentAuto);
                                 }
                                 else if (const3Description.Contains(skill))
                                 {
-                                    constellationOrder.Add("skill");
+                                    constellationOrder.Add(TalentSkill);
                                 }
                                 else
                                 {
-                                    constellationOrder.Add("burst");
+                                    constellationOrder.Add(TalentBurst);
                                 }
 
                                 const5Description = talents.Where(entry => entry["icon"]?.ToString().Contains(name) == true).ElementAt(4)["descTextMapHash"].ToString();
@@ -754,15 +766,15 @@ namespace InventoryKamera
 
                                 if (const5Description.Contains(auto))
                                 {
-                                    constellationOrder.Add("auto");
+                                    constellationOrder.Add(TalentAuto);
                                 }
                                 else if (const5Description.Contains(skill))
                                 {
-                                    constellationOrder.Add("skill");
+                                    constellationOrder.Add(TalentSkill);
                                 }
                                 else
                                 {
-                                    constellationOrder.Add("burst");
+                                    constellationOrder.Add(TalentBurst);
                                 }
 
                                 value.Add("ConstellationOrder", constellationOrder);
@@ -844,8 +856,8 @@ namespace InventoryKamera
 
             var metadata = new JObject
             {
-                ["format"] = "InventoryKameraArtifactCatalog",
-                ["generatorRevision"] = ArtifactGeneratorRevision,
+                [FormatKey] = "InventoryKameraArtifactCatalog",
+                [GeneratorRevisionKey] = ArtifactGeneratorRevision,
                 ["tableSha256"] = ArtifactTableHash(tablePath),
                 ["setCount"] = data.Count,
                 ["updatedAtUtc"] = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)
@@ -882,7 +894,7 @@ namespace InventoryKamera
                 int setId = RequireArtifactId(definition["setId"], "setId");
                 if (!seenSetIds.Add(setId)) throw new InvalidDataException("Duplicate artifact set ID " + setId + ".");
                 int affixId = RequireArtifactId(definition["equipAffixId"], "equipAffixId for set " + setId);
-                var names = affixesById[affixId].Select(row => RequireArtifactName(row["nameTextMapHash"], textmap,
+                var names = affixesById[affixId].Select(row => RequireArtifactName(row[NameTextMapHashKey], textmap,
                     "affix for set " + setId)).Distinct(StringComparer.Ordinal).ToList();
                 if (names.Count != 1) throw new InvalidDataException("Artifact set " + setId + " has no unique mapped affix name.");
                 string setName = names[0], setGood = ConvertToGOOD(setName), setKey = setGood.ToLowerInvariant();
@@ -908,18 +920,18 @@ namespace InventoryKamera
                     if (!slotsByEquipment.TryGetValue((string)piece["equipType"] ?? string.Empty, out slot)
                         || artifacts[slot] != null || prayerSets.Contains(setId) && slot != "circlet")
                         throw new InvalidDataException("Artifact set " + setId + " has an unsupported or duplicate slot.");
-                    string pieceName = RequireArtifactName(piece["nameTextMapHash"], textmap, "piece " + pieceId);
+                    string pieceName = RequireArtifactName(piece[NameTextMapHashKey], textmap, "piece " + pieceId);
                     string pieceGood = ConvertToGOOD(pieceName), pieceKey = pieceGood.ToLowerInvariant();
                     if (pieceKey.Length == 0 || !seenPieceNames.Add(pieceKey))
                         throw new InvalidDataException("Artifact piece " + pieceId + " has an empty or ambiguous normalized name.");
                     artifacts[slot] = new JObject
                     {
-                        ["artifactName"] = pieceName, ["GOOD"] = pieceGood, ["normalizedName"] = pieceKey
+                        ["artifactName"] = pieceName, [GoodKey] = pieceGood, ["normalizedName"] = pieceKey
                     };
                 }
                 result.Add(setKey, new JObject
                 {
-                    ["setName"] = setName, ["GOOD"] = setGood, ["normalizedName"] = setKey, ["artifacts"] = artifacts
+                    ["setName"] = setName, [GoodKey] = setGood, ["normalizedName"] = setKey, ["artifacts"] = artifacts
                 });
             }
             if (result.Count == 0) throw new InvalidDataException("No enabled artifact sets were generated.");
@@ -962,9 +974,9 @@ namespace InventoryKamera
                 {
                     try
                     {
-                        if (Mappings.ContainsKey(weapon["nameTextMapHash"].ToString()))
+                        if (Mappings.ContainsKey(weapon[NameTextMapHashKey].ToString()))
                         {
-                            var name = Mappings[weapon["nameTextMapHash"].ToString()];
+                            var name = Mappings[weapon[NameTextMapHashKey].ToString()];
                             string PascalCase = CultureInfo.GetCultureInfo("en").TextInfo.ToTitleCase(name); // Dull Blade
                             string nameGOOD = Regex.Replace(PascalCase, @"[\W]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);              // DullBlade
                             string nameKey = nameGOOD.ToLower();                                             // dullblade
@@ -973,9 +985,9 @@ namespace InventoryKamera
                             // leave the list unsaved on a forced (empty) update.
                             if (data.TryAdd(nameKey, nameGOOD)) status = UpdateStatus.Success;
                         }
-                        else Logger.Warn("Weapon hash {0} not found in Mappings. It's likely unreleased.", weapon["nameTextMapHash"].ToString());
+                        else Logger.Warn("Weapon hash {0} not found in Mappings. It's likely unreleased.", weapon[NameTextMapHashKey].ToString());
                     }
-                    catch (Exception ex) { Logger.Warn(ex, weapon["nameTextMapHash"].ToString()); }
+                    catch (Exception ex) { Logger.Warn(ex, weapon[NameTextMapHashKey].ToString()); }
                 });
             }
             catch (Exception ex)
@@ -1023,7 +1035,7 @@ namespace InventoryKamera
             {
                 try
                 {
-                    JToken jToken = material["nameTextMapHash"];
+                    JToken jToken = material[NameTextMapHashKey];
                     if (Mappings.TryGetValue(jToken.ToString(), out var name))
                     {
                         var PascalCase = CultureInfo.GetCultureInfo("en").TextInfo.ToTitleCase(name);
@@ -1034,7 +1046,7 @@ namespace InventoryKamera
                     }
                     else
                     {
-                        Logger.Warn("Material hash {0} not found in Mappings.", material["nameTextMapHash"].ToString());
+                        Logger.Warn("Material hash {0} not found in Mappings.", material[NameTextMapHashKey].ToString());
                     }
                 }
                 catch (Exception ex) { Logger.Warn(ex); }
@@ -1054,7 +1066,7 @@ namespace InventoryKamera
         // A generated table far below these counts means the download or dump was
         // broken; the caller keeps the previous file instead of replacing it.
         // Ported from taiwenlee/Inventory_Kamera (MIT): 45e89685
-        private bool IsPlausibleCount(ListType list, int count)
+        private static bool IsPlausibleCount(ListType list, int count)
         {
             int minimum;
             switch (list)

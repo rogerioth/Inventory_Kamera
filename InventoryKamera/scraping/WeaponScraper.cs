@@ -207,7 +207,7 @@ namespace InventoryKamera
             ItemQueued?.Invoke();
         }
 
-        Bitmap GetLevelBitmap(Bitmap card)
+        static Bitmap GetLevelBitmap(Bitmap card)
         {
             return GenshinProcesor.CopyBitmap(card,
                 new Rectangle(
@@ -217,7 +217,7 @@ namespace InventoryKamera
                     height: (int)(card.Height * (Navigation.IsNormal ? 0.035 : 0.033))));
         }
 
-        Bitmap GetRefinementBitmap(Bitmap card, double expand = 0.0)
+        static Bitmap GetRefinementBitmap(Bitmap card, double expand = 0.0)
         {
             // Baseline crop region of the refinement rank box (calibrated
             // fractions - do not change them). The optional `expand` grows the
@@ -320,12 +320,12 @@ namespace InventoryKamera
 
         #region Task Methods
 
-		private string ScanWeaponName(string name)
+		private static string ScanWeaponName(string name)
         {
             return GenshinProcesor.FindClosestWeapon(name);
         }
 
-        public int ScanLevel(Bitmap bm, ref bool ascended)
+        public static int ScanLevel(Bitmap bm, ref bool ascended)
 		{
 			Bitmap n = GenshinProcesor.ConvertToGrayscale(bm);
 			GenshinProcesor.SetInvert(ref n);
@@ -368,7 +368,7 @@ namespace InventoryKamera
 		//   4. Slightly wider crop (25% inflation, see GetRefinementBitmap) at
 		//      2x scale with the digits-only whitelist: escapes the tight box
 		//      border; the surrounding pixels do not change color at max rank.
-		public int ScanRefinement(Bitmap image, Bitmap card = null)
+		public static int ScanRefinement(Bitmap image, Bitmap card = null)
 		{
 			int result = OcrRefinement(image, scale: 1.0, numbersOnly: false);
 			if (result > 0) return result;
@@ -433,7 +433,7 @@ namespace InventoryKamera
 			}
 		}
 
-		public string ScanEquippedCharacter(Bitmap bm)
+		public static string ScanEquippedCharacter(Bitmap bm)
 		{
 			Bitmap n = GenshinProcesor.ConvertToGrayscale(bm);
 			GenshinProcesor.SetContrast(60.0, ref n);

@@ -197,7 +197,7 @@ namespace InventoryKamera
                 && (ranked.Count == 1 || ranked[0].Score - ranked[1].Score >= 7) ? ranked[0].Category : null;
         }
 
-        public AchievementMatch Resolve(AchievementCategory category, string title, string description, int? reward)
+        public static AchievementMatch Resolve(AchievementCategory category, string title, string description, int? reward)
         {
             if (category == null) return Failure("The achievement category was not recognized.");
             var normalizedTitle = Normalize(title);

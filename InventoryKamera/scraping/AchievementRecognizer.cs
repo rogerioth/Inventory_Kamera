@@ -554,7 +554,7 @@ namespace InventoryKamera
             return (opening ? ends - middle : middle - ends) >= Math.Max(1, geometry.X(1));
         }
 
-        public int? ReadCompletedTotal(Bitmap frame)
+        public static int? ReadCompletedTotal(Bitmap frame)
         {
             if (frame == null) throw new ArgumentNullException(nameof(frame));
             var geometry = new Geometry(frame);
@@ -565,7 +565,7 @@ namespace InventoryKamera
                 ? (int?)total : null;
         }
 
-        public bool IsDetailScreen(Bitmap frame)
+        public static bool IsDetailScreen(Bitmap frame)
         {
             if (frame == null) return false;
             var geometry = new Geometry(frame);
@@ -578,7 +578,7 @@ namespace InventoryKamera
         }
 
         /// <summary>Coarse list-only fingerprint; callers must also verify scrollbar/end evidence.</summary>
-        public string PageSignature(Bitmap frame)
+        public static string PageSignature(Bitmap frame)
         {
             if (frame == null) throw new ArgumentNullException(nameof(frame));
             var geometry = new Geometry(frame);
@@ -750,7 +750,7 @@ namespace InventoryKamera
 
             ReadState(frame, pixels, geometry, bounds, observation);
             observation.CompletedStars = CountStars(pixels, geometry, bounds);
-            var match = catalog.Resolve(category, observation.Title, observation.Description, observation.Reward);
+            var match = AchievementCatalog.Resolve(category, observation.Title, observation.Description, observation.Reward);
             observation.Confidence = match.Confidence;
             if (!match.Success)
             {
