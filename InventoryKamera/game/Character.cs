@@ -9,7 +9,6 @@ namespace InventoryKamera
     {
         private string _nameKey;
         private string _element;
-        private WeaponType _weaponType;
 
         [JsonProperty("key")]
         public string NameGOOD
@@ -67,8 +66,6 @@ namespace InventoryKamera
                 }
                 return WeaponType.Sword;
             }
-
-            internal set { _weaponType = value; }
         }
 
         public Character()
