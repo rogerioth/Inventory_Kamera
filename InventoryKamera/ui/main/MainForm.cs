@@ -536,17 +536,17 @@ namespace InventoryKamera
 
         private void Github_Label_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
-            Process.Start("https://github.com/Andrewthe13th/Inventory_Kamera/");
+            Process.Start("https://github.com/rogerioth/Inventory_Kamera/");
         }
 
         private void Releases_Label_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
-            Process.Start("https://github.com/Andrewthe13th/Inventory_Kamera/releases");
+            Process.Start("https://github.com/rogerioth/Inventory_Kamera/releases/latest");
         }
 
         private void IssuesPage_Label_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
-            Process.Start("https://github.com/Andrewthe13th/Inventory_Kamera/issues");
+            Process.Start("https://github.com/rogerioth/Inventory_Kamera/issues");
         }
 
         private void FileSelectButton_Click(object sender, EventArgs e)
@@ -742,12 +742,18 @@ namespace InventoryKamera
             var client = new GitHubClient(new ProductHeaderValue("Inventory_Kamera"));
             try
             {
-                var releases = await client.Repository.Release.GetAll("Andrewthe13th", "Inventory_Kamera");
-                var latest = releases.First();
+                var latest = await client.Repository.Release.GetLatest("rogerioth", "Inventory_Kamera");
+                if (!Version.TryParse(latest.TagName.TrimStart('v', 'V'), out Version parsedVersion)
+                    || parsedVersion.Build < 0)
+                {
+                    Logger.Warn("Could not check for Kamera updates: release tag '{0}' is not a supported version.", latest.TagName);
+                    return;
+                }
 
-
-                Version latestVersion = new Version(Regex.Replace(latest.TagName, "[a-zA-Z]", string.Empty));
-                Version currentVersion = Assembly.GetExecutingAssembly().GetName().Version;
+                // Release tags describe major.minor.patch; assembly revisions are build metadata.
+                var latestVersion = new Version(parsedVersion.Major, parsedVersion.Minor, parsedVersion.Build);
+                var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version;
+                var currentVersion = new Version(assemblyVersion.Major, assemblyVersion.Minor, assemblyVersion.Build);
                 if (currentVersion.CompareTo(latestVersion) < 0)
                 {
                     var message = $"A new version of Inventory Kamera is available.\n\n" +
@@ -760,8 +766,9 @@ namespace InventoryKamera
                     }
                 }
             }
-            catch (RateLimitExceededException) { Logger.Warn("Rate limit exceeded checking for Kamera Update!!!! This warning should be resolved in an hour."); }
-            
+            catch (NotFoundException) { Logger.Debug("No published Kamera release is available yet."); }
+            catch (RateLimitExceededException) { Logger.Warn("GitHub rate limit exceeded while checking for Kamera updates. Try again later."); }
+            catch (Exception exception) { Logger.Warn(exception, "Could not check for Kamera updates; startup will continue."); }
         }
 
         private void CheckForGenshinUpdates()

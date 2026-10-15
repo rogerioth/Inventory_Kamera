@@ -1,0 +1,19 @@
+These upstream license texts are included verbatim from the corresponding tagged
+sources. The package additionally includes each restored NuGet package's metadata
+and any license/notice files shipped in that package.
+
+Accord.NET 3.8.0, including LGPL-2.1-or-later and copyright notice:
+https://raw.githubusercontent.com/accord-net/framework/v3.8.0/License.txt
+Source: https://github.com/accord-net/framework/tree/v3.8.0
+
+Charles Weld Tesseract.NET 5.2.0, Apache-2.0:
+https://raw.githubusercontent.com/charlesw/tesseract/5.2.0/LICENSE.txt
+Source: https://github.com/charlesw/tesseract/tree/5.2.0
+
+Tesseract native engine 5.2.0, Apache-2.0:
+https://raw.githubusercontent.com/tesseract-ocr/tesseract/5.2.0/LICENSE
+Source: https://github.com/tesseract-ocr/tesseract/tree/5.2.0
+
+Leptonica 1.82.0, BSD-2-Clause:
+https://raw.githubusercontent.com/DanBloomberg/leptonica/1.82.0/leptonica-license.txt
+Source: https://github.com/DanBloomberg/leptonica/tree/1.82.0

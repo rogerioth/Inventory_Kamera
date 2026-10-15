@@ -1,6 +1,8 @@
 # Inventory Kamera
 
 [![CircleCI](https://dl.circleci.com/status-badge/img/gh/rogerioth/Inventory_Kamera/tree/master.svg?style=shield)](https://dl.circleci.com/status-badge/redirect/gh/rogerioth/Inventory_Kamera/tree/master)
+[![Release build](https://github.com/rogerioth/Inventory_Kamera/actions/workflows/release.yml/badge.svg?branch=master)](https://github.com/rogerioth/Inventory_Kamera/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/rogerioth/Inventory_Kamera)](https://github.com/rogerioth/Inventory_Kamera/releases/latest)
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=rogerioth_Inventory_Kamera&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=rogerioth_Inventory_Kamera)
 [![Reliability](https://sonarcloud.io/api/project_badges/measure?project=rogerioth_Inventory_Kamera&metric=reliability_rating)](https://sonarcloud.io/project/issues?id=rogerioth_Inventory_Kamera&types=BUG)
 [![Security](https://sonarcloud.io/api/project_badges/measure?project=rogerioth_Inventory_Kamera&metric=security_rating)](https://sonarcloud.io/project/issues?id=rogerioth_Inventory_Kamera&types=VULNERABILITY)
@@ -32,20 +34,35 @@ errors open it automatically and select the Errors filter.
 
 ## Download
 
-Grab the latest release from the
-[releases page](https://github.com/rogerioth/Inventory_Kamera/releases/latest) and unzip it anywhere
-you like, then run `InventoryKamera.exe`. Windows may show a SmartScreen prompt — this happens because
-the binary is not code-signed; the access is what lets the scanner interact with the game window.
+Download **[InventoryKamera-win-x64.zip](https://github.com/rogerioth/Inventory_Kamera/releases/latest/download/InventoryKamera-win-x64.zip)**
+from the [latest release](https://github.com/rogerioth/Inventory_Kamera/releases/latest).
+Choose this ready-to-run package rather than GitHub's **Source code** archives.
+
+1. Extract the **entire ZIP** to a writable folder, such as a folder under Documents.
+2. Open that folder and double-click **`Start Inventory Kamera.cmd`**.
+3. If the Visual C++ runtime needs installing or updating, the launcher starts the
+   bundled Microsoft-signed installer and then opens the app. Restart Windows and
+   run the launcher again if the installer requests it.
+
+The package includes the application, its DLLs, and trained OCR models; Visual Studio
+is not required. Internet access is needed to obtain the lookup tables on first use
+and to update game data. The scanner requests administrator permission to interact
+with the game. Its executable is not code-signed, so Windows may also show a
+SmartScreen warning; the included Microsoft runtime installer has its own signature.
+
+Every merge into `master` creates a versioned release after its CI checks pass.
+See [Releases and downloads](docs/releases.md) for checksums, runtime details, and
+the release process.
 
 ## Requirements
 
 | Requirement | Details |
 | --- | --- |
-| Operating system | Windows 10 or 11 |
+| Operating system | Windows 10 or 11, x64 |
 | Game | Genshin Impact (global or CN client) |
 | Game language | English |
 | Aspect ratio | 16:9 or 16:10, windowed or borderless (fullscreen not supported) |
-| Runtime | [Visual C++ Redistributable 2015–2022](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist#visual-studio-2015-2017-2019-and-2022) — a restart may be needed after installing |
+| Runtimes | .NET Framework 4.7.2 or newer and the [Visual C++ v14 x64 runtime](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist); the launcher checks these and includes the Visual C++ installer |
 
 The game must also meet these settings before scanning:
 
@@ -93,6 +110,7 @@ update automatically; you can also run **Options → Update Lookup Tables** manu
 | [docs/project-structure.md](docs/project-structure.md) | Repository and solution layout |
 | [docs/development.md](docs/development.md) | Building, debugging, and contributing |
 | [docs/continuous-integration.md](docs/continuous-integration.md) | Windows PR builds, offline checks, and SonarCloud quality gates |
+| [docs/releases.md](docs/releases.md) | Ready-to-run downloads, automatic versions, release checks, and recovery |
 
 ## Reporting issues
 

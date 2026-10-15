@@ -15,6 +15,13 @@ jobs:
           no_output_timeout: 10m
           command: .\tests\run-ci.ps1
       - run:
+          name: Validate release policy and Windows package
+          no_output_timeout: 10m
+          command: |
+            node --test .\scripts\release-policy.test.cjs
+            if ($LASTEXITCODE -ne 0) { throw 'Release policy checks failed.' }
+            .\scripts\build-release.ps1 -Version 1.3.18
+      - run:
           name: Analyze trusted master and pull requests with Sonar
           no_output_timeout: 10m
           command: .\tests\run-sonar-analysis.ps1
