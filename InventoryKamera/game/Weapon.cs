@@ -118,35 +118,7 @@ namespace InventoryKamera
 
 		public int AscensionCount()
 		{
-			if (Level < 20 || ( Level == 20 && !Ascended ))
-			{
-				return 0;
-			}
-			else if (Level < 40 || ( Level == 40 && !Ascended ))
-			{
-				return 1;
-			}
-			else if (Level < 50 || ( Level == 50 && !Ascended ))
-			{
-				return 2;
-			}
-			else if (Level < 60 || ( Level == 60 && !Ascended ))
-			{
-				return 3;
-			}
-			else if (Level < 70 || ( Level == 70 && !Ascended ))
-			{
-				return 4;
-			}
-			else if (Level < 80 || ( Level == 80 && !Ascended ))
-			{
-				return 5;
-			}
-			else if (Level <= 90)
-			{
-				return 6;
-			}
-			return 0;
+			return AscensionMath.FromLevel(Level, Ascended, new[] { 20, 40, 50, 60, 70, 80 }, maxLevel: 90);
 		}
 
 		public override bool Equals(object obj)

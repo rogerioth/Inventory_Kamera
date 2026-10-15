@@ -148,37 +148,9 @@ namespace InventoryKamera
 
         public int AscensionLevel()
         {
-            if (Level < 20 || (Level == 20 && !Ascended))
-            {
-                return 0;
-            }
-            else if (Level < 40 || (Level == 40 && !Ascended))
-            {
-                return 1;
-            }
-            else if (Level < 50 || (Level == 50 && !Ascended))
-            {
-                return 2;
-            }
-            else if (Level < 60 || (Level == 60 && !Ascended))
-            {
-                return 3;
-            }
-            else if (Level < 70 || (Level == 70 && !Ascended))
-            {
-                return 4;
-            }
-            else if (Level < 80 || (Level == 80 && !Ascended))
-            {
-                return 5;
-            }
             // Levels 81-100 map to ascension 6 like 81-90 did before the cap
             // was raised. (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d)
-            else if (Level <= 100)
-            {
-                return 6;
-            }
-            return 0;
+            return AscensionMath.FromLevel(Level, Ascended, new[] { 20, 40, 50, 60, 70, 80 }, maxLevel: 100);
         }
 
         public override string ToString()

@@ -105,6 +105,14 @@ namespace InventoryKamera
 			Logger.Info("Logging directory reset");
 		}
 
+		// Creates the capture's sub-folder and saves the screenshot into it.
+		// Diagnostic saves must never throw out of the worker (see callers).
+		private static void SaveDiagnosticImage(System.Drawing.Bitmap bitmap, string directory, string filePath)
+		{
+			Directory.CreateDirectory(directory);
+			bitmap.Save(filePath);
+		}
+
 		public void StopImageProcessorWorkers()
 		{
 			b_threadCancel = true;
@@ -448,16 +456,11 @@ namespace InventoryKamera
                                 // missing directories, disconnected drives).
                                 try
                                 {
-                                    Directory.CreateDirectory(weaponPath + "name");
-                                    imageCollection.Bitmaps[0].Save(weaponPath + "name/name.png");
-                                    Directory.CreateDirectory(weaponPath + "rarity");
-                                    imageCollection.Bitmaps[0].Save(weaponPath + "rarity/rarity.png");
-                                    Directory.CreateDirectory(weaponPath + "level");
-                                    imageCollection.Bitmaps[1].Save(weaponPath + "level/level.png");
-                                    Directory.CreateDirectory(weaponPath + "refinement");
-                                    imageCollection.Bitmaps[2].Save(weaponPath + "refinement/refinement.png");
-                                    Directory.CreateDirectory(weaponPath + "equipped");
-                                    imageCollection.Bitmaps[4].Save(weaponPath + "equipped/equipped.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[0], weaponPath + "name", weaponPath + "name/name.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[0], weaponPath + "rarity", weaponPath + "rarity/rarity.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[1], weaponPath + "level", weaponPath + "level/level.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[2], weaponPath + "refinement", weaponPath + "refinement/refinement.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[4], weaponPath + "equipped", weaponPath + "equipped/equipped.png");
 
                                     imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1].Save(weaponPath + "card.png");
                                 }
@@ -534,28 +537,20 @@ namespace InventoryKamera
                                 // missing directories, disconnected drives).
                                 try
                                 {
-                                    Directory.CreateDirectory(artifactPath + "name");
-                                    imageCollection.Bitmaps[0].Save(artifactPath + "name/name.png");
-                                    Directory.CreateDirectory(artifactPath + "slot");
-									imageCollection.Bitmaps[1].Save(artifactPath + "slot/slot.png");
-                                    Directory.CreateDirectory(artifactPath + "mainstat");
-                                    imageCollection.Bitmaps[2].Save(artifactPath + "mainstat/mainstat.png");
-									Directory.CreateDirectory(artifactPath + "level");
-									imageCollection.Bitmaps[3].Save(artifactPath + "level/level.png");
-									Directory.CreateDirectory(artifactPath + "substats");
-									imageCollection.Bitmaps[4].Save(artifactPath + "substats/substats.png");
-									Directory.CreateDirectory(artifactPath + "equipped");
-									imageCollection.Bitmaps[5].Save(artifactPath + "equipped/equipped.png");
-									Directory.CreateDirectory(artifactPath + "locked");
-									imageCollection.Bitmaps[6].Save(artifactPath + "locked/locked.png");
-									// Sanctified banner capture (index 7), for diagnosing
-									// artifacts crafted with Sanctifying Elixir.
-									// (Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6)
-									Directory.CreateDirectory(artifactPath + "sanctify");
-									imageCollection.Bitmaps[7].Save(artifactPath + "sanctify/sanctify.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[0], artifactPath + "name", artifactPath + "name/name.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[1], artifactPath + "slot", artifactPath + "slot/slot.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[2], artifactPath + "mainstat", artifactPath + "mainstat/mainstat.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[3], artifactPath + "level", artifactPath + "level/level.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[4], artifactPath + "substats", artifactPath + "substats/substats.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[5], artifactPath + "equipped", artifactPath + "equipped/equipped.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[6], artifactPath + "locked", artifactPath + "locked/locked.png");
+                                    // Sanctified banner capture (index 7), for diagnosing
+                                    // artifacts crafted with Sanctifying Elixir.
+                                    // (Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6)
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[7], artifactPath + "sanctify", artifactPath + "sanctify/sanctify.png");
 
-									imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1].Save(artifactPath + "card.png");
-								}
+                                    imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1].Save(artifactPath + "card.png");
+                                }
 								catch (Exception ex)
 								{
 									Logger.Warn(ex, "Could not save diagnostic screenshots for artifact #{0}. Continuing...", artifact.Id);

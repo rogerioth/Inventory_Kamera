@@ -111,7 +111,9 @@ namespace InventoryKamera
             }
             UserInterface.FinishScanPhase(ScanPhase.Weapons, cardsQueued, weaponCount);
 
-            void SelectLevelSorting()
+            // Opens the sort dropdown (fixed coordinates) and picks the row for
+            // the requested sort mode; only the row's Y coordinate differs.
+            void SelectSorting(int filterRowY)
             {
                 Navigation.SetCursor(
                     X: (int)(230 / 1280.0 * Navigation.GetWidth()),
@@ -120,21 +122,7 @@ namespace InventoryKamera
                 Navigation.Wait();
                 Navigation.SetCursor(
                     X: (int)(250 / 1280.0 * Navigation.GetWidth()),
-                    Y: (int)(575 / 720.0 * Navigation.GetHeight()));
-                Navigation.Click();
-                Navigation.Wait();
-            }
-
-            void SelectQualitySorting()
-            {
-                Navigation.SetCursor(
-                                        X: (int)(230 / 1280.0 * Navigation.GetWidth()),
-                                        Y: (int)(680 / 720.0 * Navigation.GetHeight()));
-                Navigation.Click();
-                Navigation.Wait();
-                Navigation.SetCursor(
-                    X: (int)(250 / 1280.0 * Navigation.GetWidth()),
-                    Y: (int)(615 / 720.0 * Navigation.GetHeight()));
+                    Y: (int)(filterRowY / 720.0 * Navigation.GetHeight()));
                 Navigation.Click();
                 Navigation.Wait();
             }
@@ -149,7 +137,7 @@ namespace InventoryKamera
                     {
                         Logger.Debug("Not already sorting by level...");
                         // If not, sort by level
-                        SelectLevelSorting();
+                        SelectSorting(filterRowY: 575);
                     }
                     Logger.Debug("Inventory is sorted by level.");
                 }
@@ -161,7 +149,7 @@ namespace InventoryKamera
                     {
                         Logger.Debug("Not already sorting by quality...");
                         // If not, sort by quality
-                        SelectQualitySorting();
+                        SelectSorting(filterRowY: 615);
                     }
                     Logger.Debug("Inventory is sorted by quality");
                 }

@@ -196,6 +196,7 @@
     <Compile Include="scraping\GenshinProcesor.cs" />
     <Compile Include="ui\UiLogTarget.cs" />
     <Compile Include="ui\UserInterface.cs" />
+    <Compile Include="game\Ascension.cs" />
     <Compile Include="game\Weapon.cs" />
     <Compile Include="scraping\WeaponScraper.cs" />
     <EmbeddedResource Include="ui\ExecutablesForm.resx">
