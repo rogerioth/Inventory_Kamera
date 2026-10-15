@@ -1267,7 +1267,7 @@ namespace InventoryKamera
 					lastTalentText = GenshinProcesor.AnalyzeText(n, Tesseract.PageSegMode.SingleBlock).Trim();
 					var text = lastTalentText.Split('\n').ToList();
 
-					if (int.TryParse(Regex.Replace(text.Last(), @"\D", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout), out int level)
+					if (int.TryParse(Regex.Replace(text[text.Count - 1], @"\D", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout), out int level)
 						&& level >= 1 && level <= 15)
 					{
 						talents[talent] = level;

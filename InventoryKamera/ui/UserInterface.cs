@@ -47,21 +47,21 @@ namespace InventoryKamera
 		/// </summary>
 		public sealed class Controls
 		{
-			public PictureBox GearPictureBox;
-			public TextBox ArtifactOutput;
-			public PictureBox CharacterName;
-			public PictureBox CharacterLevel;
-			public PictureBox[] CharacterTalents;
-			public TextBox CharacterOutput;
-			public Label WeaponCount;
-			public Label WeaponMax;
-			public Label ArtifactCount;
-			public Label ArtifactMax;
-			public Label CharacterCount;
-			public Label ProgramStatus;
-			public TextBox ErrorLog;
-			public PictureBox NavigationImage;
-			public Action<ScanProgressUpdate> ScanProgress;
+			public PictureBox GearPictureBox { get; internal set; }
+			public TextBox ArtifactOutput { get; internal set; }
+			public PictureBox CharacterName { get; internal set; }
+			public PictureBox CharacterLevel { get; internal set; }
+			public PictureBox[] CharacterTalents { get; internal set; }
+			public TextBox CharacterOutput { get; internal set; }
+			public Label WeaponCount { get; internal set; }
+			public Label WeaponMax { get; internal set; }
+			public Label ArtifactCount { get; internal set; }
+			public Label ArtifactMax { get; internal set; }
+			public Label CharacterCount { get; internal set; }
+			public Label ProgramStatus { get; internal set; }
+			public TextBox ErrorLog { get; internal set; }
+			public PictureBox NavigationImage { get; internal set; }
+			public Action<ScanProgressUpdate> ScanProgress { get; internal set; }
 		}
 
 		public static void Init(Controls controls)
