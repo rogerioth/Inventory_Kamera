@@ -12,13 +12,6 @@ $toolManifestPath = Join-Path $repositoryRoot '.config\dotnet-tools.json'
 $repositoryName = 'rogerioth/Inventory_Kamera'
 $defaultBranch = 'master'
 
-# Fork PRs do not receive project secrets. A skipped analysis is not a passed
-# Sonar quality gate; the build and offline checks have their own CI step.
-if ([string]::IsNullOrWhiteSpace($env:SONAR_TOKEN)) {
-    Write-Host 'SKIP Sonar analysis: SONAR_TOKEN is unavailable. No Sonar quality gate was evaluated.'
-    return
-}
-
 Push-Location $repositoryRoot
 try {
     if ([string]::IsNullOrWhiteSpace($Branch)) {
@@ -74,6 +67,13 @@ try {
         if ($pullRequest.head.ref -ne $Branch) {
             throw 'The checked-out branch does not match the pull request source branch.'
         }
+    }
+
+    # Forks and branches without an eligible PR returned above. A missing
+    # credential on master or a trusted PR is a configuration failure, rather
+    # than a successful build with its quality gate silently omitted.
+    if ([string]::IsNullOrWhiteSpace($env:SONAR_TOKEN)) {
+        throw 'SONAR_TOKEN is required for master and trusted pull request analysis. Configure the CircleCI project secret; fork secret sharing must remain disabled.'
     }
 
     $checkedOutSha = & git rev-parse HEAD

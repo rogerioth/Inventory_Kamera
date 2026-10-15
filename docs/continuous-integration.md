@@ -3,7 +3,9 @@
 The Windows build/check baseline has passed locally and in the initial CircleCI
 hosted run. Its verified GitHub status is
 `ci/circleci: Windows build and offline checks`.
-SonarQube Cloud analysis and its quality-gate result still need verification.
+The first token-backed PR analysis also passed its quality gate and published
+`SonarCloud Code Analysis`. PR results cover the change under review; use the
+`master` dashboard for the full project baseline.
 
 ## Windows builds and checks
 
@@ -64,7 +66,7 @@ The public project `rogerioth_Inventory_Kamera` has been created in organization
 this project's UI reports its configuration unsupported and automatic analysis
 is off. The implementation therefore uses CI-based analysis.
 
-The analysis step being added after the baseline checks runs
+The analysis step after the baseline checks runs
 [`tests/run-sonar-analysis.ps1`](../tests/run-sonar-analysis.ps1): SonarScanner for
 .NET **begin**, an application rebuild with Windows MSBuild, then **end** to
 upload results. This is the C# analysis path described in Sonar's
@@ -73,10 +75,13 @@ No CircleCI Sonar orb is used, and automatic analysis must remain off.
 The tool manifest pins SonarScanner for .NET to version **11.3.0**. The script
 checks the PR repository, branch, and head commit before uploading an analysis.
 
-`SONAR_TOKEN` belongs in the CircleCI project's secret environment settings.
-Sharing it with fork builds stays disabled. Without that token, including on
-fork PRs, the baseline builds and checks still run and the Sonar step skips its
-upload. A skipped analysis does not establish a passing quality gate.
+`SONAR_TOKEN` is stored in the CircleCI project's secret environment settings.
+Sharing it with fork builds stays disabled. Fork PRs run the baseline checks and
+skip Sonar upload; a skipped analysis does not establish a passing quality gate.
+Missing credentials on `master` or a trusted PR fail the job so a broken secret
+configuration cannot silently omit analysis. Rotate or revoke the dedicated
+Sonar token through the account's security settings and replace its CircleCI
+value; never put it in repository files or badge URLs.
 
 The harness results are **not coverage measurements**. No coverage report is
 currently generated or imported; coverage must not be inferred from the 27
@@ -89,10 +94,9 @@ duplication. Coverage is not a gate condition until genuine coverage reports are
 introduced. This avoids treating the current harness pass count as a coverage
 measurement. The organization's default gate is unchanged.
 
-The first uploaded analysis and PR gate result still need verification. Establish
-a `master` baseline before relying on PR comparisons. After successful `master`
-and PR analyses, confirm the exact Sonar check name and fork-PR behavior before
-adding a separate required Sonar check. The verified CircleCI status is required
-by the repository ruleset, including an up-to-date branch; a Sonar gate pass has
-not yet been established.
+The CircleCI status is required by the repository ruleset, including an
+up-to-date branch. Trusted builds wait for the Sonar gate and fail if it fails.
+The separate Sonar check is not required globally because fork PRs have no
+analysis credential. Promote a reviewed fork change to a maintainer-controlled
+branch and PR when a Sonar analysis is needed before merging it.
 See [Repository review policy](repository-governance.md) for protection setup.
