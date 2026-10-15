@@ -259,10 +259,10 @@ namespace InventoryKamera
                 }
                 using (var frame = Capture()) result.FinalExpectedCompleted = AchievementRecognizer.ReadCompletedTotal(frame);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException ex)
             {
                 result.Cancelled = true;
-                Logger.Info("Achievement scan stopped; {0} confirmed completed IDs retained", result.Completed.Count);
+                Logger.Info(ex, "Achievement scan stopped; {0} confirmed completed IDs retained", result.Completed.Count);
             }
             catch (ThreadAbortException)
             {
@@ -955,8 +955,8 @@ namespace InventoryKamera
         private void LogCoverageSummary(AchievementScanResult result)
         {
             int verified = result.Categories.Count(x => x.ReachedBottom && x.Issues.Count == 0);
-            var missing = catalog.Categories.OrderBy(x => x.Order).Where(category =>
-                !result.Categories.Any(x => x.CategoryId == category.Id && x.ReachedBottom && x.Issues.Count == 0)).ToList();
+            var missing = catalog.Categories.Where(category =>
+                !result.Categories.Any(x => x.CategoryId == category.Id && x.ReachedBottom && x.Issues.Count == 0)).OrderBy(x => x.Order).ToList();
             Logger.Info("Achievement coverage: verified {0}/{1} categories, attempted {2}, missing {3}; completed total initial {4}, final {5}; retained {6} completed IDs from {7} rows; cancelled {8}",
                 verified, catalog.Categories.Count, result.Categories.Count, missing.Count,
                 result.ExpectedCompleted?.ToString() ?? "unreadable", result.FinalExpectedCompleted?.ToString() ?? "unreadable",

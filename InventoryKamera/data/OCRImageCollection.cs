@@ -4,13 +4,13 @@ using System.Drawing;
 
 namespace InventoryKamera
 {
-	public class OCRImageCollection
+	public class OcrImageCollection
 	{
 		public List<Bitmap> Bitmaps { get; set; }
 		public string Type { get; set; }
 		public int Id { get; private set; }
 
-		public OCRImageCollection(List<Bitmap> _bm, string _type, int _id)
+		public OcrImageCollection(List<Bitmap> _bm, string _type, int _id)
 		{
 			Bitmaps = _bm;
 			Type = _type;

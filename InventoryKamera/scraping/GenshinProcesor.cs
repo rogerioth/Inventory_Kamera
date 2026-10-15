@@ -84,25 +84,32 @@ namespace InventoryKamera
 
 		internal static ConcurrentBag<TesseractEngine> engines;
 
-		internal static Dictionary<string, string> Weapons, DevItems, Materials, Elements;
+		internal static Dictionary<string, string> Weapons, DevItems, Materials;
 
-		internal static Dictionary<string, JObject> Characters, Artifacts;
+		// Initialized inline so the former static constructor's work runs from
+		// the type initializer without an explicit static constructor. Field
+		// initializers run in declaration order, so Stats and elements are
+		// ready before this builds the element lookup.
+		internal static readonly Dictionary<string, string> Elements = BuildElements();
 
-		static GenshinProcesor()
-        {
-            InitEngines();
+		private static Dictionary<string, string> BuildElements()
+		{
+			InitEngines();
 
 			ReloadData();
 
-			Elements = new Dictionary<string, string>();
+			var built = new Dictionary<string, string>();
 			foreach (var element in elements)
 			{
 				Stats.Add($"{element.ToLower()}dmgbonus", $"{element.ToLower()}_dmg_");  // ["anemodmgbonus"] = "anemo_dmg_"
-				Elements.Add(element, char.ToUpper(element[0]) + element.Substring(1));
+				built.Add(element, char.ToUpper(element[0]) + element.Substring(1));
 			}
 
 			Logger.Info("Scraper initialized");
-        }
+			return built;
+		}
+
+		internal static Dictionary<string, JObject> Characters, Artifacts;
 
 		internal static void ReloadData()
         {
@@ -351,7 +358,7 @@ namespace InventoryKamera
 		/// <summary> Use Tesseract OCR to find words on picture to string </summary>
 		internal static string AnalyzeText(Bitmap bitmap, PageSegMode pageMode = PageSegMode.SingleLine, bool numbersOnly = false)
 		{
-			string text = "";
+			var text = new StringBuilder();
 			TesseractEngine e;
 			while (!engines.TryTake(out e)) { Thread.Sleep(10); }
 			string previousWhitelist = null;
@@ -373,7 +380,7 @@ namespace InventoryKamera
 						iter.Begin();
 						do
 						{
-							text += iter.GetText(PageIteratorLevel.TextLine);
+							text.Append(iter.GetText(PageIteratorLevel.TextLine));
 						}
 						while (iter.Next(PageIteratorLevel.TextLine));
 					}
@@ -396,7 +403,7 @@ namespace InventoryKamera
 				}
 			}
 
-			return text;
+			return text.ToString();
 		}
 
 		#endregion OCR
@@ -670,31 +677,31 @@ namespace InventoryKamera
 			Bitmap card1; Bitmap card2; Bitmap card3;
 			Rectangle item1 = rectangles[0];
 
-			RECT reference; int width = Navigation.GetWidth(); int height = Navigation.GetHeight();
+			Rect reference; int width = Navigation.GetWidth(); int height = Navigation.GetHeight();
 
 			#region Get first card
 
 			if (Navigation.GetAspectRatio() == new Size(16, 9))
 			{
-				reference = new RECT(new Rectangle(862, 80, 327, 560));
+				reference = new Rect(new Rectangle(862, 80, 327, 560));
 
 				int left = (int)Math.Round(reference.Left / 1280.0 * width, MidpointRounding.AwayFromZero);
 				int top = (int)Math.Round(reference.Top / 720.0 * height, MidpointRounding.AwayFromZero);
 				int right = (int)Math.Round(reference.Right / 1280.0 * width, MidpointRounding.AwayFromZero);
 				int bottom = (int)Math.Round(reference.Bottom / 720.0 * height, MidpointRounding.AwayFromZero);
 
-				card1 = Navigation.CaptureRegion(new RECT(left, top, right, bottom));
+				card1 = Navigation.CaptureRegion(new Rect(left, top, right, bottom));
 			}
 			else
 			{
-				reference = new RECT(new Rectangle(862, 80, 327, 640));
+				reference = new Rect(new Rectangle(862, 80, 327, 640));
 
 				int left = (int)Math.Round(reference.Left / 1280.0 * width, MidpointRounding.AwayFromZero);
 				int top = (int)Math.Round(reference.Top / 800.0 * height, MidpointRounding.AwayFromZero);
 				int right = (int)Math.Round(reference.Right / 1280.0 * width, MidpointRounding.AwayFromZero);
 				int bottom = (int)Math.Round(reference.Bottom / 800.0 * height, MidpointRounding.AwayFromZero);
 
-				card1 = Navigation.CaptureRegion(new RECT(left, top, right, bottom));
+				card1 = Navigation.CaptureRegion(new Rect(left, top, right, bottom));
 			}
 
 			#endregion Get first card
@@ -720,7 +727,7 @@ namespace InventoryKamera
 					int right = (int)Math.Round(reference.Right / 1280.0 * width, MidpointRounding.AwayFromZero);
 					int bottom = (int)Math.Round(reference.Bottom / 720.0 * height, MidpointRounding.AwayFromZero);
 
-					card2 = Navigation.CaptureRegion(new RECT(left, top, right, bottom));
+					card2 = Navigation.CaptureRegion(new Rect(left, top, right, bottom));
 				}
 				else
 				{
@@ -729,7 +736,7 @@ namespace InventoryKamera
 					int right = (int)Math.Round(reference.Right / 1280.0 * width, MidpointRounding.AwayFromZero);
 					int bottom = (int)Math.Round(reference.Bottom / 800.0 * height, MidpointRounding.AwayFromZero);
 
-					card2 = Navigation.CaptureRegion(new RECT(left, top, right, bottom));
+					card2 = Navigation.CaptureRegion(new Rect(left, top, right, bottom));
 				}
 
 				Rectangle item3 = rectangles[2];
@@ -745,7 +752,7 @@ namespace InventoryKamera
 					int right = (int)Math.Round(reference.Right / 1280.0 * width, MidpointRounding.AwayFromZero);
 					int bottom = (int)Math.Round(reference.Bottom / 720.0 * height, MidpointRounding.AwayFromZero);
 
-					card3 = Navigation.CaptureRegion(new RECT(left, top, right, bottom));
+					card3 = Navigation.CaptureRegion(new Rect(left, top, right, bottom));
 				}
 				else
 				{
@@ -754,7 +761,7 @@ namespace InventoryKamera
 					int right = (int)Math.Round(reference.Right / 1280.0 * width, MidpointRounding.AwayFromZero);
 					int bottom = (int)Math.Round(reference.Bottom / 800.0 * height, MidpointRounding.AwayFromZero);
 
-					card3 = Navigation.CaptureRegion(new RECT(left, top, right, bottom));
+					card3 = Navigation.CaptureRegion(new Rect(left, top, right, bottom));
 				}
 
 				// logic for continuing to run

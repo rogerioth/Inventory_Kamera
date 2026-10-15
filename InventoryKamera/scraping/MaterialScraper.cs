@@ -66,7 +66,7 @@ namespace InventoryKamera
 			if (materialPages.Contains(page)) inventoryPage = page;
 		}
 
-		public void Scan_Materials(ref Inventory inventory)
+		public void Scan_Materials(Inventory inventory)
 		{
             var phase = inventoryPage == InventoryPage.CharacterDevelopmentItems
                 ? ScanPhase.CharacterDevelopmentItems : ScanPhase.Materials;
@@ -352,7 +352,7 @@ namespace InventoryKamera
 			var reference = new Rectangle(872, 80, 327, 37);
 
 			// Nameplate is in the same place in 16:9 and 16:10
-			var region= new RECT(
+			var region= new Rect(
 				Left:   (int)( reference.Left   / refWidth  * width),
 				Top:    (int)( reference.Top    / refHeight * height),
 				Right:  (int)( reference.Right  / refWidth  * width),
@@ -392,9 +392,9 @@ namespace InventoryKamera
             return count ?? 0;
         }
 
-        private static RECT GetQuantityRegion(Rectangle rectangle)
+        private static Rect GetQuantityRegion(Rectangle rectangle)
         {
-            return new RECT(rectangle.X, (int)(rectangle.Y + 0.8 * rectangle.Height),
+            return new Rect(rectangle.X, (int)(rectangle.Y + 0.8 * rectangle.Height),
                 rectangle.Right, rectangle.Bottom + 10);
         }
 

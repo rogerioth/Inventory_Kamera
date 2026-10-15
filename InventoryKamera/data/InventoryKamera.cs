@@ -15,10 +15,10 @@ namespace InventoryKamera
 		private static NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
 
 		[JsonProperty]
-		public List<Character> Characters;
+		public List<Character> Characters { get; set; }
 
 		[JsonProperty]
-		public Inventory Inventory;
+		public Inventory Inventory { get; set; }
 
         public AchievementScanResult Achievements { get; private set; }
         public AchievementCatalog AchievementCatalog { get; set; }
@@ -35,7 +35,7 @@ namespace InventoryKamera
 
 		private readonly List<Artifact> equippedArtifacts;
 		private readonly List<Weapon> equippedWeapons;
-		public static Queue<OCRImageCollection> workerQueue = new Queue<OCRImageCollection>();
+		public static Queue<OcrImageCollection> workerQueue { get; set; } = new Queue<OcrImageCollection>();
 		private readonly List<Thread> ImageProcessors;
 
 		private readonly WeaponScraper weaponScraper;
@@ -105,11 +105,19 @@ namespace InventoryKamera
 			Logger.Info("Logging directory reset");
 		}
 
+		// Creates the capture's sub-folder and saves the screenshot into it.
+		// Diagnostic saves must never throw out of the worker (see callers).
+		private static void SaveDiagnosticImage(System.Drawing.Bitmap bitmap, string directory, string filePath)
+		{
+			Directory.CreateDirectory(directory);
+			bitmap.Save(filePath);
+		}
+
 		public void StopImageProcessorWorkers()
 		{
 			b_threadCancel = true;
 			AwaitProcessors();
-			workerQueue = new Queue<OCRImageCollection>();
+			workerQueue = new Queue<OcrImageCollection>();
 		}
 
 		private bool disposed;
@@ -132,8 +140,7 @@ namespace InventoryKamera
 
 		public void GatherData()
 		{
-			Logger.Info("Starting inventory scan");
-			Logger.Info("    Preparing diagnostic logs and OCR data...");
+			Logger.Info("Starting inventory scan; preparing diagnostic logs and OCR data...");
 			ResetLogging();
 
             if (!Properties.Settings.Default.ScanWeapons && !Properties.Settings.Default.ScanArtifacts &&
@@ -220,7 +227,7 @@ namespace InventoryKamera
 				Logger.Info("Finished capturing artifact inventory cards");
 			}
 
-			workerQueue.Enqueue(new OCRImageCollection(null, "END", 0));
+			workerQueue.Enqueue(new OcrImageCollection(null, "END", 0));
 
 			if (Properties.Settings.Default.ScanCharacters)
 			{
@@ -233,7 +240,7 @@ namespace InventoryKamera
 				try
 				{
 					CharacterNavigation.OpenCharacterScreen("start character roster scan", true);
-					CharacterScraper.ScanCharacters(ref Characters);
+					CharacterScraper.ScanCharacters(Characters);
 					CharacterScanComplete = CharacterScraper.LastScanComplete;
 					characterTalentsCorrected = true;
 					CharacterNavigation.Require(CharacterScreenState.CharacterMenu, "finish character roster scan");
@@ -256,7 +263,7 @@ namespace InventoryKamera
 			}
 
 			// Wait for Image Processors to finish
-			Logger.Info("Waiting for remaining weapon and artifact scans...");
+			Logger.Debug("Waiting for remaining weapon and artifact scans...");
             if (Volatile.Read(ref equipmentProcessed) < Volatile.Read(ref equipmentEnqueued))
             {
                 UserInterface.BeginScanPhase(ScanPhase.EquipmentProcessing, Volatile.Read(ref equipmentEnqueued));
@@ -276,7 +283,7 @@ namespace InventoryKamera
                         "Some queued cards were not processed");
             }
             else AwaitProcessors();
-			Logger.Info("    Equipment processing finished");
+			Logger.Debug("    Equipment processing finished");
 
 			if (Properties.Settings.Default.ScanCharacters)
 			{
@@ -295,11 +302,10 @@ namespace InventoryKamera
 				// Get Materials
 				Navigation.InventoryScreen();
 				Navigation.SelectCharacterDevelopmentInventory();
-				HashSet<Material> devItems = new HashSet<Material>();
 				try
 				{
 					materialScraper.SetInventoryPage(InventoryPage.CharacterDevelopmentItems);
-					materialScraper.Scan_Materials(ref Inventory);
+					materialScraper.Scan_Materials(Inventory);
 				}
 				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Character development material scan: " + ex.Message); }
 				catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
@@ -320,11 +326,10 @@ namespace InventoryKamera
 				// Get Materials
 				Navigation.InventoryScreen();
 				Navigation.SelectMaterialInventory();
-				HashSet<Material> materials = new HashSet<Material>();
 				try
 				{
 					materialScraper.SetInventoryPage(InventoryPage.Materials);
-					materialScraper.Scan_Materials(ref Inventory);
+					materialScraper.Scan_Materials(Inventory);
 				}
 				catch (FormatException ex) { UserInterface.AddError("    [FAILURE] Material inventory scan: " + ex.Message); }
 				catch (ThreadAbortException) { /* Intentionally ignored: scan is being cancelled. */ }
@@ -382,7 +387,7 @@ namespace InventoryKamera
 					break;
 				}
 
-				if (workerQueue.TryDequeue(out OCRImageCollection imageCollection))
+				if (workerQueue.TryDequeue(out OcrImageCollection imageCollection))
 				{
 					// A single unrecognized or malformed item must never kill this worker
 					// thread; log it and keep processing the rest of the queue.
@@ -451,16 +456,11 @@ namespace InventoryKamera
                                 // missing directories, disconnected drives).
                                 try
                                 {
-                                    Directory.CreateDirectory(weaponPath + "name");
-                                    imageCollection.Bitmaps[0].Save(weaponPath + "name/name.png");
-                                    Directory.CreateDirectory(weaponPath + "rarity");
-                                    imageCollection.Bitmaps[0].Save(weaponPath + "rarity/rarity.png");
-                                    Directory.CreateDirectory(weaponPath + "level");
-                                    imageCollection.Bitmaps[1].Save(weaponPath + "level/level.png");
-                                    Directory.CreateDirectory(weaponPath + "refinement");
-                                    imageCollection.Bitmaps[2].Save(weaponPath + "refinement/refinement.png");
-                                    Directory.CreateDirectory(weaponPath + "equipped");
-                                    imageCollection.Bitmaps[4].Save(weaponPath + "equipped/equipped.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[0], weaponPath + "name", weaponPath + "name/name.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[0], weaponPath + "rarity", weaponPath + "rarity/rarity.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[1], weaponPath + "level", weaponPath + "level/level.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[2], weaponPath + "refinement", weaponPath + "refinement/refinement.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[4], weaponPath + "equipped", weaponPath + "equipped/equipped.png");
 
                                     imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1].Save(weaponPath + "card.png");
                                 }
@@ -537,28 +537,20 @@ namespace InventoryKamera
                                 // missing directories, disconnected drives).
                                 try
                                 {
-                                    Directory.CreateDirectory(artifactPath + "name");
-                                    imageCollection.Bitmaps[0].Save(artifactPath + "name/name.png");
-                                    Directory.CreateDirectory(artifactPath + "slot");
-									imageCollection.Bitmaps[1].Save(artifactPath + "slot/slot.png");
-                                    Directory.CreateDirectory(artifactPath + "mainstat");
-                                    imageCollection.Bitmaps[2].Save(artifactPath + "mainstat/mainstat.png");
-									Directory.CreateDirectory(artifactPath + "level");
-									imageCollection.Bitmaps[3].Save(artifactPath + "level/level.png");
-									Directory.CreateDirectory(artifactPath + "substats");
-									imageCollection.Bitmaps[4].Save(artifactPath + "substats/substats.png");
-									Directory.CreateDirectory(artifactPath + "equipped");
-									imageCollection.Bitmaps[5].Save(artifactPath + "equipped/equipped.png");
-									Directory.CreateDirectory(artifactPath + "locked");
-									imageCollection.Bitmaps[6].Save(artifactPath + "locked/locked.png");
-									// Sanctified banner capture (index 7), for diagnosing
-									// artifacts crafted with Sanctifying Elixir.
-									// (Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6)
-									Directory.CreateDirectory(artifactPath + "sanctify");
-									imageCollection.Bitmaps[7].Save(artifactPath + "sanctify/sanctify.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[0], artifactPath + "name", artifactPath + "name/name.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[1], artifactPath + "slot", artifactPath + "slot/slot.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[2], artifactPath + "mainstat", artifactPath + "mainstat/mainstat.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[3], artifactPath + "level", artifactPath + "level/level.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[4], artifactPath + "substats", artifactPath + "substats/substats.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[5], artifactPath + "equipped", artifactPath + "equipped/equipped.png");
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[6], artifactPath + "locked", artifactPath + "locked/locked.png");
+                                    // Sanctified banner capture (index 7), for diagnosing
+                                    // artifacts crafted with Sanctifying Elixir.
+                                    // (Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6)
+                                    SaveDiagnosticImage(imageCollection.Bitmaps[7], artifactPath + "sanctify", artifactPath + "sanctify/sanctify.png");
 
-									imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1].Save(artifactPath + "card.png");
-								}
+                                    imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1].Save(artifactPath + "card.png");
+                                }
 								catch (Exception ex)
 								{
 									Logger.Warn(ex, "Could not save diagnostic screenshots for artifact #{0}. Continuing...", artifact.Id);

@@ -54,7 +54,7 @@ namespace InventoryKamera
 			}
 		}
 
-		public static void ScanCharacters(ref List<Character> Characters)
+		public static void ScanCharacters(List<Character> Characters)
 		{
 			BeginRosterCoverage();
 			int viewed = 0;
@@ -580,10 +580,9 @@ namespace InventoryKamera
 			// Check if character was first scanned
 			if (CharacterIdentity(name, element, name) != firstCharacter)
 			{
-				Logger.Info("Starting scan of character {0} ({1})", character.NameGOOD, character.Element);
 				bool ascended = false;
 				// Scan Level and ascension
-				Logger.Info("    Scanning {0}'s level and ascension...", character.NameGOOD);
+				Logger.Debug("Starting scan of character {0} ({1}): scanning level and ascension...", character.NameGOOD, character.Element);
 				int level = ScanLevel(ref ascended);
 				if (level == -1)
 				{
@@ -598,17 +597,17 @@ namespace InventoryKamera
 				// Scan Experience
 
 				// Scan Constellation
-				Logger.Info("    Scanning {0}'s constellations...", character.NameGOOD);
+				Logger.Debug("    Scanning {0}'s constellations...", character.NameGOOD);
 				Navigation.SelectCharacterConstellation();
 				character.Constellation = ScanConstellations(character);
 				Logger.Info("        {0}: constellation {1}", character.NameGOOD, character.Constellation);
 				Navigation.SystemWait(Navigation.Speed.Normal);
 
 				// Scan Talents
-				Logger.Info("    Scanning {0}'s talents...", character.NameGOOD);
+				Logger.Debug("    Scanning {0}'s talents...", character.NameGOOD);
 				Navigation.SelectCharacterTalents();
 				character.Talents = ScanTalents(character);
-				Logger.Info("        {0}'s talents: {1}", character.NameGOOD, string.Join(", ", character.Talents.Select(kv => kv.Key + "=" + kv.Value).ToArray()));
+				Logger.Debug("        {0}'s talents: {1}", character.NameGOOD, string.Join(", ", character.Talents.Select(kv => kv.Key + "=" + kv.Value).ToArray()));
 				Navigation.SystemWait(Navigation.Speed.Normal);
 				if (!character.HasValidTalents()) return character;
 
@@ -692,7 +691,7 @@ namespace InventoryKamera
 				yReference = 800.0;
 			}
 
-			RECT region = new RECT(
+			Rect region = new Rect(
 				Left:   (int)(185 / xReference * Navigation.GetWidth()),
 				Top:    (int)(26  / yReference * Navigation.GetHeight()),
 				Right:  (int)(460 / xReference * Navigation.GetWidth()),
@@ -1095,7 +1094,7 @@ namespace InventoryKamera
 				yRef = 800.0;
 			}
 
-			Rectangle region =  new RECT(
+			Rectangle region =  new Rect(
 				Left:   (int)( 960  / xRef * Navigation.GetWidth() ),
 				Top:    (int)( 135  / yRef * Navigation.GetHeight() ),
 				Right:  (int)( 1125 / xRef * Navigation.GetWidth() ),
@@ -1153,7 +1152,7 @@ namespace InventoryKamera
 				yReference = 800.0;
 			}
 
-			Rectangle constActivate =  new RECT(
+			Rectangle constActivate =  new Rect(
 				Left:   (int)( 70 / 1280.0 * Navigation.GetWidth() ),
 				Top:    (int)( 665 / 720.0 * Navigation.GetHeight() ),
 				Right:  (int)( 100 / 1280.0 * Navigation.GetWidth() ),

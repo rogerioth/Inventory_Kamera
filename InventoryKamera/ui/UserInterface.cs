@@ -124,7 +124,7 @@ namespace InventoryKamera
 			catch (Exception e)
 			{
                 if (!assigned) clone?.Dispose();
-				Logger.Debug($"Problem updating picturebox {0}\n{1}", pictureBox.Name, e);
+				Logger.Debug(e, "Problem updating picturebox {0}", pictureBox.Name);
 			}
 		}
 
@@ -142,7 +142,7 @@ namespace InventoryKamera
 			}
 			catch (Exception e)
 			{
-				Logger.Debug($"Problem updating picturebox {0}\n{1}", textBox.Name, e);
+				Logger.Debug(e, "Problem updating picturebox {0}", textBox.Name);
 			}
 		}
 
@@ -161,7 +161,7 @@ namespace InventoryKamera
 			}
 			catch (Exception e)
 			{
-				Logger.Debug($"Problem updating picturebox {0}\n{1}", label.Name, e);
+				Logger.Debug(e, "Problem updating picturebox {0}", label.Name);
 
 			}
 		}

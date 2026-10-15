@@ -233,26 +233,42 @@ namespace InventoryKamera
 			}
 
             // Send images to Worker Queue
-            InventoryKamera.workerQueue.Enqueue(new OCRImageCollection(artifactImages, "artifact", id));
+            InventoryKamera.workerQueue.Enqueue(new OcrImageCollection(artifactImages, "artifact", id));
             ItemQueued?.Invoke();
 			return true;
 		}
 
+        // Shared crop math for card regions whose y position (and sanctified
+        // shift) differ between 16:9 and 16:10. All fractions are relative to
+        // the captured card; values are the field-tested ones per aspect ratio.
+        private static Bitmap CropCardRegion(Bitmap card, bool isSanctified,
+            double x, double width,
+            double baseYNormal, double baseY16x10,
+            double shiftNormal, double shift16x10,
+            double heightNormal, double height16x10)
+        {
+            double baseY = Navigation.IsNormal ? baseYNormal : baseY16x10;
+            double sanctifiedShift = Navigation.IsNormal ? shiftNormal : shift16x10;
+            double yShift = isSanctified ? sanctifiedShift : 0.0;
+
+            return GenshinProcesor.CopyBitmap(card, new Rectangle(
+                x: (int)(card.Width * x),
+                y: (int)(card.Height * (baseY + yShift)),
+                width: (int)(card.Width * width),
+                height: (int)(card.Height * (Navigation.IsNormal ? heightNormal : height16x10))));
+        }
+
         private static Bitmap GetSubstatsBitmap(Bitmap card, bool isSanctified = false)
         {
 			// Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6, fea6e1bb.
-			double baseY = Navigation.IsNormal ? 0.4216 : 0.3682;
-			double sanctifiedShift = Navigation.IsNormal ? 0.0520 : 0.0471;
-			double yShift = isSanctified ? sanctifiedShift : 0.0;
-
 			// The region is widened and extended downward so the "unactivated"
 			// substat row introduced in Genshin 6.0 is captured by the OCR.
 			// (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d)
-			return GenshinProcesor.CopyBitmap(card,new Rectangle(
-				x:(int)(card.Width * 0.0605),
-				y:(int)(card.Height * (baseY + yShift)),
-				width:(int)(card.Width * 0.8297),
-				height:(int)(card.Height * (Navigation.IsNormal ? 0.2301 : 0.1573))));
+			return CropCardRegion(card, isSanctified,
+				x: 0.0605, width: 0.8297,
+				baseYNormal: 0.4216, baseY16x10: 0.3682,
+				shiftNormal: 0.0520, shift16x10: 0.0471,
+				heightNormal: 0.2301, height16x10: 0.1573);
         }
 
         private static Bitmap GetMainStatBitmap(Bitmap card)
@@ -269,15 +285,11 @@ namespace InventoryKamera
         private static Bitmap GetLevelBitmap(Bitmap card, bool isSanctified = false)
         {
 			// Ported from taiwenlee/Inventory_Kamera (MIT): 5e4687c6, fea6e1bb.
-			double baseY = Navigation.IsNormal ? 0.3634 : 0.3197;
-			double sanctifiedShift = Navigation.IsNormal ? 0.0520 : 0.0465;
-			double yShift = isSanctified ? sanctifiedShift : 0.0;
-
-			return GenshinProcesor.CopyBitmap(card, new Rectangle(
-                x: (int)(card.Width * 0.0506),
-                y: (int)(card.Height * (baseY + yShift)),
-                width: (int)(card.Width * 0.1417),
-                height: (int)(card.Height * (Navigation.IsNormal ? 0.0416 : 0.0347))));
+			return CropCardRegion(card, isSanctified,
+				x: 0.0506, width: 0.1417,
+				baseYNormal: 0.3634, baseY16x10: 0.3197,
+				shiftNormal: 0.0520, shift16x10: 0.0465,
+				heightNormal: 0.0416, height16x10: 0.0347);
         }
 
         private static Bitmap GetSanctifyBitmap(Bitmap card)
@@ -374,9 +386,9 @@ namespace InventoryKamera
 
 		public static bool IsEnhancementMaterial(Bitmap card)
 		{
-			RECT reference = Navigation.GetAspectRatio() == new Size(16, 9) ?
-				new RECT(new Rectangle(862, 80, 327, 560)) : (RECT)new Rectangle(862, 80, 328, 640);
-			Bitmap nameBitmap = card.Clone(new RECT(
+			Rect reference = Navigation.GetAspectRatio() == new Size(16, 9) ?
+				new Rect(new Rectangle(862, 80, 327, 560)) : (Rect)new Rectangle(862, 80, 328, 640);
+			Bitmap nameBitmap = card.Clone(new Rect(
 				Left: 0,
 				Top: 0,
 				Right: card.Width,
