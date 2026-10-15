@@ -24,6 +24,9 @@ namespace InventoryKamera
         private int? achievementExpected, achievementCategoryTotal;
         private bool achievementSnapshotAvailable, achievementCoverageComplete, achievementCancelled;
 
+        // Separator between the segments of the phase progress caption.
+        private const string DetailSeparator = "  ·  ";
+
         private void InitializeScanProgress()
         {
             scanCounterHelp = new ToolTip(components) { AutoPopDelay = 15000, InitialDelay = 400, ReshowDelay = 100, ShowAlways = true };
@@ -208,11 +211,11 @@ namespace InventoryKamera
             scanPhaseProgress.Value = percentage;
             string units = PhaseProgressUnits(progress);
             string count = activePhaseCurrent + " / " + (progress.Total?.ToString() ?? "?");
-            string percentageSuffix = progress.Total.HasValue ? "  ·  " + percentage + "%" : "";
-            string detailSuffix = string.IsNullOrWhiteSpace(progress.Detail) ? "" : "  ·  " + progress.Detail;
+            string percentageSuffix = progress.Total.HasValue ? DetailSeparator + percentage + "%" : "";
+            string detailSuffix = string.IsNullOrWhiteSpace(progress.Detail) ? "" : DetailSeparator + progress.Detail;
             scanPhaseCaption.Text = progress.TotalIsProvisional
-                ? progress.Name + "  ·  " + (progress.Total?.ToString() ?? "0") + " found  ·  Counting roster"
-                : progress.Name + "  ·  " + count + " " + units + percentageSuffix + detailSuffix;
+                ? progress.Name + DetailSeparator + (progress.Total?.ToString() ?? "0") + " found  ·  Counting roster"
+                : progress.Name + DetailSeparator + count + " " + units + percentageSuffix + detailSuffix;
             scanPhaseCaption.AccessibleDescription = scanPhaseCaption.Text;
         }
 

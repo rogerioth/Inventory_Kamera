@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using Newtonsoft.Json;
 
@@ -131,9 +132,7 @@ namespace InventoryKamera
         {
             if (Talents is null || Talents.Keys.Count != 3) return false;
 
-            foreach (var value in Talents.Values) if (value < 1 || value > 15) return false;
-
-            return true;
+            return Talents.Values.All(value => value >= 1 && value <= 15);
         }
 
         public void AssignWeapon(Weapon newWeapon)

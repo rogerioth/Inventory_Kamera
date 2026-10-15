@@ -249,13 +249,13 @@ namespace InventoryKamera
 		public static void SetWeapon_Max(int value)
 		{
 			UpdateLabel(value.ToString(), weaponMax_Label);
-			Logger.Info("Parsed {value} weapons to scan", value);
+			Logger.Info("Parsed {Value} weapons to scan", value);
 		}
 
 		public static void SetArtifact_Max(int value)
 		{
 			UpdateLabel(value.ToString(), artifactMax_Label);
-			Logger.Info("Parsed {value} artifacts to scan", value);
+			Logger.Info("Parsed {Value} artifacts to scan", value);
 		}
 
 		public static void IncrementArtifactCount()

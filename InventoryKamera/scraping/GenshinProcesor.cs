@@ -26,6 +26,9 @@ namespace InventoryKamera
 
 		private const int numEngines = 8;
 
+		// JSON key under which a character's user-defined alias is stored.
+		private const string CustomNameKey = "CustomName";
+
 		private static readonly string tesseractDatapath = $".\\tessdata";
 		private static readonly string tesseractLanguage = "genshin_fast_09_04_21";
 
@@ -175,7 +178,7 @@ namespace InventoryKamera
 			foreach (var character in Characters)
 			{
 				if (character.Key == target) continue;
-				if (character.Value.TryGetValue("CustomName", out var customName) && (string)customName == name) return true;
+				if (character.Value.TryGetValue(CustomNameKey, out var customName) && (string)customName == name) return true;
 			}
 			return false;
 		}
@@ -210,8 +213,8 @@ namespace InventoryKamera
 
             if (Characters.TryGetValue(target, out _))
 			{
-				Characters[target]["CustomName"] = name;
-				Logger.Info("Internally set {0} custom name to {1}", target, Characters[target]["CustomName"]);
+				Characters[target][CustomNameKey] = name;
+				Logger.Info("Internally set {0} custom name to {1}", target, Characters[target][CustomNameKey]);
 			}
 			else throw new KeyNotFoundException($"Could not find '{target}' entry in characters.json");
 		}
@@ -417,11 +420,11 @@ namespace InventoryKamera
 		internal static bool IsValidSetName(string setName)
 		{
 			if (Artifacts.TryGetValue(setName, out var _) || Artifacts.TryGetValue(setName.ToLower(), out var _)) return true;
-			foreach (var artifactSet in Artifacts.Values)
-				foreach (var field in artifactSet)
-					if (field.ToString() == setName) return true;
-                
-			return false;
+			// JObject's enumerator yields KeyValuePair<string, JToken>, so compare
+			// the pair's rendered form exactly as the previous loop did.
+			return Artifacts.Values.Any(artifactSet => artifactSet
+				.Cast<KeyValuePair<string, JToken>>()
+				.Any(field => field.ToString() == setName));
 		}
 
 		internal static bool IsValidMaterial(string name)
@@ -474,14 +477,7 @@ namespace InventoryKamera
 
 		internal static string FindClosestGearSlot(string input)
 		{
-			foreach (var slot in gearSlots)
-			{
-				if (input.Contains(slot))
-				{
-					return slot;
-				}
-			}
-			return input;
+			return gearSlots.FirstOrDefault(slot => input.Contains(slot)) ?? input;
 		}
 
 		internal static string FindClosestStat(string stat, int minConfidence = 90)
@@ -511,11 +507,11 @@ namespace InventoryKamera
 			double highestConfidence = 0;
 
 
-            foreach (var artifactSet in Artifacts)
+            foreach (var artifactSet in Artifacts.Select(artifactSet => artifactSet.Value))
             {
-                string currentSet = artifactSet.Value["GOOD"].ToString();
+                string currentSet = artifactSet["GOOD"].ToString();
 
-                foreach (var slot in artifactSet.Value["artifacts"].Values())
+                foreach (var slot in artifactSet["artifacts"].Values())
                 {
                     string artifactName = slot["normalizedName"].ToString();
                     if (artifactName == name) return currentSet;
@@ -552,12 +548,12 @@ namespace InventoryKamera
 			// Custom names are extra aliases added collision-proof: an alias that
 			// is already present (a real key or another alias) is skipped instead
 			// of throwing ArgumentException and breaking the scan (#433).
-			foreach (var character in Characters)
+			foreach (var character in Characters.Select(character => character.Value))
 			{
-				if (!character.Value.TryGetValue("CustomName", out var customName)) continue;
+				if (!character.TryGetValue(CustomNameKey, out var customName)) continue;
 				string alias = ((string)customName)?.FoldToOcrName();
 				if (string.IsNullOrWhiteSpace(alias) || temp.ContainsKey(alias)) continue;
-				temp.Add(alias, character.Value);
+				temp.Add(alias, character);
 			}
 
 			var n = FindClosestInDict(source: name, targets: temp, minConfidence: minConfidence);
@@ -855,12 +851,10 @@ namespace InventoryKamera
 			var c2 = Color.FromArgb((int)color.Red.Mean, (int)color.Green.Mean, (int)color.Blue.Mean);
 			var diff = colors.Select(x => new { Value = x, Diff = GetColorDifference(x, c2) }).ToList();
 
-			foreach (var c in colors)
-            {
-                if (CompareColors(c, c2)) return c;
-            }
-
-            return diff.Find(x=> x.Diff == diff.Min(y=>y.Diff)).Value;
+			// `diff` preserves the enumeration order of `colors`, so the first
+			// close match is the same color the previous loop returned.
+			return diff.FirstOrDefault(x => CompareColors(x.Value, c2))?.Value
+				?? diff.Find(x => x.Diff == diff.Min(y => y.Diff)).Value;
 		}
 
         private static int GetColorDifference(Color c, Color c2)

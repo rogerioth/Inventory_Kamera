@@ -77,7 +77,7 @@ namespace InventoryKamera
 			Logger.Info("Kamera initialized");
 		}
 
-		public void ResetLogging()
+		public static void ResetLogging()
 		{
 			try
 			{
@@ -200,10 +200,10 @@ namespace InventoryKamera
 				processor.Start();
 				ImageProcessors.Add(processor);
 			}
-			Logger.Debug("Added {count} workers", ImageProcessors.Count);
+			Logger.Debug("Added {Count} workers", ImageProcessors.Count);
 		}
 
-		private void AssignCustomCharacterNames()
+		private static void AssignCustomCharacterNames()
 		{
 			// Assign Traveler's custom name
 			// Assign Wanderer's custom name
@@ -432,7 +432,7 @@ namespace InventoryKamera
 					Thread.Sleep(250);
 				}
 			}
-			Logger.Debug("Thread {threadId} exit", Thread.CurrentThread.ManagedThreadId);
+			Logger.Debug("Thread {ThreadId} exit", Thread.CurrentThread.ManagedThreadId);
 		}
 
 		private void ProcessDequeuedImage(OcrImageCollection imageCollection)
@@ -479,9 +479,9 @@ namespace InventoryKamera
 
 		private void ProcessWeaponImage(OcrImageCollection imageCollection)
 		{
-			if (weaponScraper.IsEnhancementMaterial(imageCollection.Bitmaps.First()))
+			if (weaponScraper.IsEnhancementMaterial(imageCollection.Bitmaps[0]))
 			{
-				Logger.Debug("Enhancement Material found for weapon #{weaponID}", imageCollection.Id);
+				Logger.Debug("Enhancement Material found for weapon #{WeaponID}", imageCollection.Id);
 				weaponScraper.StopScanning = true;
 				return;
 			}
@@ -571,7 +571,7 @@ namespace InventoryKamera
 		{
 			if (ArtifactScraper.IsEnhancementMaterial(imageCollection.Bitmaps[imageCollection.Bitmaps.Count - 1]))
 			{
-				Logger.Debug("Enhancement Material found for artifact #{artifactID}", imageCollection.Id);
+				Logger.Debug("Enhancement Material found for artifact #{ArtifactID}", imageCollection.Id);
 				artifactScraper.StopScanning = true;
 				return;
 			}

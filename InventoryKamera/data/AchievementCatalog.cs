@@ -270,11 +270,11 @@ namespace InventoryKamera
             if (hasExactTitle) families = families.Where(candidate => IsExactTitleScore(candidate.TitleScore)).ToList();
             observed.HasExactTitle = hasExactTitle;
             var candidates = new List<Candidate>();
-            foreach (var familyCandidate in families)
+            foreach (var family in families.Select(familyCandidate => familyCandidate.Family))
             {
-                foreach (var tier in familyCandidate.Family.Tiers)
+                foreach (var tier in family.Tiers)
                 {
-                    var candidate = MatchTier(familyCandidate.Family, tier, observed);
+                    var candidate = MatchTier(family, tier, observed);
                     if (candidate != null) candidates.Add(candidate);
                 }
             }
