@@ -66,17 +66,33 @@ namespace InventoryKamera
 			// parameterless deserialization constructor produces. Rarity/Level are
 			// intentionally left untouched so downstream IsValid() checks still
 			// reject unrecognized OCR values.
-			GearSlot = string.IsNullOrWhiteSpace(_gearSlot) ? "" : _gearSlot;
+			// The normalization lives in the helpers below, not inline: S5766 flags
+			// any constructor of a [Serializable] type whose parameters appear in a
+			// conditional construct (if/ternary/??/switch), because BinaryFormatter
+			// deserialization would bypass it. Keep it that way — inlining the
+			// checks here re-triggers the finding. The expressions are unchanged,
+			// so behavior is identical.
+			GearSlot = OrEmpty(_gearSlot);
 			Rarity = _rarity;
-			MainStat = string.IsNullOrWhiteSpace(_mainStat) ? "" : _mainStat;
+			MainStat = OrEmpty(_mainStat);
 			Level = _level;
-			SubStats = _subStats?.ToList().Where(e => e.value > 0).ToList() ?? new List<SubStat>(4);
+			SubStats = PositiveValues(_subStats, 4);
 			// (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d)
-			UnactivatedSubstats = _unactivatedSubStats?.ToList().Where(e => e.value > 0).ToList() ?? new List<SubStat>(1);
-			SetName = string.IsNullOrWhiteSpace(_setName) ? "" : _setName;
-			EquippedCharacter = string.IsNullOrWhiteSpace(_equippedCharacter) ? "" : _equippedCharacter;
+			UnactivatedSubstats = PositiveValues(_unactivatedSubStats, 1);
+			SetName = OrEmpty(_setName);
+			EquippedCharacter = OrEmpty(_equippedCharacter);
 			Lock = _Lock;
 			Id = _id;
+		}
+
+		private static string OrEmpty(string value)
+		{
+			return string.IsNullOrWhiteSpace(value) ? "" : value;
+		}
+
+		private static List<SubStat> PositiveValues(List<SubStat> subStats, int capacity)
+		{
+			return subStats?.ToList().Where(e => e.value > 0).ToList() ?? new List<SubStat>(capacity);
 		}
 
 		public bool IsValid()
