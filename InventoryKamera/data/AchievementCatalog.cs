@@ -209,15 +209,15 @@ namespace InventoryKamera
             var families = category.Families.Where(family => family.Tiers.Count > 0)
                 .Select(family => new { Family = family, TitleScore = family.Tiers.Max(tier => Similarity(normalizedTitle, Normalize(tier.Name))) })
                 .Where(candidate => candidate.TitleScore >= 84).ToList();
-            bool hasExactTitle = families.Any(candidate => candidate.TitleScore == 100);
-            if (hasExactTitle) families = families.Where(candidate => candidate.TitleScore == 100).ToList();
+            bool hasExactTitle = families.Any(candidate => IsExactTitleScore(candidate.TitleScore));
+            if (hasExactTitle) families = families.Where(candidate => IsExactTitleScore(candidate.TitleScore)).ToList();
             var candidates = new List<Candidate>();
             foreach (var familyCandidate in families)
             {
                 foreach (var tier in familyCandidate.Family.Tiers)
                 {
                     var titleScore = Similarity(normalizedTitle, Normalize(tier.Name));
-                    if (titleScore < 84 || (hasExactTitle && titleScore != 100)) continue;
+                    if (titleScore < 84 || (hasExactTitle && !IsExactTitleScore(titleScore))) continue;
                     if (reward.HasValue && reward.Value != tier.Reward) continue;
                     var expectedNumbers = ExtractNumbers(tier.Description);
                     if (observedNumbers.Count > 0 && !NumbersAgree(observedNumbers, expectedNumbers)) continue;
@@ -374,6 +374,17 @@ namespace InventoryKamera
                 // Quotes, periods and dashes vary between OCR and the catalog; letters and digits carry identity.
             }
             return result.ToString();
+        }
+
+        // Similarity() returns exactly 100 only for identical strings; any other
+        // pair scores at most 100 - 100/max(left.Length, right.Length), so a
+        // 0.0001 tolerance admits only the exact 100.0 for any realistic text
+        // (a false positive would need strings over a million characters).
+        private const double ExactScoreTolerance = 0.0001;
+
+        private static bool IsExactTitleScore(double score)
+        {
+            return Math.Abs(score - 100) < ExactScoreTolerance;
         }
 
         private static double Similarity(string left, string right)

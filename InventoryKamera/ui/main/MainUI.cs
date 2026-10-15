@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Data;
 using System.Diagnostics;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -60,7 +61,10 @@ namespace InventoryKamera.ui.main
 
         private void Log_Button_Click(object sender, EventArgs e)
         {
-            Process.Start($@"logging");
+            // Resolve the same relative "./logging" folder NLog writes to
+            // (see Program.cs); GetFullPath uses the working directory just
+            // like the previous shell-resolved relative path did.
+            Process.Start(new ProcessStartInfo(Path.GetFullPath(@"logging")) { UseShellExecute = true });
         }
 
         private void GithubLabelLink_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)

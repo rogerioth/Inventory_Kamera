@@ -15,6 +15,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using WindowsInput.Native;
 using Application = System.Windows.Forms.Application;
@@ -444,6 +445,12 @@ namespace InventoryKamera
                     {
                         // Workers can get stuck if the thread is aborted or an exception is raised
                         data?.StopImageProcessorWorkers();
+                        if (data == null)
+                        {
+                            Logger.Warn("Scan thread aborted before scan data was created; nothing to export");
+                            UserInterface.SetProgramStatus("Scan stopped");
+                            return;
+                        }
                         if (scanAchievements)
                         {
                             data.Achievements.Cancelled = true;
@@ -727,17 +734,17 @@ namespace InventoryKamera
             }
             else
             {
-                Process.Start("explorer.exe");
+                Process.Start(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"));
             }
         }
 
         private void MainForm_Shown(object sender, EventArgs e)
         {
-            CheckForKameraUpdates();
+            _ = CheckForKameraUpdatesAsync();
             CheckForGenshinUpdates();
         }
 
-        private async void CheckForKameraUpdates()
+        private async Task CheckForKameraUpdatesAsync()
         {
             var client = new GitHubClient(new ProductHeaderValue("Inventory_Kamera"));
             try
@@ -861,7 +868,10 @@ namespace InventoryKamera
 
         private void ErrorLog_Label_Click(object sender, EventArgs e)
         {
-            Process.Start($@"logging");
+            // Resolve the same relative "./logging" folder NLog writes to
+            // (see Program.cs); GetFullPath uses the working directory just
+            // like the previous shell-resolved relative path did.
+            Process.Start(new ProcessStartInfo(Path.GetFullPath(@"logging")) { UseShellExecute = true });
         }
 
         private void updateExecutablesToolStripMenuItem_Click(object sender, EventArgs e)
