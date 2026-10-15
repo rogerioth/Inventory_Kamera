@@ -35,9 +35,16 @@ namespace InventoryKamera
             TotalIsProvisional = totalIsProvisional;
         }
 
-        public int Percentage => TotalIsProvisional ? 0 : Total.HasValue && Total.Value > 0
-            ? (int)Math.Min(100, 100L * Current / Total.Value)
-            : Finished && Total == 0 ? 100 : 0;
+        public int Percentage
+        {
+            get
+            {
+                if (TotalIsProvisional) return 0;
+                if (Total.HasValue && Total.Value > 0) return (int)Math.Min(100, 100L * Current / Total.Value);
+                if (Finished && Total == 0) return 100;
+                return 0;
+            }
+        }
 
         public string Name
         {

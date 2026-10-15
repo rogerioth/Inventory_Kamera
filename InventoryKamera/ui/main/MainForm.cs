@@ -437,9 +437,12 @@ namespace InventoryKamera
                         bool exportSucceeded = !scanAchievements || ExportAchievements(outputDirectory);
                         bool scansComplete = (!scanCharacters || data.CharacterScanComplete) &&
                             (!scanAchievements || data.Achievements.Complete);
-                        UserInterface.SetProgramStatus(!exportSucceeded ? "Export failed" : scanAchievements && data.Achievements.Cancelled ? "Scan stopped" :
-                            !scansComplete ? "Finished (partial)" : "Finished",
-                            ok: exportSucceeded && scansComplete);
+                        string status;
+                        if (!exportSucceeded) status = "Export failed";
+                        else if (scanAchievements && data.Achievements.Cancelled) status = "Scan stopped";
+                        else if (!scansComplete) status = "Finished (partial)";
+                        else status = "Finished";
+                        UserInterface.SetProgramStatus(status, ok: exportSucceeded && scansComplete);
                         if (good != null && !data.Achievements.Cancelled) OpenOptimizerDialog(good);
                     }
                     catch (ThreadAbortException)

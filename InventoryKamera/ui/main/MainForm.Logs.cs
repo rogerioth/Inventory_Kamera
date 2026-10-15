@@ -299,7 +299,9 @@ namespace InventoryKamera
             {
                 if (!IsLogEntryVisible(entry))
                     continue;
-                int color = entry.IsError ? 3 : (entry.Level.Ordinal >= LogLevel.Warn.Ordinal ? 2 : 1);
+                int color;
+                if (entry.IsError) color = 3;
+                else color = entry.Level.Ordinal >= LogLevel.Warn.Ordinal ? 2 : 1;
                 rtf.Append("\\cf").Append(color).Append(' ');
                 string text = entry.Text.Replace("\r\n", "\n").Replace('\r', '\n');
                 if (entry.IsError)

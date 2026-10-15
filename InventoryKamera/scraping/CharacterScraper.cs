@@ -155,9 +155,9 @@ namespace InventoryKamera
 
 				// The verified starting name remains the wrap sentinel even when its full
 				// detail read failed. Count inspected slots rather than only valid exports.
-				UserInterface.ReportScanProgress(ScanPhase.Characters, ++viewed, rosterTotal,
-					omittedAfterNavigationFailure ? "Partial: skipped " + currentIdentity :
-					string.IsNullOrWhiteSpace(character.NameGOOD) ? "Unreadable character" : character.NameGOOD);
+				string readableIdentity = string.IsNullOrWhiteSpace(character.NameGOOD) ? "Unreadable character" : character.NameGOOD;
+				string scanDetail = omittedAfterNavigationFailure ? "Partial: skipped " + currentIdentity : readableIdentity;
+				UserInterface.ReportScanProgress(ScanPhase.Characters, ++viewed, rosterTotal, scanDetail);
 				lastInspectedIdentity = currentIdentity;
 				CharacterNavigation.ConfirmRosterProgress(currentIdentity);
 				AdvanceCharacterWithRecovery(currentIdentity);
@@ -775,9 +775,9 @@ namespace InventoryKamera
             {
                 element = lineElement;
                 rawName = lineRawName;
-                evidence = lineElement != blockElement ? "conflicting elements" :
-                    lineMatched && blockMatched && lineName != blockName ? "conflicting canonical characters" :
-                    "unexplained name text; " + agreement;
+                if (lineElement != blockElement) evidence = "conflicting elements";
+                else if (lineMatched && blockMatched && lineName != blockName) evidence = "conflicting canonical characters";
+                else evidence = "unexplained name text; " + agreement;
                 return false;
             }
             if (lineMatched || blockMatched)

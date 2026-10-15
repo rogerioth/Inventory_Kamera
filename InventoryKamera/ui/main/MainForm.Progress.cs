@@ -65,6 +65,12 @@ namespace InventoryKamera
                 ArtifactRarityControl.Value, numericUpDown1.Value));
             int acceptedCharacters;
             int.TryParse(CharactersScanned_Label.Text, out acceptedCharacters);
+            string rosterTotalNote = characterTotal.HasValue
+                ? "The total counts owned characters, not the character catalog.\n"
+                : "? means the owned roster total could not be verified or has not been read yet.\n";
+            string coverageNote = characterCoverageComplete
+                ? "Roster coverage verified with no omitted characters."
+                : "Roster coverage is not yet fully verified; unreadable or skipped characters leave partial export data.";
             SetScanCounterTooltip(characterPill, characterTotalIsProvisional
                 ? "Characters: " + CharactersScanned_Label.Text + " accepted for export / " + (characterTotal?.ToString() ?? "?") +
                     " owned characters found so far.\nCounting the roster; the total grows as unique characters are found.\n" +
@@ -72,29 +78,31 @@ namespace InventoryKamera
                 : "Characters: " + CharactersScanned_Label.Text + " valid, unique characters accepted for export / " +
                 (characterTotal?.ToString() ?? "?") + " owned characters in a verified roster cycle.\n" +
                 "Inspected: " + characterInspected + "; inspected but not exported: " + Math.Max(0, characterInspected - acceptedCharacters) + ".\n" +
-                (characterTotal.HasValue ? "The total counts owned characters, not the character catalog.\n" : "? means the owned roster total could not be verified or has not been read yet.\n") +
-                (characterCoverageComplete ? "Roster coverage verified with no omitted characters." :
-                    "Roster coverage is not yet fully verified; unreadable or skipped characters leave partial export data."));
+                rosterTotalNote + coverageNote);
             string achievementCount = achievementSnapshotAvailable
                 ? achievementConfirmed + " / " + (achievementExpected?.ToString() ?? "?") : achievementCountLabel.Text;
-            string achievementGap = achievementSnapshotAvailable && achievementExpected.HasValue
-                ? achievementConfirmed <= achievementExpected.Value
+            string achievementGap = "";
+            if (achievementSnapshotAvailable && achievementExpected.HasValue)
+                achievementGap = achievementConfirmed <= achievementExpected.Value
                     ? "Completed IDs still unconfirmed: " + (achievementExpected.Value - achievementConfirmed) + ".\n"
                     : "Confirmed IDs exceed the game's total by " + (achievementConfirmed - achievementExpected.Value) +
-                        "; this mismatch needs verification.\n"
-                : "";
+                        "; this mismatch needs verification.\n";
+            string unverifiedCategories = achievementCategoryTotal.HasValue
+                ? Math.Max(0, achievementCategoryTotal.Value - achievementVerifiedCategories).ToString() : "?";
+            string coverageSummary;
+            if (achievementCancelled) coverageSummary = "Scan cancelled; export coverage is partial.\n";
+            else if (achievementCoverageComplete) coverageSummary = "Complete coverage and the game total have been verified.\n";
+            else coverageSummary = "Coverage is partial or still being verified; missing categories and unreadable rows can leave a gap.\n";
+            string achievementDetail = achievementSnapshotAvailable
+                ? "Verified category bottoms: " + achievementVerifiedCategories + " / " + (achievementCategoryTotal?.ToString() ?? "?") +
+                    "; categories still unverified: " + unverifiedCategories +
+                    "; unresolved rows: " + achievementUnresolved + ".\n" +
+                    coverageSummary
+                : "? means the game's completed total has not been read yet.\n";
             SetScanCounterTooltip(achievementPill, "Achievements: " + achievementCount + ".\n" +
                 "Left: confirmed completed tier IDs. Right: the game's global completed-achievement counter.\n" +
                 "Each completed tier counts separately; duplicate and ambiguous reads do not increase this counter.\n" +
-                achievementGap +
-                (achievementSnapshotAvailable
-                    ? "Verified category bottoms: " + achievementVerifiedCategories + " / " + (achievementCategoryTotal?.ToString() ?? "?") +
-                        "; categories still unverified: " + (achievementCategoryTotal.HasValue
-                            ? Math.Max(0, achievementCategoryTotal.Value - achievementVerifiedCategories).ToString() : "?") +
-                        "; unresolved rows: " + achievementUnresolved + ".\n" +
-                        (achievementCancelled ? "Scan cancelled; export coverage is partial.\n" : achievementCoverageComplete
-                            ? "Complete coverage and the game total have been verified.\n" : "Coverage is partial or still being verified; missing categories and unreadable rows can leave a gap.\n")
-                    : "? means the game's completed total has not been read yet.\n") +
+                achievementGap + achievementDetail +
                 "The phase progress bar counts verified categories, not completed achievement IDs.");
         }
 
@@ -178,18 +186,21 @@ namespace InventoryKamera
                 characterInspected = activePhaseCurrent;
                 characterCoverageComplete = progress.Finished;
             }
-            int percentage = progress.TotalIsProvisional ? 0 : progress.Total.HasValue && progress.Total.Value > 0
+            int totalPercentage = progress.Total.HasValue && progress.Total.Value > 0
                 ? (int)Math.Min(100, 100L * activePhaseCurrent / progress.Total.Value) : progress.Percentage;
+            int percentage = progress.TotalIsProvisional ? 0 : totalPercentage;
             scanPhaseProgress.Value = percentage;
-            string units = progress.Phase == ScanPhase.Achievements ? "categories" :
-                progress.Phase == ScanPhase.EquipmentProcessing ? "processed" :
-                progress.Phase == ScanPhase.Weapons || progress.Phase == ScanPhase.Artifacts ? "inspected" : "read";
+            string units;
+            if (progress.Phase == ScanPhase.Achievements) units = "categories";
+            else if (progress.Phase == ScanPhase.EquipmentProcessing) units = "processed";
+            else if (progress.Phase == ScanPhase.Weapons || progress.Phase == ScanPhase.Artifacts) units = "inspected";
+            else units = "read";
             string count = activePhaseCurrent + " / " + (progress.Total?.ToString() ?? "?");
+            string percentageSuffix = progress.Total.HasValue ? "  ·  " + percentage + "%" : "";
+            string detailSuffix = string.IsNullOrWhiteSpace(progress.Detail) ? "" : "  ·  " + progress.Detail;
             scanPhaseCaption.Text = progress.TotalIsProvisional
                 ? progress.Name + "  ·  " + (progress.Total?.ToString() ?? "0") + " found  ·  Counting roster"
-                : progress.Name + "  ·  " + count + " " + units +
-                (progress.Total.HasValue ? "  ·  " + percentage + "%" : "") +
-                (string.IsNullOrWhiteSpace(progress.Detail) ? "" : "  ·  " + progress.Detail);
+                : progress.Name + "  ·  " + count + " " + units + percentageSuffix + detailSuffix;
             scanPhaseCaption.AccessibleDescription = scanPhaseCaption.Text;
             RefreshScanPills();
         }

@@ -670,7 +670,9 @@ namespace InventoryKamera
 					int sub = dMinus1[im1] + cost;
 
 					//Fastest execution for min value of 3 integers
-					int min = (del > ins) ? (ins > sub ? sub : ins) : (del > sub ? sub : del);
+					int min;
+					if (del > ins) min = ins > sub ? sub : ins;
+					else min = del > sub ? sub : del;
 
 					if (i > 1 && j > 1 && text[im2] == setName[jm1] && text[im1] == setName[j - 2])
 						min = Math.Min(min, dMinus2[im2] + cost);
