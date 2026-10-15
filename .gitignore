@@ -59,6 +59,7 @@ Generated\ Files/
 !/tests/run-traveler-tests.ps1
 !/tests/CharacterNavigationTests.cs
 !/tests/run-character-navigation-tests.ps1
+!/tests/run-ci.ps1
 
 # NUnit
 *.VisualState.xml
