@@ -855,7 +855,7 @@ namespace InventoryKamera
 
         private static string SidebarCategoryPrefix(string text)
         {
-            string prefix = Regex.Replace(text ?? "", @"\s*[\(\[][^\)\]]+[\)\]]\s*$", "");
+            string prefix = Regex.Replace(text ?? "", @"\s*[\(\[][^\)\]]+[\)\]]\s*$", "", RegexOptions.None, RegexTimeouts.RegexTimeout);
             return AchievementCatalog.Normalize(prefix);
         }
 

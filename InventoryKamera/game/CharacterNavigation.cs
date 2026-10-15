@@ -482,7 +482,7 @@ namespace InventoryKamera
             {
                 string directory = Path.GetFullPath(Path.Combine("logging", "characters", "navigation"));
                 Directory.CreateDirectory(directory);
-                string name = Regex.Replace(context ?? "unknown", "[^A-Za-z0-9_-]", "_");
+                string name = Regex.Replace(context ?? "unknown", "[^A-Za-z0-9_-]", "_", RegexOptions.None, RegexTimeouts.RegexTimeout);
                 if (name.Length > 90) name = name.Substring(0, 90);
                 string path = Path.Combine(directory, DateTime.UtcNow.ToString("yyyyMMdd_HHmmssfff") + "_" + name + "_" + current.State + ".png");
                 frame.Save(path, System.Drawing.Imaging.ImageFormat.Png);

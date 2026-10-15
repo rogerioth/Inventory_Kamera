@@ -339,7 +339,7 @@ namespace InventoryKamera
 
 			string text = GenshinProcesor.AnalyzeText(n).Trim();
 			n.Dispose();
-			text = Regex.Replace(text, @"(?![\d/]).", string.Empty);
+			text = Regex.Replace(text, @"(?![\d/]).", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
 
 			if (text.Contains('/'))
 			{
@@ -409,7 +409,7 @@ namespace InventoryKamera
 				using (processed)
 				{
 					string text = GenshinProcesor.AnalyzeText(processed, numbersOnly: numbersOnly).Trim();
-					text = Regex.Replace(text, @"[^\d]", string.Empty);
+					text = Regex.Replace(text, @"[^\d]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
 
 					if (int.TryParse(text, out int refinementLevel) && 1 <= refinementLevel && refinementLevel <= 5)
 					{
@@ -452,12 +452,12 @@ namespace InventoryKamera
 
 			if (extractedString != "")
 			{
-				var regexItem = new Regex("Equipped:");
+				var regexItem = new Regex("Equipped:", RegexOptions.None, RegexTimeouts.RegexTimeout);
 				if (regexItem.IsMatch(extractedString))
 				{
 					var name = extractedString.Split(':')[1];
 
-					name = Regex.Replace(name, @"[\W]", string.Empty).ToLower();
+					name = Regex.Replace(name, @"[\W]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout).ToLower();
 					name = GenshinProcesor.FindClosestCharacterName(name);
 
 					return name;

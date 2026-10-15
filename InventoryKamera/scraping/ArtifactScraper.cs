@@ -434,7 +434,7 @@ namespace InventoryKamera
 			GenshinProcesor.SetInvert(ref n);
 
 			// Analyze
-			string name = Regex.Replace(GenshinProcesor.AnalyzeText(n).ToLower(), @"[\W]", string.Empty);
+			string name = Regex.Replace(GenshinProcesor.AnalyzeText(n).ToLower(), @"[\W]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
 			name = GenshinProcesor.FindClosestMaterialName(name);
 			n.Dispose();
 
@@ -451,7 +451,7 @@ namespace InventoryKamera
 			GenshinProcesor.SetInvert(ref n);
 
 			string gearSlot = GenshinProcesor.AnalyzeText(n).Trim().ToLower();
-			gearSlot = Regex.Replace(gearSlot, @"[\W_]", string.Empty);
+			gearSlot = Regex.Replace(gearSlot, @"[\W_]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
 			gearSlot = GenshinProcesor.FindClosestGearSlot(gearSlot);
 			n.Dispose();
 			return gearSlot;
@@ -483,7 +483,7 @@ namespace InventoryKamera
 					
 
 					// Remove anything not a-z as well as removes spaces/underscores
-					mainStat = Regex.Replace(mainStat, @"[\W_0-9]", string.Empty);
+					mainStat = Regex.Replace(mainStat, @"[\W_0-9]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
 
 					mainStat = GenshinProcesor.FindClosestStat(mainStat, 80);
 
@@ -509,7 +509,7 @@ namespace InventoryKamera
 			n.Dispose();
 
 			// Get rid of all non digits
-			text = Regex.Replace(text, @"[\D]", string.Empty);
+			text = Regex.Replace(text, @"[\D]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
 
 			return int.TryParse(text, out int level) ? level : -1;
 		}
@@ -552,8 +552,8 @@ namespace InventoryKamera
 			// ":" made OCR noise containing a colon drop the substats read after it.
 			// (Ported from taiwenlee/Inventory_Kamera (MIT): 63ba93ff)
 			var index = lines.FindIndex(line =>
-				Regex.IsMatch(line, @"(piece|set|2-)") ||
-				Regex.IsMatch(line.Trim(), @"^[A-Za-z\s]+:$")
+				Regex.IsMatch(line, @"(piece|set|2-)", RegexOptions.None, RegexTimeouts.RegexTimeout) ||
+				Regex.IsMatch(line.Trim(), @"^[A-Za-z\s]+:$", RegexOptions.None, RegexTimeouts.RegexTimeout)
 			);
             if (index >= 0)
             {
@@ -563,16 +563,16 @@ namespace InventoryKamera
             bm.Dispose();
             for (int i = 0; i < lines.Count; i++)
             {
-                var line = Regex.Replace(lines[i], @"(?:^[^a-zA-Z]*)", string.Empty).Replace(" ", string.Empty);
+                var line = Regex.Replace(lines[i], @"(?:^[^a-zA-Z]*)", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout).Replace(" ", string.Empty);
 
 				if (line.Any(char.IsDigit))
 				{
 					Logger.Debug("Parsing artifact substat: {0}", line);
 
 					SubStat substat = new SubStat();
-					Regex re = new Regex(@"^(.*?)(\d+.*)");
+					Regex re = new Regex(@"^(.*?)(\d+.*)", RegexOptions.None, RegexTimeouts.RegexTimeout);
 					var result = re.Match(line);
-					var stat = Regex.Replace(result.Groups[1].Value, @"[^\w]", string.Empty);
+					var stat = Regex.Replace(result.Groups[1].Value, @"[^\w]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
 					var value = result.Groups[2].Value;
 
 					string name = line.Contains("%") ? stat + "%" : stat;
@@ -580,7 +580,7 @@ namespace InventoryKamera
 					substat.stat = GenshinProcesor.FindClosestStat(name, 80) ?? "";
 
 					// Remove any non digits.
-					value = Regex.Replace(value, @"[^0-9]", string.Empty);
+					value = Regex.Replace(value, @"[^0-9]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
 
 					// Try to parse number
 					if (!decimal.TryParse(value, out substat.value))
@@ -635,7 +635,7 @@ namespace InventoryKamera
 			{
 				if (equippedCharacter.Contains("equipped") && equippedCharacter.Contains(":"))
 				{
-					equippedCharacter = Regex.Replace(equippedCharacter.Split(':')[1], @"[\W]", string.Empty);
+					equippedCharacter = Regex.Replace(equippedCharacter.Split(':')[1], @"[\W]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
 					equippedCharacter = GenshinProcesor.FindClosestCharacterName(equippedCharacter);
 
 					return equippedCharacter;
@@ -660,7 +660,7 @@ namespace InventoryKamera
                     g.DrawImage(grayscale, (padded.Width - grayscale.Width) / 2, (padded.Height - grayscale.Height) / 2);
 
                     var scannedText = GenshinProcesor.AnalyzeText(grayscale, Tesseract.PageSegMode.Auto).ToLower().Replace("\n", " ");
-                    string text = Regex.Replace(scannedText, @"[\W]", string.Empty);
+                    string text = Regex.Replace(scannedText, @"[\W]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
                     text = GenshinProcesor.FindClosestArtifactSetFromArtifactName(text);
 
 					grayscale.Dispose();

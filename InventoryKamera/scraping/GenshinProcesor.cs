@@ -1137,7 +1137,7 @@ namespace InventoryKamera
 		{
             text = text.ToLower();
             var pascal = CultureInfo.GetCultureInfo("en-US").TextInfo.ToTitleCase(text);
-            return Regex.Replace(pascal, @"[\W]", string.Empty);
+            return Regex.Replace(pascal, @"[\W]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
         }
 
         // Ligatures and letters that Unicode normalization never breaks down into

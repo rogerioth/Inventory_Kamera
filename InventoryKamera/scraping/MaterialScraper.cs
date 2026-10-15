@@ -308,7 +308,7 @@ namespace InventoryKamera
 				GenshinProcesor.SetInvert(ref invert);
 				var input = GenshinProcesor.AnalyzeText(invert).Split(' ').ToList();
 				Logger.Debug("Scanned mora input: {0}", input.ToString());
-				input.RemoveAll(e => Regex.IsMatch(e.Trim(), @"[^0-9]") || string.IsNullOrWhiteSpace(e.Trim()));
+				input.RemoveAll(e => Regex.IsMatch(e.Trim(), @"[^0-9]", RegexOptions.None, RegexTimeouts.RegexTimeout) || string.IsNullOrWhiteSpace(e.Trim()));
 				var mora = input.LastOrDefault();
 				Logger.Debug("Parsed mora input: {0}", mora);
 				return mora;
@@ -342,7 +342,7 @@ namespace InventoryKamera
 			GenshinProcesor.SetInvert(ref n);
 
 			string text = GenshinProcesor.AnalyzeText(n,Tesseract.PageSegMode.Auto);
-			text = Regex.Replace(text, @"[\W\s]", string.Empty).ToLower();
+			text = Regex.Replace(text, @"[\W\s]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout).ToLower();
 
 			//UI
 			n.Dispose();
@@ -460,7 +460,7 @@ namespace InventoryKamera
                             // Letters are not converted to guessed digits.
                             if (!string.IsNullOrEmpty(raw) && !raw.Any(char.IsLetter))
                             {
-                                Match digits = Regex.Match(raw, @"^[^0-9]*([0-9]+)[^0-9]*$");
+                                Match digits = Regex.Match(raw, @"^[^0-9]*([0-9]+)[^0-9]*$", RegexOptions.None, RegexTimeouts.RegexTimeout);
                                 if (digits.Success && TryPositiveQuantity(digits.Groups[1].Value, out int candidate))
                                     AddQuantityVote(votes, candidate);
                             }
@@ -535,7 +535,7 @@ namespace InventoryKamera
         private static bool TryPositiveQuantity(string text, out int value)
         {
             value = 0;
-            return !string.IsNullOrEmpty(text) && Regex.IsMatch(text, @"^[0-9]+$") &&
+            return !string.IsNullOrEmpty(text) && Regex.IsMatch(text, @"^[0-9]+$", RegexOptions.None, RegexTimeouts.RegexTimeout) &&
                 int.TryParse(text, out value) && value > 0;
         }
 

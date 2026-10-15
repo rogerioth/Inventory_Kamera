@@ -143,6 +143,7 @@
     <Compile Include="scraping\ArtifactScraper.cs" />
     <Compile Include="game\Character.cs" />
     <Compile Include="data\DatabaseManager.cs" />
+    <Compile Include="data\RegexTimeouts.cs" />
     <Compile Include="scraping\InventoryScraper.cs" />
     <Compile Include="Settings.cs" />
     <Compile Include="scraping\MaterialScraper.cs" />

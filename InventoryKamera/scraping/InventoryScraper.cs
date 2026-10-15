@@ -109,7 +109,7 @@ namespace InventoryKamera
             GenshinProcesor.SetInvert(ref n);
 
             // Analyze
-            string text = Regex.Replace(GenshinProcesor.AnalyzeText(n, Tesseract.PageSegMode.SingleBlock).ToLower(), @"[\W]", string.Empty);
+            string text = Regex.Replace(GenshinProcesor.AnalyzeText(n, Tesseract.PageSegMode.SingleBlock).ToLower(), @"[\W]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
 
             n.Dispose();
 
@@ -146,7 +146,7 @@ namespace InventoryKamera
                 n.Dispose();
 
                 // Remove any non-numeric and '/' characters
-                text = Regex.Replace(text, @"[^0-9/]", string.Empty);
+                text = Regex.Replace(text, @"[^0-9/]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
 
                 if (string.IsNullOrWhiteSpace(text) || Properties.Settings.Default.LogScreenshots)
                 {
@@ -167,11 +167,11 @@ namespace InventoryKamera
                         break;
                 }
 
-                if (Regex.IsMatch(text, "/")) // Check for slash
+                if (Regex.IsMatch(text, "/", RegexOptions.None, RegexTimeouts.RegexTimeout)) // Check for slash
                 {
                     count = int.Parse(text.Split('/')[0]);
                 }
-                else if (Regex.Matches(text, pageCapacity).Count == 1) // Remove the inventory capacity from number
+                else if (Regex.Matches(text, pageCapacity, RegexOptions.None, RegexTimeouts.RegexTimeout).Count == 1) // Remove the inventory capacity from number
                 {
                     text = text.Replace(pageCapacity, string.Empty);
                     count = int.Parse(text);
