@@ -803,25 +803,14 @@ namespace InventoryKamera
 
                 string GetConstellationNameFromId(int targetID)
                 {
-                    foreach (var constellation in from constellation in constellations
-                                                  where (((int)constellation["avatarId"]) == targetID)
-                                                  select constellation)
-                    {
-                        return Mappings[constellation["avatarConstellationBeforTextMapHash"].ToString()].ToString();
-                    }
-
-                    return "";
+                    var constellation = constellations.FirstOrDefault(entry => ((int)entry["avatarId"]) == targetID);
+                    return constellation == null ? "" : Mappings[constellation["avatarConstellationBeforTextMapHash"].ToString()].ToString();
                 }
 
                 string GetElementFromID(int targetID)
                 {
-                    foreach (var element in from constellation in constellations
-                                            where (((int)constellation["avatarId"]) == targetID)
-                                            select constellation)
-                    {
-                        return Mappings[element["avatarVisionBeforTextMapHash"].ToString()].ToString().ToLower();
-                    }
-                    return "";
+                    var element = constellations.FirstOrDefault(entry => ((int)entry["avatarId"]) == targetID);
+                    return element == null ? "" : Mappings[element["avatarVisionBeforTextMapHash"].ToString()].ToString().ToLower();
                 }
             }
             catch (Exception ex)

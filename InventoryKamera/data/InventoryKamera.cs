@@ -460,7 +460,7 @@ namespace InventoryKamera
                                 {
                                     Logger.Warn(ex, "Could not save diagnostic screenshots for weapon #{0}. Continuing...", weapon.Id);
                                 }
-                                Task.Run(() => LogObject(weapon, weaponPath + "weapon.json"));
+                                Task.Run(() => LogObject(weapon, weaponPath + "weapon.json"), achievementCancellation.Token);
                             }
 
                             // Dispose of everything
@@ -556,7 +556,7 @@ namespace InventoryKamera
 									Logger.Warn(ex, "Could not save diagnostic screenshots for artifact #{0}. Continuing...", artifact.Id);
 								}
 
-								Task.Run(()=>LogObject(artifact, artifactPath + "artifact.json"));
+								Task.Run(()=>LogObject(artifact, artifactPath + "artifact.json"), achievementCancellation.Token);
 							}
 
 							// Dispose of everything

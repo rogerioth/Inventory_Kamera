@@ -60,13 +60,19 @@ namespace InventoryKamera
 
 		public Artifact(string _setName, int _rarity, int _level, string _gearSlot, string _mainStat, List<SubStat> _subStats, List<SubStat> _unactivatedSubStats, string _equippedCharacter = null, int _id = 0, bool _Lock = false)
 		{
+			// Normalize instead of throwing: this constructor is reached from the
+			// OCR scan path (ArtifactScraper) and JSON round-trips, so missing or
+			// malformed data must degrade to the same empty defaults the
+			// parameterless deserialization constructor produces. Rarity/Level are
+			// intentionally left untouched so downstream IsValid() checks still
+			// reject unrecognized OCR values.
 			GearSlot = string.IsNullOrWhiteSpace(_gearSlot) ? "" : _gearSlot;
 			Rarity = _rarity;
 			MainStat = string.IsNullOrWhiteSpace(_mainStat) ? "" : _mainStat;
 			Level = _level;
-			SubStats = _subStats.ToList().Where(e => e.value > 0).ToList();
+			SubStats = _subStats?.ToList().Where(e => e.value > 0).ToList() ?? new List<SubStat>(4);
 			// (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d)
-			UnactivatedSubstats = _unactivatedSubStats.ToList().Where(e => e.value > 0).ToList();
+			UnactivatedSubstats = _unactivatedSubStats?.ToList().Where(e => e.value > 0).ToList() ?? new List<SubStat>(1);
 			SetName = string.IsNullOrWhiteSpace(_setName) ? "" : _setName;
 			EquippedCharacter = string.IsNullOrWhiteSpace(_equippedCharacter) ? "" : _equippedCharacter;
 			Lock = _Lock;
