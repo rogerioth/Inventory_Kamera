@@ -205,11 +205,9 @@ namespace InventoryKamera
                         if (consecutiveSelectionFailures >= 3)
                         {
                             Logger.Warn("Achievement sidebar navigation failed for {0} consecutive categories; recovering before continuing", consecutiveSelectionFailures);
-                            if (RecoverSidebar("consecutive_selection_failures") && SelectCategory(category))
-                            {
-                                consecutiveSelectionFailures = 0;
-                            }
-                            else
+                            // On success the failure counter is reset below, before the
+                            // category is scanned; only a failed recovery bails out.
+                            if (!RecoverSidebar("consecutive_selection_failures") || !SelectCategory(category))
                             {
                                 coverage.Issues.Add(CategorySelectionIssue);
                                 selectionFailures[category.Id] = lastSelectionFailure;
@@ -576,7 +574,11 @@ namespace InventoryKamera
             string previousSignature = null;
             int stationary = 0;
             int step = 28;
-            for (int page = 1; page <= 1000; page++)
+            // While-loop form of the former `for (page = 1; page <= 1000; page++)`:
+            // the retry path below (`continue`) re-reads the same page number,
+            // exactly like the previous `page--; continue;` plus loop increment.
+            int page = 1;
+            while (page <= 1000)
             {
                 CheckStop();
                 using (var frame = Capture())
@@ -605,7 +607,8 @@ namespace InventoryKamera
                         step = Math.Max(1, step / 2);
                         navigation.Scroll(false, step);
                         Pause(400);
-                        page--;
+                        // Retry the same page number: the step change above undoes
+                        // the gap-creating scroll, so this page is read again.
                         continue;
                     }
                     accumulator.AddPage(category, page, rows);
@@ -632,6 +635,7 @@ namespace InventoryKamera
                 }
                 navigation.Scroll(false, step);
                 Pause(400);
+                page++;
             }
             coverage.Issues.Add("Achievement list exceeded the page limit.");
         }

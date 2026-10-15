@@ -123,7 +123,7 @@ namespace InventoryKamera
             Logger.Info("Checking for newer game data...");
             RemoteVersion = CheckRemoteVersion();
             return RemoteVersion == null
-                ? throw new NullReferenceException("Could not get current Genshin version.")
+                ? throw new InvalidOperationException("Could not get current Genshin version.")
                 : RemoteVersion.CompareTo(LocalVersion) > 0;
         }
 
@@ -787,7 +787,7 @@ namespace InventoryKamera
                             else if (weaponArchetype.Contains("BOW")) weaponType = WeaponType.Bow;
                             else if (weaponArchetype.Contains("CATALYST")) weaponType = WeaponType.Catalyst;
                             else if (weaponArchetype.Contains("CROSSBOW")) weaponType = WeaponType.Sword; // Not a released weapon class; current dumps only tag the traveler rows with it
-                            else throw new IndexOutOfRangeException($"{name} uses unknown weapon type {weaponArchetype}");
+                            else throw new InvalidOperationException($"{name} uses unknown weapon type {weaponArchetype}");
 
                             value.Add("WeaponType", (int)weaponType);
 

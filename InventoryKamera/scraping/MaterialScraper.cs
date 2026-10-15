@@ -25,6 +25,16 @@ namespace InventoryKamera
 
 		public void GetObjectData(SerializationInfo info, StreamingContext context) => info.AddValue(name, count);
 
+		// Serialization constructor: restores the single name→count entry that
+		// GetObjectData emits, so previously serialized materials round-trip.
+		private Material(SerializationInfo info, StreamingContext context)
+		{
+			var entry = info.GetEnumerator();
+			entry.MoveNext();
+			name = entry.Name;
+			count = (int)entry.Value;
+		}
+
 		public override int GetHashCode()
 		{
 			return name.GetHashCode();
@@ -79,6 +89,10 @@ namespace InventoryKamera
 			List<Rectangle> rectangles;
 			int page = 1;
 
+			// Set when a repeat material ends the page walk; execution then falls
+			// through to the final-page pass (the former `goto LastPage`).
+			bool lastPageReached = false;
+
 			// Keep scanning while not repeating any items names
 			while (true)
 			{
@@ -109,7 +123,10 @@ namespace InventoryKamera
 					{
 						Logger.Debug("Repeat material found. Scrolling until end");
 						nameplate.Dispose();
-						goto LastPage;
+						// Skip the rest of this page and the scroll to the next one;
+						// the final-page pass below takes over.
+						lastPageReached = true;
+						break;
 					}
 					else
 					{
@@ -150,6 +167,10 @@ namespace InventoryKamera
 					Navigation.Wait(150);
 				}
 
+				// Same exit point as the former `goto LastPage`: the remaining
+				// page-advance work below is skipped when a repeat was found.
+				if (lastPageReached) break;
+
 				Navigation.SetCursor(r.Last().Center().X, r.Last().Center().Y);
 				Navigation.Click();
 				Navigation.Wait(150);
@@ -162,7 +183,11 @@ namespace InventoryKamera
 					scrollCount++;
 
 					// scroll down
-					for (int k = 0; k < 10; k++)
+					// While-loop form of the former `for (k = 0; k < 10; k++)`: the
+					// skip below bumps `k` inside the body, and the increment at the
+					// loop end preserves the original 0..7,9 iteration sequence.
+					int k = 0;
+					while (k < 10)
 					{
 						Navigation.sim.Mouse.VerticalScroll(-1);
 						// skip a scroll
@@ -182,13 +207,13 @@ namespace InventoryKamera
 							}
 						}
 						Navigation.SystemWait(Navigation.Speed.InventoryScroll);
+						k++;
 					}
 				}
 				Navigation.SystemWait(Navigation.Speed.Normal);
 				++page;
 			}
 
-		LastPage:
 			Logger.Info("    Scanning the final {0} inventory page...", inventoryPage);
 			// scroll down as much as possible
 			for (int i = 0; i < 20; i++)

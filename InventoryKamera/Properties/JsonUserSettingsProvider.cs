@@ -43,7 +43,7 @@ namespace InventoryKamera.Properties
         }
 
         public override SettingsPropertyValueCollection GetPropertyValues(SettingsContext context,
-            SettingsPropertyCollection properties)
+            SettingsPropertyCollection collection)
         {
             var values = new SettingsPropertyValueCollection();
 
@@ -63,7 +63,7 @@ namespace InventoryKamera.Properties
                 }
             }
 
-            foreach (SettingsProperty property in properties)
+            foreach (SettingsProperty property in collection)
             {
                 bool isUserSetting =
                     property.Attributes[typeof(UserScopedSettingAttribute)] is UserScopedSettingAttribute;
@@ -97,11 +97,11 @@ namespace InventoryKamera.Properties
             return values;
         }
 
-        public override void SetPropertyValues(SettingsContext context, SettingsPropertyValueCollection values)
+        public override void SetPropertyValues(SettingsContext context, SettingsPropertyValueCollection collection)
         {
             var settingsJson = new JObject();
 
-            foreach (SettingsPropertyValue value in values)
+            foreach (SettingsPropertyValue value in collection)
             {
                 bool isUserSetting =
                     value.Property.Attributes[typeof(UserScopedSettingAttribute)] is UserScopedSettingAttribute;

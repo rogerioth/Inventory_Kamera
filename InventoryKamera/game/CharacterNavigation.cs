@@ -495,7 +495,7 @@ namespace InventoryKamera
         private static void ValidateCoordinate(double x, double y)
         {
             if (double.IsNaN(x) || double.IsNaN(y) || x <= 0 || x >= 1 || y <= 0 || y >= 1)
-                throw new ArgumentOutOfRangeException("Character navigation coordinates must lie inside the game client.");
+                throw new ArgumentOutOfRangeException(nameof(x), "Character navigation coordinates must lie inside the game client.");
         }
 
         private sealed class NativeCharacterInput : ICharacterNavigationInput

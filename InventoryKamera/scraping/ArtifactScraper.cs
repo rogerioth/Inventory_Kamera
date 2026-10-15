@@ -128,8 +128,14 @@ namespace InventoryKamera
                     UserInterface.ReportScanProgress(ScanPhase.Artifacts, cardsQueued, artifactCount);
 					if (cardsQueued >= artifactCount || StopScanning)
 					{
-						if (StopScanning) Logger.Info("    Artifact capture finished at the configured filters");
-						else Logger.Info("    Artifact capture finished: {0} of {1} cards queued", cardsQueued, artifactCount);
+						if (StopScanning)
+						{
+							Logger.Info("    Artifact capture finished at the configured filters");
+						}
+						else
+						{
+							Logger.Info("    Artifact capture finished: {0} of {1} cards queued", cardsQueued, artifactCount);
+						}
                         UserInterface.FinishScanPhase(ScanPhase.Artifacts, cardsQueued, artifactCount,
                             StopScanning ? "Stopped at configured filters" : null);
 						return;
@@ -188,9 +194,11 @@ namespace InventoryKamera
                 width: (int)((Navigation.IsNormal ? 0.2244 : 0.2236) * Navigation.GetWidth()),
                 height: (int)((Navigation.IsNormal ? 0.0422 : 0.0367) * Navigation.GetHeight())))
             {
-                //Navigation.DisplayBitmap(x);
+				//Navigation.DisplayBitmap(x);
+				// AnalyzeText always returns a non-null string, and the Trim() above
+				// would already have thrown for a null, so the null check is dead.
 				var t = GenshinProcesor.AnalyzeText(x).Trim().ToLower();
-				if (t != null && t.Contains("filter"))
+				if (t.Contains("filter"))
 				{
 					Navigation.ClearArtifactFilters();
 				}
@@ -523,7 +531,8 @@ namespace InventoryKamera
 		private static (List<SubStat> active, List<SubStat> unactivated) ScanArtifactSubStats(Bitmap artifactImage)
         {
             Bitmap bm = (Bitmap)artifactImage.Clone();
-			List<string> lines = new List<string>();
+			// Assigned below from the OCR text before first use.
+			List<string> lines;
 			List<SubStat> substats = new List<SubStat>();
 			// (Ported from taiwenlee/Inventory_Kamera (MIT): b8ee5b1d)
 			List<SubStat> unactivated = new List<SubStat>();
