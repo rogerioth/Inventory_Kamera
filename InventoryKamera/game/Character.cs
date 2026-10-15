@@ -31,7 +31,7 @@ namespace InventoryKamera
 
         [JsonProperty("ascension")]
         public int Ascension
-        { get { return AscensionLevel(); } internal set { } }
+        { get { return AscensionLevel(); } internal set => _ = value; }
 
         [JsonProperty("talent")]
         public Dictionary<string, int> Talents { get; internal set; }

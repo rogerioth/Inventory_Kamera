@@ -4,7 +4,7 @@ using Newtonsoft.Json;
 
 namespace InventoryKamera
 {
-	public class Weapon
+	public sealed class Weapon : IEquatable<Weapon>
 	{
 		[JsonProperty("key")]
 		public string Name { get; private set; }
@@ -13,7 +13,7 @@ namespace InventoryKamera
 		public int Level { get; private set; }
 
 		[JsonProperty("ascension")]
-		public int AscensionLevel { get { return AscensionCount(); } private set { } }
+		public int AscensionLevel { get { return AscensionCount(); } private set => _ = value; }
 
 		[JsonProperty("refinement")]
 		public int RefinementLevel { get; private set; }
