@@ -165,9 +165,11 @@ namespace InventoryKamera
         public static void SetAchievement(Bitmap row, AchievementObservation observation)
         {
             SetGearPictureBox(row);
-            string state = !string.IsNullOrEmpty(observation.Error) ? "Needs review: " + observation.Error :
-                observation.Claimable ? "Completed (reward unclaimed)" : observation.CompletedText ? "Completed" :
-                "In progress: " + observation.Progress;
+            string state;
+            if (!string.IsNullOrEmpty(observation.Error)) state = "Needs review: " + observation.Error;
+            else if (observation.Claimable) state = "Completed (reward unclaimed)";
+            else if (observation.CompletedText) state = "Completed";
+            else state = "In progress: " + observation.Progress;
             string text = observation.Title + Environment.NewLine + observation.Description + Environment.NewLine +
                 "Status: " + state + Environment.NewLine + "Primogems: " + (observation.Reward?.ToString() ?? "?");
             if (!string.IsNullOrEmpty(observation.CompletionDate)) text += Environment.NewLine + "Completed on: " + observation.CompletionDate;

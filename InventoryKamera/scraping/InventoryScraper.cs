@@ -219,7 +219,8 @@ namespace InventoryKamera
             {
                 var g = GenshinProcesor.ConvertToGrayscale(bm);
                 var mode = GenshinProcesor.AnalyzeText(g).Trim().ToLower();
-                return mode.Contains("level") ? "level" : mode.Contains("quality") ? "quality" : null;
+                if (mode.Contains("level")) return "level";
+                return mode.Contains("quality") ? "quality" : null;
             }
         }
 

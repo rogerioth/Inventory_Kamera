@@ -192,9 +192,10 @@ namespace InventoryKamera
             foreach (var input in new[] { WeaponRarityControl, MinimumWeaponLevelControl, ArtifactRarityControl, numericUpDown1 })
             {
                 input.Width = 58;
-                input.AccessibleName = input == WeaponRarityControl ? "Minimum weapon rarity" :
-                    input == MinimumWeaponLevelControl ? "Minimum weapon level" :
-                    input == ArtifactRarityControl ? "Minimum artifact rarity" : "Minimum artifact level";
+                if (input == WeaponRarityControl) input.AccessibleName = "Minimum weapon rarity";
+                else if (input == MinimumWeaponLevelControl) input.AccessibleName = "Minimum weapon level";
+                else if (input == ArtifactRarityControl) input.AccessibleName = "Minimum artifact rarity";
+                else input.AccessibleName = "Minimum artifact level";
             }
             EquipWeaponsCheckBox.Text = EquipArtifactsCheckBox.Text = string.Empty;
             EquipWeaponsCheckBox.AccessibleName = "Equip weapons";

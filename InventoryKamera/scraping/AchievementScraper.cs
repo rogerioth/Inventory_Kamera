@@ -427,8 +427,9 @@ namespace InventoryKamera
                         bool atEnd = direction < 0 ? SidebarAtTop(frame) : SidebarAtBottom(frame);
                         if (atEnd || stationary >= 2)
                         {
+                            string sidebarEnd = direction < 0 ? "top." : "bottom.";
                             lastSelectionFailure = atEnd
-                                ? "The requested category was not recognized at the verified sidebar " + (direction < 0 ? "top." : "bottom.")
+                                ? "The requested category was not recognized at the verified sidebar " + sidebarEnd
                                 : "The sidebar did not move after two wheel requests.";
                             if (atEnd && stationary < 2) direction = 0;
                             else
@@ -902,7 +903,8 @@ namespace InventoryKamera
         {
             var orders = entries.Where(x => x.Category != null).Select(x => x.Category.Order).ToList();
             if (orders.Count == 0) return 0;
-            return target.Order < orders.Min() ? -1 : target.Order > orders.Max() ? 1 : 0;
+            if (target.Order < orders.Min()) return -1;
+            return target.Order > orders.Max() ? 1 : 0;
         }
 
         internal static Rectangle? SidebarThumbBounds(Bitmap frame)
@@ -961,7 +963,11 @@ namespace InventoryKamera
                 var coverage = result.Categories.FirstOrDefault(x => x.CategoryId == category.Id);
                 string reason;
                 if (!selectionFailures.TryGetValue(category.Id, out reason))
-                    reason = coverage == null ? "Not visited." : coverage.Issues.Count > 0 ? string.Join("; ", coverage.Issues) : "Scrollbar bottom was not verified.";
+                {
+                    if (coverage == null) reason = "Not visited.";
+                    else if (coverage.Issues.Count > 0) reason = string.Join("; ", coverage.Issues);
+                    else reason = "Scrollbar bottom was not verified.";
+                }
                 Logger.Warn("Achievement category missing {0} '{1}': {2}; retained pages {3}, bottom verified {4}",
                     category.Id, category.Name, reason, coverage?.Pages ?? 0, coverage?.ReachedBottom ?? false);
             }
