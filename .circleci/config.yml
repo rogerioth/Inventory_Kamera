@@ -12,6 +12,10 @@ jobs:
           name: Build Debug configurations and run offline checks
           no_output_timeout: 10m
           command: .\tests\run-ci.ps1
+      - run:
+          name: Analyze trusted master and pull requests with Sonar
+          no_output_timeout: 10m
+          command: .\tests\run-sonar-analysis.ps1
 
 workflows:
   build-and-test:

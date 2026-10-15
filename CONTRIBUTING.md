@@ -9,6 +9,7 @@ logging, and the available offline regression harnesses.
 ## Pull requests
 
 - Target pull requests at `master`.
+- Use descriptive `feature/<name>` or `fix/<name>` branches.
 - Describe the problem, what changed, and how to reproduce or recognize the fix.
 - Include the validation commands and results, with any checks you could not run.
 - Keep unrelated changes separate and update relevant documentation when behavior changes.
@@ -23,6 +24,10 @@ Run the smallest relevant offline checks from `tests/`, using saved captures whe
 available. Build the affected Debug targets for application changes; check both
 `x64` and `Any CPU` when the change applies to both. Documentation-only changes
 do not require a build.
+
+The full CI baseline can also be run locally with `.\tests\run-ci.ps1`.
+See [Continuous integration](docs/continuous-integration.md) for its checks,
+service settings, and analysis limits.
 
 A live game session or particular hardware is not required to contribute.
 Automated regression checks must run offline, without launching the app or

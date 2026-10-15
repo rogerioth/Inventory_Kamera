@@ -60,6 +60,11 @@ Generated\ Files/
 !/tests/CharacterNavigationTests.cs
 !/tests/run-character-navigation-tests.ps1
 !/tests/run-ci.ps1
+!/tests/run-sonar-analysis.ps1
+
+# SonarScanner working files can contain local analysis configuration.
+.sonarqube/
+.scannerwork/
 
 # NUnit
 *.VisualState.xml

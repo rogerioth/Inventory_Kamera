@@ -1,5 +1,11 @@
 # Inventory Kamera
 
+[![CircleCI](https://dl.circleci.com/status-badge/img/gh/rogerioth/Inventory_Kamera/tree/master.svg?style=shield)](https://dl.circleci.com/status-badge/redirect/gh/rogerioth/Inventory_Kamera/tree/master)
+[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=rogerioth_Inventory_Kamera&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=rogerioth_Inventory_Kamera)
+[![Reliability](https://sonarcloud.io/api/project_badges/measure?project=rogerioth_Inventory_Kamera&metric=reliability_rating)](https://sonarcloud.io/project/issues?id=rogerioth_Inventory_Kamera&types=BUG)
+[![Security](https://sonarcloud.io/api/project_badges/measure?project=rogerioth_Inventory_Kamera&metric=security_rating)](https://sonarcloud.io/project/issues?id=rogerioth_Inventory_Kamera&types=VULNERABILITY)
+[![License: MIT](https://img.shields.io/github/license/rogerioth/Inventory_Kamera)](LICENSE)
+
 A fan-made Genshin Impact inventory scanner for Windows. Inventory Kamera navigates the game's menus,
 reads your characters, weapons, artifacts, and materials with OCR, and exports everything in the
 [GOOD](https://frzyc.github.io/genshin-optimizer/good) JSON format.
@@ -86,6 +92,7 @@ update automatically; you can also run **Options → Update Lookup Tables** manu
 | [docs/lookup-tables.md](docs/lookup-tables.md) | Lookup table formats for manual editing |
 | [docs/project-structure.md](docs/project-structure.md) | Repository and solution layout |
 | [docs/development.md](docs/development.md) | Building, debugging, and contributing |
+| [docs/continuous-integration.md](docs/continuous-integration.md) | Windows PR builds, offline checks, and SonarCloud quality gates |
 
 ## Reporting issues
 
