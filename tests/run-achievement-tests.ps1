@@ -2,6 +2,11 @@
 param(
     [string]$ScreenshotPath,
     [string]$CaptureDirectory,
+    [string]$SidebarDirectory,
+    [Parameter(HelpMessage='Replay saved Fontaine/Natlan category suffix failures, selected references, and unresolved completion stamps using the saved catalog.')]
+    [string]$CategoryCaptureDirectory,
+    [Parameter(HelpMessage='Replay position-sensitive category failures, including the previous Natlan II reference, using the saved catalog.')]
+    [string]$SelectionCaptureDirectory,
     [string]$DependencyDirectory,
     [string]$CompilerPath,
     [switch]$BuildProject
@@ -123,6 +128,15 @@ if ($ScreenshotPath) {
 }
 if ($CaptureDirectory) {
     $testArguments += @('--capture-directory', (Resolve-Path -LiteralPath $CaptureDirectory).Path)
+}
+if ($SidebarDirectory) {
+    $testArguments += @('--sidebar-directory', (Resolve-Path -LiteralPath $SidebarDirectory).Path)
+}
+if ($CategoryCaptureDirectory) {
+    $testArguments += @('--category-capture-directory', (Resolve-Path -LiteralPath $CategoryCaptureDirectory).Path)
+}
+if ($SelectionCaptureDirectory) {
+    $testArguments += @('--selection-capture-directory', (Resolve-Path -LiteralPath $SelectionCaptureDirectory).Path)
 }
 Push-Location -LiteralPath $outputDirectory
 try {

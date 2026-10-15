@@ -352,10 +352,18 @@ namespace InventoryKamera
 			string text = "";
 			TesseractEngine e;
 			while (!engines.TryTake(out e)) { Thread.Sleep(10); }
+			string previousWhitelist = null;
+			bool restoreWhitelist = false;
 
 			try
 			{
-				if (numbersOnly) e.SetVariable("tessedit_char_whitelist", "0123456789");
+				if (numbersOnly)
+				{
+					e.TryGetStringVariable("tessedit_char_whitelist", out previousWhitelist);
+					previousWhitelist = previousWhitelist ?? string.Empty;
+					restoreWhitelist = true;
+					e.SetVariable("tessedit_char_whitelist", "0123456789");
+				}
 				using (var page = e.Process(bitmap, pageMode))
 				{
 					using (var iter = page.GetIterator())
@@ -371,18 +379,19 @@ namespace InventoryKamera
 			}
 			finally
 			{
-				// tessedit_char_whitelist is stored on the pooled engine itself, not
-				// on the page: a numbers-only read that leaves it set would make
-				// every later borrower of this engine OCR digits only (flaky, wrong
-				// reads on completely unrelated names). Clear it before the engine
-				// goes back into the pool.
-				if (numbersOnly) e.SetVariable("tessedit_char_whitelist", string.Empty);
-
-				// Always return the engine to the pool: an OCR failure on a malformed
-				// capture (e.g. a sanctified artifact card) must not leak it, otherwise
-				// the pool eventually starves and every worker freezes waiting for an
-				// engine.
-				engines.Add(e);
+				// OCR variables belong to the pooled engine. Restore the borrower's
+				// exact prior setting so numeric reads cannot affect later name reads.
+				// Caller-specific repairs (such as achievement Roman numerals) stay
+				// in their recognizer; this shared helper returns the raw OCR text.
+				try
+				{
+					if (restoreWhitelist) e.SetVariable("tessedit_char_whitelist", previousWhitelist);
+				}
+				finally
+				{
+					// Return the engine even if processing or setting restoration fails.
+					engines.Add(e);
+				}
 			}
 
 			return text;
@@ -419,7 +428,13 @@ namespace InventoryKamera
 
 		internal static bool IsValidCharacter(string character)
 		{
-			return character.Contains("Traveler") || character == "Wanderer" || Characters.ContainsKey(character.ToLower());
+			if (string.IsNullOrWhiteSpace(character)) return false;
+			if (character == "Wanderer" || Characters.ContainsKey(character.ToLowerInvariant())) return true;
+            // GOOD appends the selected element to Traveler. Only a supported
+            // element suffix is valid; an arbitrary name containing "Traveler"
+            // must not become an exportable character.
+            return character.StartsWith("Traveler", StringComparison.OrdinalIgnoreCase)
+                && GetCharactersElements(character).Count == 1;
 		}
 
 		internal static bool IsValidElement(string element)
@@ -1197,6 +1212,19 @@ namespace InventoryKamera
                     {
                         return elementToken.ToObject<List<string>>() ?? new List<string>();
                     }
+                }
+
+                // Resolve canonical GOOD Traveler<Element> keys back to the
+                // base Traveler entry, keeping that key's element restriction.
+                // The observed element alone never establishes Traveler identity.
+                const string travelerKey = "traveler";
+                if (name.Length > travelerKey.Length && name.StartsWith(travelerKey, StringComparison.OrdinalIgnoreCase)
+                    && Characters.TryGetValue(travelerKey, out var traveler) && traveler?["Element"] != null)
+                {
+                    string suffix = name.Substring(travelerKey.Length).ToLowerInvariant();
+                    var supported = traveler["Element"].ToObject<List<string>>() ?? new List<string>();
+                    if (supported.Any(element => string.Equals(element, suffix, StringComparison.OrdinalIgnoreCase)))
+                        return new List<string> { suffix };
                 }
 
                 return new List<string>();

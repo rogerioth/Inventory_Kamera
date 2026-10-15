@@ -92,11 +92,13 @@ update automatically; you can also run **Options → Update Lookup Tables** manu
 Please [open an issue](https://github.com/rogerioth/Inventory_Kamera/issues/new/choose) and check for
 existing reports first. Scans that go wrong leave categorized screenshots in the `logging` folder —
 attaching a zip of that folder is the single most useful thing you can include.
+Remove the UID and other private information before sharing logs or captures.
 
 ## Contributing
 
-Pull requests are welcome. See [docs/development.md](docs/development.md) for build instructions and
-a tour of the codebase.
+Pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for contribution,
+validation, and review requirements. See [docs/development.md](docs/development.md)
+for build instructions and a tour of the codebase.
 
 ## FAQ
 

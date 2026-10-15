@@ -4,6 +4,9 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Threading;
+using WindowsInput.Native;
 
 namespace InventoryKamera.Tests
 {
@@ -15,16 +18,22 @@ namespace InventoryKamera.Tests
 
         private static int Main(string[] args)
         {
-            string screenshot = null, captureDirectory = null;
+            string screenshot = null, captureDirectory = null, sidebarDirectory = null, categoryCaptureDirectory = null,
+                selectionCaptureDirectory = null;
             for (int index = 0; index < args.Length; index++)
             {
-                if ((args[index] != "--screenshot" && args[index] != "--capture-directory") || index + 1 >= args.Length)
+                if ((args[index] != "--screenshot" && args[index] != "--capture-directory" &&
+                    args[index] != "--sidebar-directory" && args[index] != "--category-capture-directory" &&
+                    args[index] != "--selection-capture-directory") || index + 1 >= args.Length)
                 {
-                    Console.Error.WriteLine("Usage: AchievementTests.exe [--screenshot <reference image path>] [--capture-directory <achievement capture directory>]");
+                    Console.Error.WriteLine("Usage: AchievementTests.exe [--screenshot <reference image path>] [--capture-directory <achievement capture directory>] [--sidebar-directory <navigation capture directory>] [--category-capture-directory <saved category and completion failure frames>] [--selection-capture-directory <position-sensitive category frames>]");
                     return 2;
                 }
                 if (args[index] == "--screenshot") screenshot = args[++index];
-                else captureDirectory = args[++index];
+                else if (args[index] == "--capture-directory") captureDirectory = args[++index];
+                else if (args[index] == "--sidebar-directory") sidebarDirectory = args[++index];
+                else if (args[index] == "--category-capture-directory") categoryCaptureDirectory = args[++index];
+                else selectionCaptureDirectory = args[++index];
             }
             Run("Compatible achievement schemas", ExportSchemas);
             Run("Zero completions and partial export files", EmptyAndPartialExports);
@@ -36,9 +45,20 @@ namespace InventoryKamera.Tests
             Run("Conflicting overlap remains unresolved", StickyCompletionConflict);
             Run("Measured movement scales page scrolling", AdaptivePageScrolling);
             Run("Completeness requires coverage and stable totals", Completeness);
+            Run("Sidebar scrolling requires positive thumb and ordering evidence", SidebarNavigationEvidence);
+            Run("Straight Roman strokes require corroborated category suffixes", GuardedSidebarRomans);
+            Run("Local unreadable category retry is bounded and stops safely", LocalCategoryRetry);
 
             if (screenshot != null) Run("Reference screenshot OCR replay", () => ScreenshotReplay(screenshot));
             if (captureDirectory != null) Run("Real capture headers, clipped cards and sidebar replay", () => CaptureReplay(captureDirectory));
+            if (sidebarDirectory != null) Run("Saved sidebar navigation and reset replay", () => SidebarReplay(sidebarDirectory));
+            if (categoryCaptureDirectory != null)
+            {
+                Run("Saved wrapped category suffixes and selection replay", () => CategorySuffixCaptureReplay(categoryCaptureDirectory));
+                Run("Saved completed stamp replay", () => CompletedStampCaptureReplay(categoryCaptureDirectory));
+            }
+            if (selectionCaptureDirectory != null)
+                Run("Position-sensitive sidebar category selection replay", () => SelectionCaptureReplay(selectionCaptureDirectory));
             Console.WriteLine("Achievement regressions: {0} passed, {1} failed.{2}", passed, failures,
                 args.Length == 0 ? " Screenshot replay was not requested." : string.Empty);
             return failures == 0 ? 0 : 1;
@@ -471,6 +491,444 @@ namespace InventoryKamera.Tests
                     }
                 }
             }
+        }
+
+        private static AchievementCatalog LoadCaptureCatalog(string directory)
+        {
+            string catalogPath = null;
+            for (var ancestor = new DirectoryInfo(Path.GetFullPath(directory)); ancestor != null; ancestor = ancestor.Parent)
+            {
+                string candidate = Path.Combine(ancestor.FullName, "inventorylists", "achievements.json");
+                if (File.Exists(candidate)) { catalogPath = candidate; break; }
+            }
+            Check(catalogPath != null, "Category replay requires the real saved catalog beside a capture-directory ancestor.");
+            return AchievementCatalog.FromJson(File.ReadAllText(catalogPath));
+        }
+
+        private static void CategorySuffixCaptureReplay(string directory)
+        {
+            directory = Path.GetFullPath(directory);
+            var catalog = LoadCaptureCatalog(directory);
+            var recognizer = new AchievementRecognizer(catalog);
+            Check(catalog.MatchCategory("Fontaine: Dance of the Dew-White Springs") == null
+                && catalog.MatchCategory("Natlan: The Land of Fire and Competition") == null,
+                "An unreadable Roman suffix cannot choose between categories with the same title base.");
+            int[][] expected = { new[] { 30, 31, 35, 38, 37, 41, 42, 45 }, new[] { 45, 46, 47, 48, 50, 52, 51, 55 } };
+            int[] targets = { 42, 51 };
+            int[] targetTops = { 792, 794 };
+            for (int index = 0; index < targets.Length; ++index)
+            {
+                string path = Directory.GetFiles(directory, "*_category_" + targets[index] + "_visible_range_unreadable.png")
+                    .OrderBy(value => Path.GetFileName(value), StringComparer.Ordinal).LastOrDefault();
+                Check(path != null, "The saved category " + targets[index] + " failure frame is missing.");
+                using (var frame = new Bitmap(path))
+                {
+                    var entries = recognizer.ReadCategories(frame).OrderBy(entry => entry.Bounds.Top).ToList();
+                    PrintCategoryEntries(path, entries);
+                    Sequence(expected[index].Select(id => (int?)id), entries.Select(entry => entry.Category?.Id),
+                        "Every full sidebar row has its exact canonical ID in category " + targets[index] + " failure frame");
+                    Check(entries.All(entry => !entry.Selected), "The failed-frame visible categories are unselected.");
+                    Check(entries.All(entry => entry.Bounds.Top >= frame.Height * .16 && entry.Bounds.Bottom <= frame.Height * .935),
+                        "Only full eligible sidebar tiles may be returned; the clipped bottom fragment must remain excluded.");
+                    var target = entries.Single(entry => entry.Category.Id == targets[index]);
+                    Check(Math.Abs(target.Bounds.Top - frame.Height * targetTops[index] / 1080.0) <= 3
+                        && Math.Abs(target.Bounds.Height - frame.Height * 96.0 / 1080.0) <= 3,
+                        "The wrapped first-series category retains its whole tile rather than just the title line.");
+                    for (int row = 1; row < entries.Count; ++row)
+                        Check(entries[row - 1].Bounds.Bottom <= entries[row].Bounds.Top, "Recognized category tiles cannot overlap.");
+                    Console.WriteLine("  REPLAY category {0}: full IDs [{1}]; first-series suffix retained", targets[index], string.Join(",", expected[index]));
+                }
+            }
+            foreach (int selectedId in new[] { 45, 55 })
+            {
+                string path = Path.Combine(directory, "category_" + selectedId + "_page_1.png");
+                Check(File.Exists(path), "Saved selected category reference is missing: " + path);
+                using (var frame = new Bitmap(path))
+                {
+                    var entries = recognizer.ReadCategories(frame);
+                    PrintCategoryEntries(path, entries);
+                    Sequence(new[] { (int?)selectedId }, entries.Where(entry => entry.Selected).Select(entry => entry.Category?.Id),
+                        "The selected second-series tile must verify its own canonical category");
+                    var selected = entries.Single(entry => entry.Selected);
+                    Check(selected.Bounds.Top >= frame.Height * .16 && selected.Bounds.Bottom <= frame.Height * .935,
+                        "The selected category has complete eligible selection-verification bounds.");
+                    Check(selected.Category.Id != (selectedId == 45 ? 42 : 51),
+                        "A selected second-series category cannot confirm the neighboring first-series category.");
+                }
+            }
+        }
+
+        private static void PrintCategoryEntries(string path, IEnumerable<AchievementCategoryEntryOnScreen> entries)
+        {
+            Console.WriteLine("  REPLAY sidebar {0}", Path.GetFileName(path));
+            foreach (var entry in entries)
+                Console.WriteLine("    ID={0}, selected={1}, bounds={2}, raw=\"{3}\"",
+                    entry.Category == null ? "unresolved" : entry.Category.Id.ToString(), entry.Selected, entry.Bounds,
+                    (entry.RawText ?? string.Empty).Replace("\r", string.Empty).Replace("\n", " | "));
+        }
+
+        private static void CompletedStampCaptureReplay(string directory)
+        {
+            directory = Path.GetFullPath(directory);
+            var catalog = LoadCaptureCatalog(directory);
+            var wonders = catalog.Categories.Single(category => category.Id == 0);
+            int[] pages = { 112, 121 }, ids = { 82082, 82175 };
+            string[] dates = { "2021-02-07", "2023-08-15" };
+            for (int index = 0; index < pages.Length; ++index)
+            {
+                string path = Path.Combine(directory, "category_0_page_" + pages[index] + ".png");
+                Check(File.Exists(path), "Saved completed-stamp failure page is missing: " + path);
+                using (var frame = new Bitmap(path))
+                {
+                    var row = new AchievementRecognizer(catalog).ReadPage(frame, wonders, pages[index])
+                        .SingleOrDefault(value => value.MatchedId == ids[index]);
+                    Check(row != null, "The saved completed row must retain its canonical ID " + ids[index]);
+                    Check(row.CompletedText && row.CompletedStars == 1 && string.IsNullOrEmpty(row.Error),
+                        "The complete stamp must resolve the known single achievement cleanly: " + row.Title + ": " + row.Error);
+                    Equal(dates[index], row.CompletionDate, "Completed single achievement date");
+                    Sequence(new[] { ids[index] }, row.CompletedIds, "Previously unresolved single achievement contributes its confirmed completion");
+                    Console.WriteLine("  REPLAY page {0}: completed canonical ID {1}, date {2}", pages[index], ids[index], row.CompletionDate);
+                }
+                var family = wonders.Families.Single(value => value.Id == ids[index]);
+                var conflict = new AchievementObservation { CompletedText = true, CompletedStars = 1, CompletionDate = dates[index], Progress = "0/1" };
+                AchievementRecognizer.Reconcile(conflict, family, family.Tiers[0]);
+                Check(!string.IsNullOrEmpty(conflict.Error) && conflict.CompletedIds.Count == 0,
+                    "A stamp/date reread cannot override positive unfinished-progress evidence.");
+            }
+        }
+
+        private static void SelectionCaptureReplay(string directory)
+        {
+            directory = Path.GetFullPath(directory);
+            var catalog = LoadCaptureCatalog(directory);
+            int[] fontaineIds = { 35, 38, 37, 41, 42, 45, 46, 47 };
+            int[] natlanIds = { 46, 47, 48, 50, 52, 51, 55, 54 };
+            string[] paths = Directory.GetFiles(directory, "*_visible_range_unreadable.png")
+                .OrderBy(path => Path.GetFileName(path), StringComparer.Ordinal).ToArray();
+            Equal(5, paths.Length, "Selection replay requires four current failures plus the former Natlan II failure");
+            foreach (string path in paths)
+            {
+                string name = Path.GetFileName(path);
+                bool fontaine = name.Contains("_category_45_") || name.Contains("_category_46_");
+                bool firstNatlan = name.Contains("20261014_054219689_");
+                int selectedId = fontaine ? 42 : firstNatlan ? 51 : 46;
+                int selectedTop = fontaine ? 606 : firstNatlan ? 678 : 174;
+                int targetId = name.Contains("_category_45_") ? 45 : name.Contains("_category_46_") ? 46 : 55;
+                using (var frame = new Bitmap(path))
+                {
+                    var entries = AssertSidebarRows(catalog, frame, fontaine ? fontaineIds : natlanIds, selectedId, name);
+                    var target = entries.Single(entry => entry.Category.Id == targetId);
+                    Check(!target.Selected, "The requested category remains distinct from the positively selected neighboring category.");
+                    Check(target.Bounds.Height >= frame.Height * 80.0 / 1080,
+                        "The requested Roman-suffix title must retain a full tile for safe category selection.");
+                    var selected = entries.Single(entry => entry.Selected);
+                    Equal((int)Math.Round(frame.Width * 52.0 / 1920), selected.Bounds.Left,
+                        "Selected tile bounds include the wider highlighted tile");
+                    Check(Math.Abs(selected.Bounds.Width - frame.Width * 616.0 / 1920) <= 2
+                        && Math.Abs(selected.Bounds.Height - frame.Height * 100.0 / 1080) <= 3
+                        && Math.Abs(selected.Bounds.Top - frame.Height * selectedTop / 1080.0) <= 3,
+                        "The selected canonical category retains its full highlighted bounds.");
+                }
+            }
+        }
+
+        private static void GuardedSidebarRomans()
+        {
+            string[] suffixes = { "I", "II", "III" };
+            Equal("II", AchievementRecognizer.ResolveSidebarRomanEvidence(true, true, 2, suffixes,
+                "1", "II", "(II)", "(II)"), "Two verified straight strokes repair a collapsed numeral read");
+            Equal(string.Empty, AchievementRecognizer.ResolveSidebarRomanEvidence(true, true, 2, suffixes,
+                "1", "I", "(I)", "(I)"), "Physical stroke count cannot override the corroborating suffix");
+            Equal(string.Empty, AchievementRecognizer.ResolveSidebarRomanEvidence(false, true, 2, suffixes,
+                "1", "II", "(II)", "(II)"), "A suffix cannot repair an unreadable independent title prefix");
+            Equal(string.Empty, AchievementRecognizer.ResolveSidebarRomanEvidence(true, false, 2, suffixes,
+                "1", "II", "(II)", "(II)"), "An unbracketed stroke cannot repair a series label");
+            Equal(string.Empty, AchievementRecognizer.ResolveSidebarRomanEvidence(true, true, 2, new[] { "I", "III" },
+                "1", "II", "(II)", "(II)"), "A physical count cannot create a nonexistent canonical suffix");
+            for (int count = 1; count <= 3; ++count)
+            {
+                using (var frame = new Bitmap(32, 28))
+                using (var graphics = Graphics.FromImage(frame))
+                {
+                    graphics.Clear(Color.Black);
+                    for (int column = 0; column < count; ++column)
+                        graphics.FillRectangle(Brushes.White, 5 + column * 7, 4, 2, 20);
+                    Equal((int?)count, AchievementRecognizer.ReadSidebarStraightICount(frame),
+                        "Independent straight-stem evidence counts only the actual Roman strokes");
+                }
+            }
+            foreach (string glyph in new[] { "V", "X", string.Empty })
+            {
+                using (var frame = new Bitmap(32, 32))
+                using (var graphics = Graphics.FromImage(frame))
+                using (var pen = new Pen(Color.White, 2))
+                {
+                    graphics.Clear(Color.Black);
+                    if (glyph == "V")
+                    {
+                        graphics.DrawLine(pen, 5, 4, 15, 26);
+                        graphics.DrawLine(pen, 15, 26, 25, 4);
+                    }
+                    else if (glyph == "X")
+                    {
+                        graphics.DrawLine(pen, 5, 4, 25, 26);
+                        graphics.DrawLine(pen, 25, 4, 5, 26);
+                    }
+                    Check(!AchievementRecognizer.ReadSidebarStraightICount(frame).HasValue,
+                        "Diagonal or blank numeral pixels cannot become a physical straight-I count: '" + glyph + "'");
+                    Equal(string.Empty, AchievementRecognizer.ResolveSidebarRomanEvidence(true, true, null, suffixes,
+                        glyph, glyph, glyph, glyph), "Diagonal or absent suffix evidence cannot force an I category");
+                }
+            }
+        }
+
+        private static void LocalCategoryRetry()
+        {
+            var catalog = AchievementCatalog.FromJson(new JObject
+            {
+                ["42"] = Category("Fontaine: Dance of the Dew-White Springs (I)", 53,
+                    Definition(80252, "First", "First series.", 5)),
+                ["45"] = Category("Fontaine: Dance of the Dew-White Springs (II)", 54,
+                    Definition(80268, "Second", "Second series.", 5)),
+                ["46"] = Category("Fontaine: Dance of the Dew-White Springs (III)", 55,
+                    Definition(80284, "Third", "Third series.", 5))
+            }.ToString());
+            var target = catalog.Categories.Single(category => category.Id == 45);
+            var navigation = new LocalSelectionNavigation();
+            var scraper = new AchievementScraper(catalog, navigation,
+                frame => LocalSelectionEntries(catalog, navigation, true), frame => true);
+            Check(scraper.SelectCategory(target), "A moved sidebar must reacquire and confirm the actual canonical target.");
+            Equal(1, navigation.Scrolls.Count, "A category label gets only one local nudge");
+            Check(navigation.Scrolls.All(step => Math.Abs(step) == 3), "The local nudge remains small.");
+            Equal(1, navigation.ClickCount, "A category is clicked only after its canonical label is reacquired.");
+            Equal(0, navigation.Keys.Count, "A local label miss must not exit or reopen the achievement menu.");
+            Check(navigation.CaptureCount <= 12, "Local movement, reacquisition and confirmation remain bounded.");
+
+            navigation = new LocalSelectionNavigation();
+            scraper = new AchievementScraper(catalog, navigation,
+                frame => LocalSelectionEntries(catalog, navigation, false), frame => true);
+            Check(!scraper.SelectCategory(target), "A persistent unknown suffix must be deferred after the local retry.");
+            Equal(AchievementSelectionFailureKind.LabelUnreadable, scraper.LastSelectionFailureKind,
+                "A suffix OCR miss remains distinct from a navigation failure");
+            Equal(1, navigation.Scrolls.Count, "An unreadable label cannot keep nudging the sidebar");
+            Equal(0, navigation.ClickCount, "An unknown category cannot be clicked from contextual order alone.");
+            Equal(0, navigation.Keys.Count, "A persistent local label miss cannot spend global menu recovery.");
+            Check(navigation.CaptureCount <= 12, "The unreadable local retry must terminate promptly.");
+
+            navigation = new LocalSelectionNavigation { MoveAfterNudge = false };
+            scraper = new AchievementScraper(catalog, navigation,
+                frame => LocalSelectionEntries(catalog, navigation, true), frame => true);
+            Check(!scraper.SelectCategory(target), "A clear reread alone cannot verify that the requested nudge moved the sidebar.");
+            Equal(1, navigation.Scrolls.Count, "A nudge with no positive movement remains bounded");
+            Equal(0, navigation.ClickCount, "Unverified sidebar movement cannot authorize a click.");
+
+            navigation = new LocalSelectionNavigation();
+            scraper = new AchievementScraper(catalog, navigation,
+                frame => LocalSelectionEntries(catalog, navigation, false), frame => navigation.Scrolls.Count == 0);
+            Check(!scraper.SelectCategory(target), "Losing the achievement detail screen must stop local retries.");
+            Equal(AchievementSelectionFailureKind.DetailMissing, scraper.LastSelectionFailureKind,
+                "A lost screen is recorded as a navigation failure");
+            Equal(1, navigation.Scrolls.Count, "A lost screen prevents a second wheel action");
+            Equal(0, navigation.ClickCount, "A lost screen prevents category clicks.");
+            Equal(0, navigation.Keys.Count, "A lost screen cannot trigger a local Escape recovery.");
+
+            using (var cancel = new CancellationTokenSource())
+            {
+                navigation = new LocalSelectionNavigation();
+                navigation.OnWait = () => { if (navigation.Scrolls.Count > 0) cancel.Cancel(); };
+                scraper = new AchievementScraper(catalog, navigation,
+                    frame => LocalSelectionEntries(catalog, navigation, false), frame => true);
+                var cancellationField = typeof(AchievementScraper).GetField("cancellation", BindingFlags.Instance | BindingFlags.NonPublic);
+                Check(cancellationField != null, "The scanner cancellation token was not found.");
+                cancellationField.SetValue(scraper, cancel.Token);
+                bool stopped = false;
+                try { scraper.SelectCategory(target); }
+                catch (OperationCanceledException) { stopped = true; }
+                Check(stopped, "Cancellation during the local nudge wait must propagate immediately.");
+                Equal(1, navigation.Scrolls.Count, "Cancellation prevents any subsequent nudge");
+                Equal(0, navigation.ClickCount, "Cancellation prevents category clicks.");
+                Equal(0, navigation.Keys.Count, "Cancellation prevents recovery keys.");
+            }
+
+            Rectangle candidate;
+            navigation = new LocalSelectionNavigation();
+            var unreadable = LocalSelectionEntries(catalog, navigation, false);
+            Equal(-3, AchievementScraper.SidebarUnreadableNudge(target, unreadable, 1080, out candidate),
+                "A full unknown title between ordered anchors can move toward the viewport center");
+            Equal(unreadable[1].Bounds, candidate, "The nudge keeps the actual unknown tile bounds");
+            unreadable[1].RawText = "A different title (II)";
+            Equal(0, AchievementScraper.SidebarUnreadableNudge(target, unreadable, 1080, out candidate),
+                "Category order cannot supply a guessed identity for an unrelated title");
+            unreadable = LocalSelectionEntries(catalog, navigation, false);
+            unreadable[1].Bounds = new Rectangle(62, 150, 595, 96);
+            Equal(0, AchievementScraper.SidebarUnreadableNudge(target, unreadable, 1080, out candidate),
+                "A clipped unknown title cannot authorize the local nudge");
+            Equal(0, AchievementScraper.NextNavigationFailureCount(2, AchievementSelectionFailureKind.LabelUnreadable),
+                "Isolated label misses cannot trigger the global recovery threshold");
+            Equal(3, AchievementScraper.NextNavigationFailureCount(2, AchievementSelectionFailureKind.DetailMissing),
+                "Positive navigation failures retain the bounded recovery counter");
+        }
+
+        private static List<AchievementCategoryEntryOnScreen> LocalSelectionEntries(AchievementCatalog catalog,
+            LocalSelectionNavigation navigation, bool resolveAfterNudge)
+        {
+            int displacement = navigation.Scrolls.Count == 0 || !navigation.MoveAfterNudge
+                ? 0 : -Math.Sign(navigation.Scrolls.Last()) * 30;
+            var first = catalog.Categories.Single(category => category.Id == 42);
+            var target = catalog.Categories.Single(category => category.Id == 45);
+            var last = catalog.Categories.Single(category => category.Id == 46);
+            bool resolved = resolveAfterNudge && navigation.Scrolls.Count > 0;
+            return new List<AchievementCategoryEntryOnScreen>
+            {
+                new AchievementCategoryEntryOnScreen { Category = first, RawText = first.Name,
+                    Bounds = new Rectangle(62, 300 + displacement, 595, 96) },
+                new AchievementCategoryEntryOnScreen { Category = resolved ? target : null, RawText = target.Name,
+                    Selected = resolved && navigation.ClickCount > 0,
+                    Bounds = new Rectangle(62, 403 + displacement, 595, 96) },
+                new AchievementCategoryEntryOnScreen { Category = last, RawText = last.Name,
+                    Bounds = new Rectangle(62, 506 + displacement, 595, 96) }
+            };
+        }
+
+        private sealed class LocalSelectionNavigation : IAchievementNavigation
+        {
+            public readonly List<int> Scrolls = new List<int>();
+            public readonly List<VirtualKeyCode> Keys = new List<VirtualKeyCode>();
+            public int CaptureCount, ClickCount;
+            public bool MoveAfterNudge = true;
+            public Action OnWait;
+            public Bitmap Capture() { ++CaptureCount; return new Bitmap(1920, 1080); }
+            public void Scroll(bool categories, int signedNotches)
+            {
+                Check(categories, "A local category nudge must target only the sidebar.");
+                Scrolls.Add(signedNotches);
+            }
+            public void Click(double x, double y) { ++ClickCount; }
+            public void PressKey(VirtualKeyCode key) { Keys.Add(key); }
+            public void Wait(int milliseconds) { OnWait?.Invoke(); }
+        }
+
+        private static void SidebarNavigationEvidence()
+        {
+            using (var frame = new Bitmap(1920, 1080))
+            using (var graphics = Graphics.FromImage(frame))
+            {
+                graphics.Clear(Color.FromArgb(70, 90, 115));
+                Check(!AchievementScraper.SidebarThumbBounds(frame).HasValue &&
+                    !AchievementScraper.SidebarAtTop(frame) && !AchievementScraper.SidebarAtBottom(frame),
+                    "An absent thumb must not establish either sidebar endpoint.");
+                graphics.FillRectangle(Brushes.White, 675, 180, 3, 2);
+                Check(!AchievementScraper.SidebarThumbBounds(frame).HasValue,
+                    "A few bright pixels cannot establish a sidebar thumb.");
+                graphics.Clear(Color.FromArgb(70, 90, 115));
+                using (var thumb = new SolidBrush(Color.FromArgb(205, 204, 197)))
+                    graphics.FillRectangle(thumb, 674, 500, 5, 104);
+                Check(AchievementScraper.SidebarThumbBounds(frame).HasValue &&
+                    !AchievementScraper.SidebarAtTop(frame) && !AchievementScraper.SidebarAtBottom(frame),
+                    "A neutral-light middle thumb establishes position without an endpoint.");
+            }
+            var earlier = new AchievementCategory { Id = 101, Order = 5 };
+            var later = new AchievementCategory { Id = 102, Order = 40 };
+            var inside = new AchievementCategory { Id = 103, Order = 20 };
+            var visible = new List<AchievementCategoryEntryOnScreen>
+            {
+                new AchievementCategoryEntryOnScreen { Category = new AchievementCategory { Id = 104, Order = 10 } },
+                new AchievementCategoryEntryOnScreen { Category = new AchievementCategory { Id = 105, Order = 30 } }
+            };
+            Equal(-1, AchievementScraper.SidebarScrollDirection(earlier, visible), "Earlier categories require upward scrolling");
+            Equal(1, AchievementScraper.SidebarScrollDirection(later, visible), "Later categories require downward scrolling");
+            Equal(0, AchievementScraper.SidebarScrollDirection(inside, visible), "Missing inside-range OCR requires rereading rather than a guessed direction");
+            Equal(0, AchievementScraper.SidebarScrollDirection(earlier, new List<AchievementCategoryEntryOnScreen>()),
+                "Unknown category order supplies no scrolling direction");
+        }
+
+        private static void SidebarReplay(string directory)
+        {
+            directory = Path.GetFullPath(directory);
+            string catalogPath = null;
+            for (var ancestor = new DirectoryInfo(directory); ancestor != null; ancestor = ancestor.Parent)
+            {
+                string candidate = Path.Combine(ancestor.FullName, "inventorylists", "achievements.json");
+                if (File.Exists(candidate)) { catalogPath = candidate; break; }
+            }
+            Check(catalogPath != null, "The sidebar replay requires a saved achievement catalog beside an ancestor directory.");
+            var catalog = AchievementCatalog.FromJson(File.ReadAllText(catalogPath));
+            string failedPath = Directory.GetFiles(directory, "*_category_1_not_found.png")
+                .OrderBy(path => Path.GetFileName(path), StringComparer.Ordinal).LastOrDefault();
+            Check(failedPath != null, "The saved category 1 navigation failure frame is missing.");
+            string topPath = Path.Combine(directory, "category_0_page_188.png");
+            string bottomPath = Path.Combine(directory, "category_70_page_4.png");
+            Check(File.Exists(topPath) && File.Exists(bottomPath), "The saved sidebar top/bottom reference frames are missing.");
+            int[] topIds = { 0, 17, 1, 22, 32, 43, 57, 65 };
+            int[] bottomIds = { 60, 62, 63, 66, 67, 68, 69, 70 };
+            using (var failed = new Bitmap(failedPath))
+            using (var top = new Bitmap(topPath))
+            using (var bottom = new Bitmap(bottomPath))
+            {
+                Check(!AchievementScraper.SidebarAtTop(failed) && AchievementScraper.SidebarAtBottom(failed),
+                    "The failed category selection frame has positive sidebar-bottom evidence.");
+                Check(AchievementScraper.SidebarAtTop(top) && !AchievementScraper.SidebarAtBottom(top),
+                    "The Wonders page 188 frame has positive sidebar-top evidence.");
+                Check(AchievementScraper.ScrollbarAtBottom(top),
+                    "Sidebar top must remain independent of the achievement list being at its bottom.");
+                Check(!AchievementScraper.SidebarAtTop(bottom) && AchievementScraper.SidebarAtBottom(bottom),
+                    "The final category frame has positive sidebar-bottom evidence.");
+                AssertSidebarRows(catalog, failed, bottomIds, null, "Original failed selection");
+                AssertSidebarRows(catalog, top, topIds, 0, "Top sidebar with wrapped count labels");
+                AssertSidebarRows(catalog, bottom, bottomIds, 70, "Bottom sidebar with selected final tile");
+                using (var scaled = new Bitmap(900, 610))
+                using (var graphics = Graphics.FromImage(scaled))
+                {
+                    graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                    graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+                    graphics.DrawImage(top, new Rectangle(0, 0, scaled.Width, scaled.Height));
+                    Check(AchievementScraper.SidebarAtTop(scaled) && !AchievementScraper.SidebarAtBottom(scaled),
+                        "Sidebar thumb coordinates scale with frame dimensions.");
+                    AssertSidebarRows(catalog, scaled, topIds, 0, "Scaled selected and normal sidebar tiles");
+                }
+                var navigation = new SidebarReplayNavigation(failed, top);
+                var scraper = new AchievementScraper(catalog, navigation);
+                var reset = typeof(AchievementScraper).GetMethod("ResetSidebar", BindingFlags.Instance | BindingFlags.NonPublic);
+                Check(reset != null, "Sidebar reset helper was not found.");
+                reset.Invoke(scraper, new object[] { "regression", false });
+                Check(navigation.Scrolls.Count > 0 && navigation.Scrolls.All(step => step < 0),
+                    "Reset from the saved bottom frame must scroll upward and terminate on positive top-thumb evidence.");
+                Check(navigation.CaptureCount <= 4, "Positive sidebar-top evidence must end reset promptly.");
+                Console.WriteLine("Sidebar replay: 8 full categories per frame; top/bottom thumbs and simulated upward reset verified.");
+            }
+        }
+
+        private static List<AchievementCategoryEntryOnScreen> AssertSidebarRows(AchievementCatalog catalog, Bitmap frame, int[] expectedIds, int? selectedId, string label)
+        {
+            var entries = new AchievementRecognizer(catalog).ReadCategories(frame).OrderBy(entry => entry.Bounds.Top).ToList();
+            PrintCategoryEntries(label, entries);
+            Equal(expectedIds.Length, entries.Count, label + " full tile count");
+            Sequence(expectedIds.Select(id => (int?)id), entries.Select(entry => entry.Category?.Id), label + " canonical category IDs");
+            Sequence(selectedId.HasValue ? new[] { selectedId.Value } : new int[0],
+                entries.Where(entry => entry.Selected).Select(entry => entry.Category.Id), label + " selected tile");
+            Check(entries.All(entry => entry.Bounds.Top > frame.Height * 162.0 / 1080 &&
+                entry.Bounds.Bottom < frame.Height * 1018.0 / 1080 && entry.Bounds.Height <= frame.Height * 113.0 / 1080),
+                label + " bounds must represent full individual tiles rather than merged or clipped rows.");
+            for (int index = 1; index < entries.Count; index++)
+                Check(entries[index - 1].Bounds.Bottom <= entries[index].Bounds.Top, label + " tile bounds must not overlap.");
+            return entries;
+        }
+
+        private sealed class SidebarReplayNavigation : IAchievementNavigation
+        {
+            private readonly Bitmap bottom, top;
+            public readonly List<int> Scrolls = new List<int>();
+            public int CaptureCount;
+            public SidebarReplayNavigation(Bitmap bottomFrame, Bitmap topFrame) { bottom = bottomFrame; top = topFrame; }
+            public Bitmap Capture() { ++CaptureCount; return (Bitmap)(Scrolls.Count == 0 ? bottom : top).Clone(); }
+            public void Scroll(bool categories, int signedNotches)
+            {
+                Check(categories, "Sidebar reset must target the category list.");
+                Scrolls.Add(signedNotches);
+            }
+            public void Click(double x, double y) { throw new InvalidOperationException("Sidebar reset must not click a category."); }
+            public void PressKey(VirtualKeyCode key) { throw new InvalidOperationException("Sidebar reset must not press a key."); }
+            public void Wait(int milliseconds) { }
         }
 
         private static JObject Category(string name, int order, params JToken[] achievements)

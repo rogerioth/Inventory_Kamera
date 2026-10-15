@@ -3,8 +3,10 @@ using Accord.Imaging.Filters;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Runtime.Serialization;
+using System.Threading;
 using System.Text.RegularExpressions;
 
 namespace InventoryKamera
@@ -56,6 +58,13 @@ namespace InventoryKamera
 
 		public void Scan_Materials(ref Inventory inventory)
 		{
+            var phase = inventoryPage == InventoryPage.CharacterDevelopmentItems
+                ? ScanPhase.CharacterDevelopmentItems : ScanPhase.Materials;
+            int recorded = 0;
+            UserInterface.ReportScanProgress(phase, recorded);
+            // Visiting an item and exporting its quantity are separate: an unread
+            // quantity must not become a fabricated zero or prevent the end check.
+            var visitedNames = new HashSet<string>(inventory.Materials.Select(m => m.name));
 			if (!inventory.Materials.Contains(new Material("Mora", 0)))
 			{
 				Logger.Info("    Scanning Mora balance...");
@@ -96,9 +105,10 @@ namespace InventoryKamera
 					material.count = 0;
 
 					// Check if new material has been found
-					if (inventory.Materials.Contains(material))
+					if (!string.IsNullOrEmpty(material.name) && visitedNames.Contains(material.name))
 					{
 						Logger.Debug("Repeat material found. Scrolling until end");
+						nameplate.Dispose();
 						goto LastPage;
 					}
 					else
@@ -116,20 +126,21 @@ namespace InventoryKamera
 							{
 								// Scan Material Quantity
 								Logger.Info("        Scanning {0}'s quantity...", material.name);
-								material.count = ScanMaterialCount(rectangle, out Bitmap quantity);
-								if (material.count == 0)
-								{
-									UserInterface.AddError($"            [FAILURE] Could not read {material.name}'s quantity. Recorded quantity: 0.");
-									SaveInventoryBitmap(quantity, $"{material.name}_Quantity.png");
-								}
-								if (Properties.Settings.Default.LogScreenshots || material.count == 0)
-	                            {
-									SaveInventoryBitmap(quantity, $"{material.name}_Quantity.png");
-	                            }
-								inventory.Materials.Add(material);
-								if (material.count > 0) Logger.Info("            {0}: quantity {1}", material.name, material.count);
-								UserInterface.ResetCharacterDisplay();
-								UserInterface.SetMaterial(nameplate, quantity, material.name, material.count);
+                                visitedNames.Add(material.name);
+                                int? count = ScanMaterialCountWithContext(rectangle, page,
+                                    r.IndexOf(rectangle) + 1, material.name, out Bitmap quantity);
+                                using (quantity)
+                                {
+                                    if (count.HasValue)
+                                    {
+                                        material.count = count.Value;
+                                        if (inventory.Materials.Add(material))
+                                            UserInterface.ReportScanProgress(phase, ++recorded);
+                                        Logger.Info("            {0}: quantity {1}", material.name, material.count);
+                                        UserInterface.ResetCharacterDisplay();
+                                        UserInterface.SetMaterial(nameplate, quantity, material.name, material.count);
+                                    }
+                                }
 
 								previousMaterial.name = material.name;
 							}
@@ -201,9 +212,14 @@ namespace InventoryKamera
 				material.name = ScanMaterialName(out Bitmap nameplate);
 				material.count = 0;
 
-				if (inventory.Materials.Contains(material) && passby) continue;
+				bool visited = !string.IsNullOrEmpty(material.name) && visitedNames.Contains(material.name);
+				if (visited && passby)
+                {
+                    nameplate.Dispose();
+                    continue;
+                }
 
-				if (!inventory.Materials.Contains(material))
+				if (!visited)
 				{
 					if (!string.IsNullOrEmpty(material.name))
 					{
@@ -219,32 +235,34 @@ namespace InventoryKamera
 
 						// Scan Material Number
 						Logger.Info("        Scanning {0}'s quantity...", material.name);
-						material.count = ScanMaterialCount(rectangle, out Bitmap quantity);
-						if (material.count == 0)
-						{
-							UserInterface.AddError($"            [FAILURE] Could not read {material.name}'s quantity. Recorded quantity: 0.");
-							SaveInventoryBitmap(quantity, $"{material.name}_Quantity.png");
-						}
-						else if (Properties.Settings.Default.LogScreenshots)
-						{
-							SaveInventoryBitmap(quantity, $"{material.name}_Quantity.png");
-						}
-						inventory.Materials.Add(material);
-						if (material.count > 0) Logger.Info("            {0}: quantity {1}", material.name, material.count);
-						UserInterface.ResetCharacterDisplay();
-						UserInterface.SetMaterial(nameplate, quantity, material.name, material.count);
+                        visitedNames.Add(material.name);
+                        int? count = ScanMaterialCountWithContext(rectangle, page, i + 1,
+                            material.name, out Bitmap quantity);
+                        using (quantity)
+                        {
+                            if (count.HasValue)
+                            {
+                                material.count = count.Value;
+                                if (inventory.Materials.Add(material))
+                                    UserInterface.ReportScanProgress(phase, ++recorded);
+                                Logger.Info("            {0}: quantity {1}", material.name, material.count);
+                                UserInterface.ResetCharacterDisplay();
+                                UserInterface.SetMaterial(nameplate, quantity, material.name, material.count);
+                            }
+                        }
 						passby = false; // New material found so break on next old material
-						quantity.Dispose();
 					}
 				}
 				else
 				{
-					Logger.Debug("Last material scanned, {0}.", inventory.Materials.Last().name);
+					Logger.Debug("Last material visited, {0}.", material.name);
 					nameplate.Dispose();
 					break;
 				}
 				Navigation.Wait(150);
+				nameplate.Dispose();
 			}
+            UserInterface.FinishScanPhase(phase, recorded);
 		}
 
 		private int ScanMora()
@@ -339,85 +357,257 @@ namespace InventoryKamera
 			return null;
 		}
 
-		public static int ScanMaterialCount(Rectangle rectangle, out Bitmap quantity)
-		{
-			Dictionary<int, int> counts = new Dictionary<int, int>();
-			var region = new RECT(
-				Left: rectangle.X,
-				Top: (int)(rectangle.Y + (0.8 * rectangle.Height)), // Only get the bottom of inventory item
-				Right: rectangle.Right,
-				Bottom: rectangle.Bottom + 10);
+        // Retain the legacy caller contract, while the scanner below keeps a
+        // failed read distinct from the quantity zero.
+        public static int ScanMaterialCount(Rectangle rectangle, out Bitmap quantity)
+        {
+            quantity = Navigation.CaptureRegion(GetQuantityRegion(rectangle));
+            int? count = ParseMaterialCount(quantity, out string diagnostics);
+            if (!count.HasValue) Logger.Warn("Quantity OCR failed: {0}", diagnostics);
+            return count ?? 0;
+        }
 
-            var rRange = new Accord.IntRange(0, 150);
-            var bRange = new Accord.IntRange(0, 150);
-            var gRange = new Accord.IntRange(0, 150);
+        private static RECT GetQuantityRegion(Rectangle rectangle)
+        {
+            return new RECT(rectangle.X, (int)(rectangle.Y + 0.8 * rectangle.Height),
+                rectangle.Right, rectangle.Bottom + 10);
+        }
 
-            using (Bitmap bm = Navigation.CaptureRegion(region))
-			{
-				quantity = (Bitmap)bm.Clone();
+        private int? ScanMaterialCountWithContext(Rectangle rectangle, int page, int item,
+            string name, out Bitmap quantity)
+        {
+            var region = GetQuantityRegion(rectangle);
+            string context = $"section={inventoryPage}, page={page}, item={item}, name={name}, " +
+                $"itemRect={rectangle}, quantityRect=({region.Left},{region.Top},{region.Width},{region.Height})";
+            string prefix = $"{DateTime.UtcNow:yyyyMMdd_HHmmssfff}_{inventoryPage}_page_{page}_item_{item}_{name}";
+            quantity = Navigation.CaptureRegion(region);
+            int? count = ParseMaterialCount(quantity, out string diagnostics);
+            bool recovered = diagnostics.Contains("focused-crop=");
+            if (Properties.Settings.Default.LogScreenshots || recovered)
+                SaveInventoryBitmap(quantity, $"{name}_Quantity.png");
+            if (count.HasValue)
+            {
+                if (recovered)
+                    Logger.Info("Quantity OCR recovered from focused digits crop: {0}; count={1}; evidence={2}; {3}",
+                        context, count.Value, QuantityEvidencePath($"{name}_Quantity.png"), diagnostics);
+                else Logger.Debug("Quantity OCR: {0}; count={1}; {2}", context, count.Value, diagnostics);
+                return count;
+            }
 
-				for (var scale = 1.0; scale <= 3; scale += 0.5)
+            // Only failed reads pay for a new capture and another OCR pass.
+            string firstFile = prefix + "_attempt_1.png";
+            SaveInventoryBitmap(quantity, firstFile);
+            SaveInventoryBitmap(quantity, $"{name}_Quantity.png");
+            Logger.Warn("Quantity OCR failed; retrying one fresh capture: {0}; evidence={1}; {2}",
+                context, QuantityEvidencePath(firstFile), diagnostics);
+            Navigation.Wait(150);
+            Bitmap retry = Navigation.CaptureRegion(region);
+            quantity.Dispose();
+            quantity = retry;
+            count = ParseMaterialCount(quantity, out diagnostics);
+            string secondFile = prefix + "_attempt_2.png";
+            SaveInventoryBitmap(quantity, secondFile);
+            SaveInventoryBitmap(quantity, $"{name}_Quantity.png");
+            if (count.HasValue)
+            {
+                Logger.Info("Quantity OCR recovered after capture retry: {0}; count={1}; evidence={2}; {3}",
+                    context, count.Value, QuantityEvidencePath(secondFile), diagnostics);
+                return count;
+            }
+
+            Logger.Error("Quantity remains unreadable; omitting item from export: {0}; evidence={1}, {2}; {3}",
+                context, QuantityEvidencePath(firstFile), QuantityEvidencePath(secondFile), diagnostics);
+            UserInterface.AddError($"            [FAILURE] Could not read {name}'s quantity on {inventoryPage} page {page}, item {item}. " +
+                $"Item omitted from export. Evidence: {QuantityEvidencePath(secondFile)}");
+            return null;
+        }
+
+        private static string QuantityEvidencePath(string filename)
+        {
+            return Path.GetFullPath(Path.Combine("logging", "Materials", filename));
+        }
+
+        // Pure screenshot entry point for replaying a saved quantity crop. The
+        // successful exact-integer path is unchanged; extra OCR is failure-only.
+        internal static int? ParseMaterialCount(Bitmap screenshot, out string diagnostics)
+        {
+            var reads = new List<string>();
+            var votes = new Dictionary<int, int>();
+            var range = new Accord.IntRange(0, 150);
+            for (double scale = 1; scale <= 3; scale += 0.5)
+            {
+                using (Bitmap scaled = GenshinProcesor.ResizeImage(screenshot,
+                    Math.Max(1, (int)(screenshot.Width * scale)), Math.Max(1, (int)(screenshot.Height * scale))))
                 {
-					using (Bitmap rescaled = GenshinProcesor.ResizeImage(bm, (int)(bm.Width * scale), (int)(bm.Height * scale)))
+                    Bitmap copy = (Bitmap)scaled.Clone();
+                    try
                     {
-                        Bitmap copy = (Bitmap)rescaled.Clone();
-                        GenshinProcesor.FilterColors(ref copy, rRange, bRange, gRange);
-
-                        for (int i = 0; i < copy.Width; i++)
-                            for (int j = 0; j < copy.Height * 0.25; j++)
-                                copy.SetPixel(i, j, Color.White);
-
-                        Bitmap n = GenshinProcesor.ConvertToGrayscale(copy);
-                        
-						GenshinProcesor.SetInvert(ref n);
-                        n = new Threshold(50).Apply(n);
-
-                        string original = GenshinProcesor.AnalyzeText(n).Trim();
-
-						n.Dispose();
-						copy.Dispose();
-
-                        if (int.TryParse(original, out int val)) return val;
-
-                        // Might be worth it to train some more numbers
-                        var cleaned = original;
-
-                        cleaned = cleaned.Replace("M", "111");
-
-                        cleaned = Regex.Replace(cleaned, @"[^0-9]", string.Empty);
-
-                        int.TryParse(cleaned, out val);
-
-                        Logger.Debug($"Scanned: {original} -> Regex: {cleaned} -> Parsed: {val}");
-
-                        if (counts.TryGetValue(val, out var counter))
+                        GenshinProcesor.FilterColors(ref copy, range, range, range);
+                        for (int x = 0; x < copy.Width; x++)
+                            for (int y = 0; y < copy.Height * 0.25; y++) copy.SetPixel(x, y, Color.White);
+                        using (Bitmap gray = GenshinProcesor.ConvertToGrayscale(copy))
+                        using (Bitmap inverted = new Invert().Apply(gray))
+                        using (Bitmap binary = new Threshold(50).Apply(inverted))
                         {
-                            if (counter >= 3 && val != 0) return val;
-                            counts[val]++;
+                            string raw = ReadQuantityText(binary, Tesseract.PageSegMode.SingleLine, false,
+                                $"legacy scale={scale:0.0}", reads);
+                            if (TryPositiveQuantity(raw, out int exact))
+                            {
+                                diagnostics = string.Join("; ", reads) + $"; decision=exact:{exact}";
+                                return exact;
+                            }
+                            // Punctuation around a digit run can be OCR noise.
+                            // Letters are not converted to guessed digits.
+                            if (!string.IsNullOrEmpty(raw) && !raw.Any(char.IsLetter))
+                            {
+                                Match digits = Regex.Match(raw, @"^[^0-9]*([0-9]+)[^0-9]*$");
+                                if (digits.Success && TryPositiveQuantity(digits.Groups[1].Value, out int candidate))
+                                    AddQuantityVote(votes, candidate);
+                            }
                         }
-                        else
+                    }
+                    finally { copy.Dispose(); }
+                }
+            }
+            int? winner = ResolveQuantityVotes(votes);
+            if (winner.HasValue)
+            {
+                diagnostics = string.Join("; ", reads) + $"; decision=vote:{winner.Value}; votes={FormatQuantityVotes(votes)}";
+                return winner;
+            }
+
+            // The card-bottom capture can contain rarity stars and the selected
+            // card's bottom border. Locate the complete digit line from its ink
+            // rather than cutting at a fixed percentage of the capture height.
+            Rectangle? ink = FindQuantityInkBounds(screenshot);
+            reads.Add("focused-crop=" + (ink.HasValue ? ink.Value.ToString() : "no digit ink"));
+            votes.Clear();
+            if (ink.HasValue)
+            {
+                using (Bitmap digits = screenshot.Clone(ink.Value, System.Drawing.Imaging.PixelFormat.Format24bppRgb))
+                using (Bitmap scaled = GenshinProcesor.ResizeImage(digits, digits.Width * 4, digits.Height * 4))
+                using (Bitmap gray = GenshinProcesor.ConvertToGrayscale(scaled))
+                {
+                    // A clear border improves segmentation for tiny quantities.
+                    using (Bitmap padded = new Bitmap(gray.Width + 24, gray.Height + 24))
+                    {
+                        using (Graphics graphics = Graphics.FromImage(padded))
                         {
-                            counts.Add(val, 1);
+                            graphics.Clear(Color.White);
+                            graphics.DrawImageUnscaled(gray, 12, 12);
+                        }
+                        foreach (var mode in new[] { Tesseract.PageSegMode.SingleLine, Tesseract.PageSegMode.SingleWord })
+                        {
+                            string raw = ReadQuantityText(padded, mode, true, "focused grayscale " + mode, reads);
+                            if (TryPositiveQuantity(raw, out int candidate)) AddQuantityVote(votes, candidate);
+                            using (Bitmap paddedGray = GenshinProcesor.ConvertToGrayscale(padded))
+                            using (Bitmap binary = new Threshold(160).Apply(paddedGray))
+                            {
+                                raw = ReadQuantityText(binary, mode, true, "focused threshold160 " + mode, reads);
+                                if (TryPositiveQuantity(raw, out candidate)) AddQuantityVote(votes, candidate);
+                            }
                         }
                     }
                 }
-			}
-			
-			var nullableMode = SafeExtractMaxCounter(counts);
-			if (nullableMode == null)
-				return 0;
+            }
+            winner = ResolveQuantityVotes(votes);
+            diagnostics = string.Join("; ", reads) + $"; decision={(winner.HasValue ? winner.Value.ToString() : "unresolved")}; votes={FormatQuantityVotes(votes)}";
+            return winner;
+        }
 
-			var mode = nullableMode.Value;
-			if (mode.Key == 0 && counts.Count >= 5) 
-				return 0;
-			
-			counts.Remove(mode.Key);
-			return SafeExtractMaxCounter(counts)?.Value ?? 0;
-		}
+        private static string ReadQuantityText(Bitmap image, Tesseract.PageSegMode mode, bool numbersOnly,
+            string label, List<string> reads)
+        {
+            try
+            {
+                string raw = GenshinProcesor.AnalyzeText(image, mode, numbersOnly).Trim();
+                reads.Add(label + " raw='" + raw.Replace("\r", "\\r").Replace("\n", "\\n") + "'");
+                return raw;
+            }
+            catch (ThreadAbortException) { throw; }
+            catch (Exception ex)
+            {
+                reads.Add(label + " OCR error=" + ex.GetType().Name + ": " + ex.Message);
+                return null;
+            }
+        }
 
-		private static KeyValuePair<int, int>? SafeExtractMaxCounter(Dictionary<int, int> counts)
-		{
-            return counts.Count == 0 ? null : (KeyValuePair<int, int>?)counts.Aggregate((l, r) => l.Value > r.Value ? l : r);
+        private static bool TryPositiveQuantity(string text, out int value)
+        {
+            value = 0;
+            return !string.IsNullOrEmpty(text) && Regex.IsMatch(text, @"^[0-9]+$") &&
+                int.TryParse(text, out value) && value > 0;
+        }
+
+        private static void AddQuantityVote(Dictionary<int, int> votes, int quantity)
+        {
+            votes[quantity] = votes.TryGetValue(quantity, out int count) ? count + 1 : 1;
+        }
+
+        // Return the quantity (key), never its frequency. Blank/zero reads cannot
+        // outvote positive evidence, and a tie or single noisy read is unresolved.
+        internal static int? ResolveQuantityVotes(Dictionary<int, int> votes)
+        {
+            var ranked = votes.Where(v => v.Key > 0 && v.Value > 0).OrderByDescending(v => v.Value).ToList();
+            if (ranked.Count == 0 || ranked[0].Value < 2 ||
+                (ranked.Count > 1 && ranked[0].Value == ranked[1].Value)) return null;
+            return ranked[0].Key;
+        }
+
+        private static string FormatQuantityVotes(Dictionary<int, int> votes)
+        {
+            return string.Join(",", votes.OrderBy(v => v.Key).Select(v => v.Key + "x" + v.Value));
+        }
+
+        private static Rectangle? FindQuantityInkBounds(Bitmap image)
+        {
+            int margin = Math.Max(2, image.Width / 30);
+            int interiorWidth = image.Width - 2 * margin;
+            if (interiorWidth <= 0) return null;
+            Rectangle? candidate = null;
+            int left = image.Width, right = -1, top = -1, bottom = -1;
+            for (int y = 0; y <= image.Height; y++)
+            {
+                int rowLeft = image.Width, rowRight = -1, inkCount = 0;
+                if (y < image.Height)
+                {
+                    for (int x = margin; x < image.Width - margin; x++)
+                    {
+                        Color color = image.GetPixel(x, y);
+                        int high = Math.Max(color.R, Math.Max(color.G, color.B));
+                        int low = Math.Min(color.R, Math.Min(color.G, color.B));
+                        if (high > 175 || high - low > 75) continue;
+                        inkCount++;
+                        rowLeft = Math.Min(rowLeft, x); rowRight = Math.Max(rowRight, x);
+                    }
+                }
+                // Broad horizontal ink is a frame/background, not quantity
+                // glyphs. It must not enlarge the text crop to the whole tile.
+                bool textRow = inkCount > 0 && inkCount < interiorWidth * 0.6;
+                if (textRow)
+                {
+                    if (top < 0) top = y;
+                    bottom = y;
+                    left = Math.Min(left, rowLeft); right = Math.Max(right, rowRight);
+                    continue;
+                }
+                if (top >= 0 && top > 0 && bottom < image.Height - 1 &&
+                    bottom - top + 1 >= Math.Max(3, (int)(image.Height * 0.12)) &&
+                    right - left + 1 < interiorWidth * 0.85 &&
+                    left <= image.Width * 0.6 && right >= image.Width * 0.4)
+                {
+                    // Quantities are centered below the stars. The lowest
+                    // eligible line wins; edge fragments and wide star bands
+                    // cannot stand in for the complete quantity line.
+                    int paddedLeft = Math.Max(margin, left - 2);
+                    int paddedRight = Math.Min(image.Width - margin - 1, right + 2);
+                    int paddedTop = Math.Max(0, top - 2);
+                    int paddedBottom = Math.Min(image.Height - 1, bottom + 2);
+                    candidate = Rectangle.FromLTRB(paddedLeft, paddedTop, paddedRight + 1, paddedBottom + 1);
+                }
+                left = image.Width; right = -1; top = -1; bottom = -1;
+            }
+            return candidate;
         }
     }
 }

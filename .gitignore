@@ -51,6 +51,14 @@ Generated\ Files/
 /tests/*
 !/tests/AchievementTests.cs
 !/tests/run-achievement-tests.ps1
+!/tests/ArtifactDatabaseTests.cs
+!/tests/run-artifact-database-tests.ps1
+!/tests/MaterialQuantityTests.cs
+!/tests/run-material-quantity-tests.ps1
+!/tests/TravelerTests.cs
+!/tests/run-traveler-tests.ps1
+!/tests/CharacterNavigationTests.cs
+!/tests/run-character-navigation-tests.ps1
 
 # NUnit
 *.VisualState.xml

@@ -33,6 +33,7 @@ namespace InventoryKamera
 
 		// Status
 		private static Label programStatus_Label;
+        private static Action<ScanProgressUpdate> scanProgress;
 
 		// Error box
 		private static TextBox error_TextBox;
@@ -40,7 +41,7 @@ namespace InventoryKamera
 		// Current Images
 		private static PictureBox navigation_PictureBox;
 
-		public static void Init(PictureBox _gear_PictureBox, TextBox _a_textbox, PictureBox _c_name, PictureBox _c_level, PictureBox[] _c_talent, TextBox _c_textbox, Label _weaponCount, Label _weaponMax, Label _artifactCount, Label _artifactMax, Label _characterCount, Label _programStatus, TextBox _error_textBox, PictureBox _navigation_Image)
+		public static void Init(PictureBox _gear_PictureBox, TextBox _a_textbox, PictureBox _c_name, PictureBox _c_level, PictureBox[] _c_talent, TextBox _c_textbox, Label _weaponCount, Label _weaponMax, Label _artifactCount, Label _artifactMax, Label _characterCount, Label _programStatus, TextBox _error_textBox, PictureBox _navigation_Image, Action<ScanProgressUpdate> _scanProgress = null)
 		{
 			// Artifacts and Weapons
 			gear_PictureBox = _gear_PictureBox;
@@ -61,6 +62,7 @@ namespace InventoryKamera
 
 			// Status
 			programStatus_Label = _programStatus;
+            scanProgress = _scanProgress;
 
 			// Error
 			error_TextBox = _error_textBox;
@@ -130,7 +132,9 @@ namespace InventoryKamera
 				label.Text = text;
 				label.Refresh();
 			};
-				label.Invoke(labelAction);
+                // Counter labels are retained as backing values for the pills;
+                // dispatch through the visible status control, which owns a handle.
+				programStatus_Label.Invoke(labelAction);
 			}
 			catch (Exception e)
 			{
@@ -231,27 +235,48 @@ namespace InventoryKamera
 
 		public static void IncrementArtifactCount()
 		{
-			lock (artifactCount_Label)
-			{
-				UpdateLabel($"{Int32.Parse(artifactCount_Label.Text) + 1}", artifactCount_Label);
-			}
+            IncrementCount(artifactCount_Label);
 		}
 
 		public static void IncrementWeaponCount()
 		{
-			lock (weaponCount_Label)
-			{
-				UpdateLabel($"{Int32.Parse(weaponCount_Label.Text) + 1}", weaponCount_Label);
-			}
+            IncrementCount(weaponCount_Label);
 		}
 
 		public static void IncrementCharacterCount()
 		{
-			lock (characterCount_Label)
-			{
-				UpdateLabel($"{Int32.Parse(characterCount_Label.Text) + 1}", characterCount_Label);
-			}
+            IncrementCount(characterCount_Label);
 		}
+
+        private static void IncrementCount(Label label)
+        {
+            programStatus_Label.Invoke((MethodInvoker)delegate
+            {
+                label.Text = (int.Parse(label.Text) + 1).ToString();
+            });
+        }
+
+        public static void BeginScanPhase(ScanPhase phase, int? total = null, string detail = null)
+        {
+            PublishScanProgress(new ScanProgressUpdate(phase, 0, total, detail, true, false));
+        }
+
+        public static void ReportScanProgress(ScanPhase phase, int current, int? total = null, string detail = null,
+            bool totalIsProvisional = false)
+        {
+            PublishScanProgress(new ScanProgressUpdate(phase, current, total, detail, false, false, totalIsProvisional));
+        }
+
+        public static void FinishScanPhase(ScanPhase phase, int current, int? total = null, string detail = null)
+        {
+            PublishScanProgress(new ScanProgressUpdate(phase, current, total ?? current, detail, false, true));
+        }
+
+        private static void PublishScanProgress(ScanProgressUpdate progress)
+        {
+            if (scanProgress == null) return;
+            programStatus_Label.Invoke((MethodInvoker)delegate { scanProgress(progress); });
+        }
 
 		public static void SetProgramStatus(string status, bool ok = true)
 		{
@@ -311,17 +336,14 @@ namespace InventoryKamera
 
 		public static void ResetCounters()
 		{
-			MethodInvoker characterCountAction = delegate { characterCount_Label.Text = "0"; weaponMax_Label.Refresh(); };
-			MethodInvoker weaponCountAction = delegate { weaponCount_Label.Text = "0"; weaponMax_Label.Refresh(); };
-			MethodInvoker weaponMaxAction = delegate { weaponMax_Label.Text = "?"; weaponMax_Label.Refresh(); };
-			MethodInvoker artifactCountAction = delegate { artifactCount_Label.Text = "0"; artifactMax_Label.Refresh(); };
-			MethodInvoker artifactMaxAction = delegate { artifactMax_Label.Text = "?"; artifactMax_Label.Refresh(); };
-
-			characterCount_Label.Invoke(characterCountAction);
-			weaponCount_Label.Invoke(weaponCountAction);
-			weaponMax_Label.Invoke(weaponMaxAction);
-			artifactCount_Label.Invoke(artifactCountAction);
-			artifactMax_Label.Invoke(artifactMaxAction);
+            programStatus_Label.Invoke((MethodInvoker)delegate
+            {
+                characterCount_Label.Text = "0";
+                weaponCount_Label.Text = "0";
+                weaponMax_Label.Text = "?";
+                artifactCount_Label.Text = "0";
+                artifactMax_Label.Text = "?";
+            });
 		}
 
 		public static void ResetErrors()

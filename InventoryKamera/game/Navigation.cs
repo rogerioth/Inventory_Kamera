@@ -19,6 +19,7 @@ namespace InventoryKamera
 		private static RECT WindowSize;
 		private static RECT WindowPosition;
 		private static Size AspectRatio;
+		private static IntPtr GameWindowHandle;
 		public static bool IsNormal { get; private set; }
 
         private static double delay = 1;
@@ -43,8 +44,11 @@ namespace InventoryKamera
 				if (InitializeProcess(processName, out IntPtr handle))
 				{
 					// Get area and position
+					GameWindowHandle = handle;
+					WindowPosition = new RECT();
 					ClientToScreen(handle, ref WindowPosition);
 					GetClientRect(handle, ref WindowSize);
+					AspectRatio = new Size();
 					
 					try
 					{
@@ -74,6 +78,8 @@ namespace InventoryKamera
 			WindowSize = new RECT();
 			WindowPosition = new RECT();
 			AspectRatio = new Size();
+			GameWindowHandle = IntPtr.Zero;
+			CharacterNavigation.EndScan();
 			sim = new InputSimulator();
 		}
 
@@ -210,72 +216,37 @@ namespace InventoryKamera
 
 		public static void SelectCharacterAttributes()
 		{
-			int xOffset = (int)(170 / 1280.0 * GetWidth());
-			int yOffset = (int)(105 / 720.0 * GetHeight());
-
-			if (GetAspectRatio() == new Size(8, 5))
-			{
-				yOffset = (int)( 105 / 800.0 * GetHeight() );
-			}
-
-			SetCursor(xOffset, yOffset);
-			Click();
-			SystemWait(Speed.CharacterUI);
+			CharacterNavigation.SelectPane(CharacterScreenState.Attributes, 170 / 1280.0,
+				105 / CharacterReferenceHeight(), "selecting Attributes");
 		}
 
 		public static void SelectCharacterConstellation()
 		{
-			int xOffset = (int)(170 / 1280.0 * GetWidth());
-			int yOffset = (int)(245 / 720.0 * GetHeight());
-
-			if (GetAspectRatio() == new Size(8, 5))
-			{
-				yOffset = (int)( 245 / 800.0 * GetHeight() );
-			}
-
-			SetCursor(xOffset, yOffset);
-			Click();
-			SystemWait(Speed.CharacterUI);
+			CharacterNavigation.SelectPane(CharacterScreenState.Constellation, 170 / 1280.0,
+				245 / CharacterReferenceHeight(), "selecting Constellation");
 		}
 
 		public static void SelectCharacterTalents()
 		{
-			int xOffset = (int)(135 / 1280.0 * GetWidth());
-			int yOffset = (int)(290 / 720.0 * GetHeight());
-
-			if (GetAspectRatio() == new Size(8, 5))
-			{
-				yOffset = (int)( 290 / 800.0 * GetHeight() );
-			}
-
-			SetCursor(xOffset, yOffset);
-			Click();
-			SystemWait(Speed.CharacterUI);
+			CharacterNavigation.SelectPane(CharacterScreenState.Talents, 135 / 1280.0,
+				290 / CharacterReferenceHeight(), "selecting Talents");
 		}
 
 		public static void SelectNextCharacter()
 		{
-			int xOffset = (int)(1230 / 1280.0 * GetWidth());
-			int yOffset = (int)(350 / 720.0 * GetHeight());
-
-			if (GetAspectRatio() == new Size(8, 5))
-			{
-				yOffset = (int)( 400 / 800.0 * GetHeight() );
-			}
-
-			SetCursor(xOffset, yOffset);
-			Click();
-			SystemWait(Speed.SelectNextCharacter);
+			bool wideHeight = GetAspectRatio() == new Size(8, 5);
+			CharacterNavigation.NextCharacter(1230 / 1280.0,
+				wideHeight ? 400 / 800.0 : 350 / 720.0, "advancing the character roster");
 		}
 
 		public static void CharacterScreen()
 		{
-			sim.Keyboard.KeyPress(escapeKey);
-			SystemWait(Speed.UI);
-			sim.Keyboard.KeyPress(slotOneKey);
-			SystemWait(Speed.UI);
-			sim.Keyboard.KeyPress(characterKey);
-			SystemWait(Speed.UI);
+			CharacterNavigation.OpenCharacterScreen("opening Character screen", !CharacterNavigation.IsActive);
+		}
+
+		private static double CharacterReferenceHeight()
+		{
+			return GetAspectRatio() == new Size(8, 5) ? 800.0 : 720.0;
 		}
 
 		public static void InventoryScreen()
@@ -353,6 +324,50 @@ namespace InventoryKamera
 		private static extern int SetForegroundWindow(IntPtr hwnd);
 
 		[DllImport("user32.dll")]
+		private static extern IntPtr GetForegroundWindow();
+
+		[DllImport("user32.dll")]
+		private static extern bool IsWindow(IntPtr hwnd);
+
+		internal static bool TryRefocusGame(out string reason)
+		{
+			reason = null;
+			try
+			{
+				if (GameWindowHandle == IntPtr.Zero || !IsWindow(GameWindowHandle))
+				{
+					reason = "The initialized game window is unavailable.";
+					return false;
+				}
+				if (GetForegroundWindow() != GameWindowHandle)
+				{
+					SetForegroundWindow(GameWindowHandle);
+					Wait(80);
+				}
+				if (GetForegroundWindow() != GameWindowHandle)
+				{
+					reason = "Windows did not focus the game window.";
+					return false;
+				}
+				var origin = new RECT();
+				var client = new RECT();
+				if (!ClientToScreen(GameWindowHandle, ref origin) || !GetClientRect(GameWindowHandle, ref client)
+					|| client.Width <= 0 || client.Height <= 0)
+				{
+					reason = "The game client area could not be measured.";
+					return false;
+				}
+				WindowPosition = origin;
+				WindowSize = client;
+				AspectRatio = new Size();
+				GetAspectRatio();
+				return true;
+			}
+			catch (ThreadAbortException) { throw; }
+			catch (Exception ex) { reason = ex.Message; return false; }
+		}
+
+		[DllImport("user32.dll")]
 		private static extern bool GetWindowPlacement(IntPtr hWnd, ref WindowPlacement lpwndpl);
 		
 		[DllImport("user32.dll")]
@@ -387,6 +402,7 @@ namespace InventoryKamera
 				if (genshin != null)
 				{
 					handle = genshin.MainWindowHandle;
+					if (handle == IntPtr.Zero) return false;
 					
 					var windowPlacement = new WindowPlacement{length = Marshal.SizeOf(typeof(WindowPlacement))};
 					GetWindowPlacement(handle, ref windowPlacement);

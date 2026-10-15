@@ -20,6 +20,15 @@ progress, completion marks, dates, and completed totals where visible. It uses a
 cached achievement catalog to resolve the text to numeric game achievement IDs.
 During scanning, **Preview** shows each complete achievement row as a wide image
 with its recognized title, description, progress or completion status underneath.
+The Scan frame's determinate bar tracks verified category coverage, and the
+colored Achievements pill shows confirmed completed IDs against the global
+counter. The activity bar continues to animate while the scan is working.
+Hover a scan pill for its count explanation. Equipment pills compare valid
+exported items with the whole inventory total, and show the rarity/level filters
+used for that scan. The achievement pill compares confirmed completed tier IDs
+with the game's completed total; its tooltip shows the remaining count gap,
+verified categories and unresolved rows. These counts serve different purposes
+from the phase progress bar, which measures inspected cards or verified categories.
 Only fully visible achievement cards are read and previewed; fixed category
 progress panels and clipped cards are excluded. Unresolved cards also appear,
 with the reason they need review. The usual equipment
@@ -43,6 +52,14 @@ backs up and reduces it.
 Unchanged, successfully read rows are reused from the previous capture; new,
 changed, and unresolved rows go through OCR. Overlapping captures must not add
 the same completed achievement twice.
+If a completion stamp cannot be read from its detected text bands, OCR retries
+the complete status column and a thresholded label crop. Completion still needs
+an explicit recognized status and consistent tier/star evidence; a date alone
+cannot mark an achievement complete. The debug log records the retry's text,
+date, progress and decision, and unresolved status evidence also produces a warning.
+A stamp reading `Compieted` can repair its narrow `l` only with a separately
+validated date and consistent tier/star evidence. Positive unfinished progress
+still prevents that tier from being exported as complete.
 
 Achievement titles are not unique. The resolver considers the category, title,
 description, reward, and numeric goals before assigning a family and tier. A
@@ -93,10 +110,30 @@ The global total is read before and after traversal and must remain unchanged.
 
 Each category selection uses the initially recognized, fully visible tile for
 its first click and verifies the selected category before reading achievements.
-Unmatched sidebar names are retried with single-line OCR and alternative image
-thresholds. Selection attempts are bounded; a failed category does not stop the
-remaining categories. One final recovery pass resets the sidebar and retries
-missed categories. Any category still unverified leaves the result incomplete.
+Sidebar tile boundaries come from their edges, so background colors between
+tiles cannot merge several categories into a clipped row. Unmatched sidebar
+names are retried with alternative image thresholds.
+Sparse title lines such as a standalone `(I)` suffix are retained in the crop,
+so categories that share a long title remain distinguishable by series.
+Wrapped Roman suffixes are checked separately from their exact category prefix,
+including narrow `I` strokes misread as `1`. For `I`, `II` and `III`, every middle
+glyph must have a narrow, aligned, continuous vertical stem. That physical count
+and a corroborating threshold or full-caption read can establish the suffix even
+when raw OCR drops a stroke. Diagonal `V`/`X` glyphs cannot pass this check, and
+an unreadable prefix, missing parentheses or unsupported suffix remains unresolved.
+The debug log includes the qualified stem count and each OCR alternative.
+The scanner chooses an upward or downward search from the visible category order and verifies the
+sidebar's scrollbar when resetting to the top. Selection attempts and recovery
+are bounded; repeated navigation failures stop with partial results instead
+of repeatedly searching the wrong end of the list. A final recovery pass
+retries missed categories. Any category still unverified leaves the result incomplete.
+When a requested label stays unreadable inside the visible range for three
+captures, one three-notch position change is allowed if full tile bounds, an
+exact title prefix and surrounding category order support it. Two recognized
+tiles must then prove consistent movement and the target must stay fully visible.
+The scanner reacquires the canonical category and verifies its selected state
+before reading achievements. An isolated label miss is deferred without spending
+the global recovery budget reserved for navigation failures.
 
 The scanner checks actual row movement while scrolling. A repeated capture
 alone is not enough to prove the bottom was reached: wrong scroll focus, dropped
@@ -114,7 +151,11 @@ or count mismatch leaves the result incomplete.
   changed. A new achievement may be absent from an older cached catalog.
 - **Scrolling stalls:** verify the game still has focus and the mouse is not
   being moved during the scan. The scan must stop or report incomplete coverage
-  instead of silently treating a stalled middle page as the end.
+  instead of silently treating a stalled middle page as the end. The main log
+  records category selection, reset and recovery attempts; the debug log adds
+  recognized labels, tile bounds, wheel direction, click coordinates and
+  scrollbar positions. Navigation failure messages link saved screenshots in
+  `logging/achievements`, even when **Log All Screenshots** is disabled.
 - **OCR reads digits or punctuation incorrectly:** use a supported aspect ratio,
   disable HDR, and retain the row screenshot with its raw OCR for diagnosis.
   Descriptions and goal numbers help distinguish tiers with identical titles.
@@ -157,6 +198,30 @@ top and bottom detection without controlling the game:
 powershell -ExecutionPolicy Bypass -File .\tests\run-achievement-tests.ps1 `
     -CaptureDirectory '.\InventoryKamera\bin\x64\Debug\logging\achievements'
 ```
+
+To check the sidebar navigation failure captures separately, use
+`-SidebarDirectory` with the same capture directory. This replays top and
+bottom sidebar frames and tests reset/search behavior through simulated
+navigation, without sending input to the game.
+
+`-CategoryCaptureDirectory` replays the Fontaine I/Natlan I selection failures,
+selected series II references, and the two unreadable completion-stamp pages.
+Its saved `inventorylists/achievements.json` must be inside that directory or an
+ancestor. The two independent checks verify exact series I/II/III IDs and full
+tile bounds, then completion status, tier IDs, dates and unfinished-progress
+conflict rejection:
+
+```powershell
+.\tests\run-achievement-tests.ps1 `
+    -CategoryCaptureDirectory '.\artifacts\achievement-failure-fixtures-oct13'
+```
+
+Add `-SelectionCaptureDirectory '.\artifacts\achievement-position-fixtures-oct14'`
+to replay the five category-position failures from October 13 and 14. These
+checks cover the full sidebar IDs and selected tiles at each saved position.
+The default harness also verifies positive Roman-stem evidence, diagonal/blank
+rejection, and bounded local selection retries, including stalled movement,
+lost detail screens and cancellation. These simulations send no game input.
 
 The screenshot is supplied locally and is not copied into the repository. A
 passing replay validates recognition on that image; it does not establish that

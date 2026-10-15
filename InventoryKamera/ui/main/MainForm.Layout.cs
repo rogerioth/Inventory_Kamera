@@ -82,7 +82,7 @@ namespace InventoryKamera
             settings.Controls.Add(BuildScannerSettings(), 0, 3);
 
             var workspace = Grid("ScanWorkspace", 1, 3);
-            workspace.RowStyles.Add(new RowStyle(SizeType.Absolute, 142));
+            workspace.RowStyles.Add(new RowStyle(SizeType.Absolute, 210));
             workspace.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             workspace.RowStyles.Add(new RowStyle(SizeType.Absolute, 128));
             columns.Controls.Add(workspace, 1, 0);
@@ -114,7 +114,10 @@ namespace InventoryKamera
             // The legacy error box stays owned by the form for UserInterface.Init.
             foreach (Control control in new Control[] { ScannerOutput_Panel, ErrorLog_TextBox, ErrorLog_Label,
                 ErrorReport_Label, ScanItemsList_Label, label2, label3, MinimumWeaponLevelLabel,
-                MinimumArtifactLevelLabel, WeaponArtifactOutput_TextBox_Label, CharacterOutput_TextBox_Label })
+                MinimumArtifactLevelLabel, WeaponArtifactOutput_TextBox_Label, CharacterOutput_TextBox_Label,
+                WeaponsScanned_Label, WeaponsScannedCount_Label, WeaponsScannedSlash_Label, WeaponsMax_Labell,
+                Artifacts_Label, ArtifactsScanned_Label, ArtifactsScannedSlash_Label, ArtifactsMax_Label,
+                Characters_Label, CharactersScanned_Label })
                 control.Visible = false;
 
             Controls.Add(split);
@@ -134,6 +137,7 @@ namespace InventoryKamera
                 ClientSize = new Size(LayoutPixels(960), LayoutPixels(590));
             }
             ResumeLayout(true);
+            InitializeScanProgress();
         }
 
         private int LayoutPixels(int value)
@@ -249,12 +253,14 @@ namespace InventoryKamera
         private GroupBox BuildScanStatus()
         {
             var group = Section("Scan");
-            var grid = Grid("ScanStatus", 2, 4);
+            var grid = Grid("ScanStatus", 2, 6);
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 12));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
             grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             var actions = Flow("ScanActions");
             StartScan_Button.AutoSize = false;
@@ -263,22 +269,38 @@ namespace InventoryKamera
             StartScan_Button.TabIndex = 0;
             actions.Controls.Add(StartScan_Button);
             ProgramStatus_Label.AutoSize = true;
-            ProgramStatus_Label.Font = new Font(Font.FontFamily, 14F);
+            ProgramStatus_Label.AutoEllipsis = true;
+            ProgramStatus_Label.Font = new Font(Font.FontFamily, 12F);
             ProgramStatus_Label.Margin = new Padding(0, 4, 0, 0);
             actions.Controls.Add(ProgramStatus_Label);
             grid.Controls.Add(actions, 0, 0);
             AddCell(grid, ScannerCancelInstructions_Label, 0, 1);
             scanActivity = new ProgressBar { Name = "ScanActivity", Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 2), MarqueeAnimationSpeed = 0 };
             grid.Controls.Add(scanActivity, 0, 2);
+            scanPhaseProgress = new ProgressBar { Name = "ScanPhaseProgress", Dock = DockStyle.Fill,
+                Style = ProgressBarStyle.Continuous, Margin = new Padding(0, 2, 8, 2), AccessibleName = "Current scan phase progress" };
+            grid.Controls.Add(scanPhaseProgress, 0, 3);
+            scanPhaseCaption = new Label { Name = "ScanPhaseCaption", Text = "Current phase progress", Dock = DockStyle.Fill,
+                AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0, 0, 0, 2) };
+            grid.Controls.Add(scanPhaseCaption, 0, 4);
+            grid.SetColumnSpan(scanPhaseCaption, 2);
             ProgramStatus_Label.TextChanged += (sender, args) => UpdateScanActivity();
-            var counts = Flow("ScanCounts");
-            counts.WrapContents = true;
-            counts.Controls.Add(Counter(WeaponsScanned_Label, WeaponsScannedCount_Label, WeaponsScannedSlash_Label, WeaponsMax_Labell));
-            counts.Controls.Add(Counter(Artifacts_Label, ArtifactsScanned_Label, ArtifactsScannedSlash_Label, ArtifactsMax_Label));
-            counts.Controls.Add(Counter(Characters_Label, CharactersScanned_Label));
+            var counts = Grid("ScanCounts", 2, 2);
+            counts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            counts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            counts.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            counts.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            weaponPill = CreateScanPill("WeaponPill", Color.FromArgb(38, 91, 154));
+            artifactPill = CreateScanPill("ArtifactPill", Color.FromArgb(111, 66, 153));
+            characterPill = CreateScanPill("CharacterPill", Color.FromArgb(18, 111, 101));
+            achievementPill = CreateScanPill("AchievementPill", Color.FromArgb(139, 88, 13));
+            counts.Controls.Add(weaponPill, 0, 0);
+            counts.Controls.Add(artifactPill, 1, 0);
+            counts.Controls.Add(characterPill, 0, 1);
+            counts.Controls.Add(achievementPill, 1, 1);
             achievementCountLabel = new Label { Name = "AchievementsScannedLabel", Text = "0 / ?" };
-            counts.Controls.Add(Counter(new Label { Name = "AchievementsCountCaption", Text = "Achievements:" }, achievementCountLabel));
-            grid.Controls.Add(counts, 0, 3);
+            grid.Controls.Add(counts, 0, 5);
+            grid.SetColumnSpan(counts, 2);
             var navigation = Grid("NavigationPreview", 1, 2);
             navigation.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
             navigation.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
@@ -296,7 +318,8 @@ namespace InventoryKamera
 
         private void UpdateScanActivity()
         {
-            bool scanning = ProgramStatus_Label.Text.StartsWith("Scanning", StringComparison.OrdinalIgnoreCase);
+            bool scanning = ProgramStatus_Label.Text.StartsWith("Scanning", StringComparison.OrdinalIgnoreCase) ||
+                ProgramStatus_Label.Text.StartsWith("Stopping", StringComparison.OrdinalIgnoreCase);
             scanActivity.Style = scanning ? ProgressBarStyle.Marquee : ProgressBarStyle.Continuous;
             scanActivity.MarqueeAnimationSpeed = scanning ? 30 : 0;
             scanActivity.Value = ProgramStatus_Label.Text == "Finished" ? 100 : 0;
@@ -417,19 +440,10 @@ namespace InventoryKamera
             return group;
         }
 
-        private static FlowLayoutPanel Counter(params Label[] labels)
+        private static ScanCounterPill CreateScanPill(string name, Color accent)
         {
-            var counter = Flow(labels[0].Name + "Counter");
-            counter.Dock = DockStyle.None;
-            counter.AutoSize = true;
-            counter.Margin = new Padding(0, 0, 16, 0);
-            foreach (var label in labels)
-            {
-                label.AutoSize = true;
-                label.Margin = new Padding(0, 0, 3, 0);
-                counter.Controls.Add(label);
-            }
-            return counter;
+            return new ScanCounterPill { Name = name, Accent = accent, Dock = DockStyle.Fill,
+                Margin = new Padding(0, 2, 6, 2) };
         }
 
         private static GroupBox Section(string title)

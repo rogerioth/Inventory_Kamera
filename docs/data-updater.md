@@ -40,12 +40,15 @@ The detected version is stored in `inventorylists/version.txt` and compared on e
 ```mermaid
 flowchart TB
     A["App starts<br/>(or Options → Update Lookup Tables)"] --> B{"Remote version<br/>> local version.txt?"}
-    B -->|"no"| C["No update prompt<br/>(can be forced)"]
+    B -->|"no"| C{"Artifact generator revision<br/>and table hash current?"}
+    C -->|"yes"| K["Use existing tables"]
+    C -->|"no"| L["Download mappings and artifact sources<br/>Validate and repair artifact table"]
+    L --> M["Write generator revision and table hash<br/>Reload lookup tables"]
     B -->|"yes"| D["Offer update"]
     D --> E["UpdateGameData()"]
     E --> F["Download TextMap_MediumEN.json<br/>(shared hash → name mappings)"]
     F --> G1["weapons.json<br/>from WeaponExcelConfigData"]
-    F --> G2["artifacts.json<br/>from DisplayItem + ReliquaryCodex<br/>+ Reliquary configs"]
+    F --> G2["artifacts.json<br/>from ReliquarySet + EquipAffix<br/>+ Reliquary configs"]
     F --> G3["characters.json<br/>from Avatar + FetterInfo<br/>+ Talent + Skill configs"]
     F --> G4["materials.json<br/>from MaterialExcelConfigData"]
     G1 & G2 & G3 & G4 --> H{"All lists OK?"}
@@ -57,12 +60,16 @@ Notes on each list:
 
 - **Weapons** — every weapon whose name hash resolves in the text map. Unreleased weapons (hash not
   in the text map) are skipped with a warning; this is expected.
-- **Artifacts** — set display items are matched through the relic codex to the five individual
-  pieces, producing the set/piece structure the scanner validates against.
+- **Artifacts** — enabled `ReliquarySet` rows provide the set IDs and representative piece IDs.
+  `EquipAffix` supplies the set names, while `Reliquary` supplies each piece's name and slot.
+  Generation checks every enabled set, its piece IDs, and all expected slots before replacing
+  the table. The four one-piece Prayer sets intentionally contain only a circlet.
 - **Characters** — for each `AVATAR_FORMAL` avatar: display name, element (from fetter info),
   constellation name, constellation C3 order (`skill` first or `burst` first, inferred by checking
   which talent the constellation description mentions), and weapon type. The Traveler is special-cased:
-  one entry covering all elements with per-element constellation orders.
+  one entry covering all seven elements with per-element constellation orders. Its available
+  skill depots identify the elemental skill and burst IDs and the C3/C5 talent IDs; those
+  IDs are joined to the descriptions instead of relying on icon names or dump row order.
 - **Materials** — the material categories the scanner reads: EXP fruit, avatar materials, exchange
   goods, wood, fish bait, and weapon enhancement stones.
 
@@ -80,10 +87,42 @@ These are handled by the updater but worth knowing about:
   talents, so they fail generation and are skipped — which is the correct outcome.
 - **`TextMapEN.json`** in the new repo does **not** resolve the excel hashes (see note above);
   using it yields empty results.
+- **Artifact display-item hashes can be absent from the text map.** The old display-item join
+  omitted Scarlet Proof and Heart of the Furnace even when `version.txt` was marked `7.1.0`.
+  The set/affix join resolves both sets and all their pieces.
+
+## Artifact cache repair
+
+`artifacts.metadata.json` records the artifact generator revision and the table's SHA-256 hash.
+An old cache without that metadata, or a changed table whose hash no longer matches, triggers
+an automatic artifact-only rebuild at startup. Artifact scans check again before controlling
+the game, so a failed startup repair is retried instead of scanning with an obsolete table.
+This repair does not require a newer game version or a force-update confirmation.
+
+The updater builds and validates the complete table in memory, then replaces the file atomically.
+Missing names, pieces, or slots fail the update and preserve the previous table. The current
+7.1 dump produces 63 enabled sets, including both previously missing sets.
+
+## Traveler cache repair
+
+`traveler.metadata.json` records the Traveler generator revision and an SHA-256 hash of
+the Traveler entry. Older caches, including caches already marked `7.1`, are rebuilt at
+startup and checked again before a character scan. The repair replaces only Traveler's
+entry and preserves the other characters and `version.txt`.
+
+Cryo uses skill depots `505`/`705`, elemental skill `10127` and burst `10128`. Its C3
+increases the burst and C5 increases the skill, so the scanner subtracts the respective
+three-level constellation bonuses before GOOD export. Custom names still resolve to
+the base Traveler entry; the Cryo form exports as `TravelerCryo`.
+
+Incomplete skill, talent or element data rejects generation and preserves the existing
+character table. A failed repair blocks the character scan with an update error instead
+of silently skipping unsupported Traveler forms.
 
 ## Manual updates
 
 The updater covers normal operation. If it fails (network error, upstream format change), you can
 edit the JSON files by hand — the formats are documented in
-[Lookup tables](lookup-tables.md). After editing, delete `version.txt` contents carefully or use
-**force update** so the next check re-runs.
+[Lookup tables](lookup-tables.md). Use **force update** to regenerate the tables. Manual changes
+to the artifact table invalidate its metadata hash and are repaired on the next startup or
+artifact scan.

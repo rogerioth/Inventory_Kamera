@@ -13,6 +13,7 @@ namespace InventoryKamera
     internal class WeaponScraper : InventoryScraper
     {
 		private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+        internal Action ItemQueued { get; set; }
 
 		public WeaponScraper()
         {
@@ -32,6 +33,7 @@ namespace InventoryKamera
             int rowsQueued = 0;
             int offset = 0;
             UserInterface.SetWeapon_Max(weaponCount);
+            UserInterface.ReportScanProgress(ScanPhase.Weapons, 0, weaponCount);
 
             // Determine Delay if delay has not been found before
             // Scraper.FindDelay(rectangles);
@@ -61,10 +63,13 @@ namespace InventoryKamera
                     // Queue card for scanning
                     QueueScan(cardsQueued);
                     cardsQueued++;
+                    UserInterface.ReportScanProgress(ScanPhase.Weapons, cardsQueued, weaponCount);
                     if (cardsQueued >= weaponCount || this.StopScanning)
                     {
                         if (StopScanning) Logger.Info("    Weapon capture finished at the configured filters");
                         else Logger.Info("    Weapon capture finished: {0} of {1} cards queued", cardsQueued, weaponCount);
+                        UserInterface.FinishScanPhase(ScanPhase.Weapons, cardsQueued, weaponCount,
+                            StopScanning ? "Stopped at configured filters" : null);
                         return;
                     }
                 }
@@ -105,6 +110,7 @@ namespace InventoryKamera
                 ++page;
                 (rectangles, cols, rows) = GetPageOfItems(page, acceptLess: totalRows - rowsQueued <= fullPage);
             }
+            UserInterface.FinishScanPhase(ScanPhase.Weapons, cardsQueued, weaponCount);
 
             void SelectLevelSorting()
             {
@@ -205,6 +211,7 @@ namespace InventoryKamera
 
             // Send images to worker queue
             InventoryKamera.workerQueue.Enqueue(new OCRImageCollection(weaponImages, "weapon", id));
+            ItemQueued?.Invoke();
         }
 
         Bitmap GetLevelBitmap(Bitmap card)
