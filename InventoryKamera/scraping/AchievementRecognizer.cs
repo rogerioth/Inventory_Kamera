@@ -54,57 +54,75 @@ namespace InventoryKamera
             using (var pixels = new Pixels(frame))
             {
                 foreach (var bounds in FindRows(pixels, geometry))
-                {
-                    string fingerprint = RowFingerprint(pixels, geometry, bounds);
-                    AchievementObservation cached;
-                    if (previousViewport.TryGetValue(fingerprint, out cached))
-                    {
-                        // The returned observation and its ID list must not mutate the cached viewport.
-                        var reused = CloneObservation(cached);
-                        reused.Page = page;
-                        reused.Top = bounds.Top;
-                        result.Add(reused);
-                        nextViewport[fingerprint] = CloneObservation(reused);
-                        ++LastReusedRowCount;
-                        continue;
-                    }
-                    var observation = new AchievementObservation
-                    {
-                        CategoryId = category.Id,
-                        Page = page,
-                        Top = bounds.Top,
-                        CompletedIds = new List<int>()
-                    };
-                    ++LastOcrRowCount;
-                    try
-                    {
-                        ReadCard(frame, pixels, geometry, bounds, category, observation);
-                    }
-                    catch (ThreadAbortException) { throw; }
-                    catch (Exception ex)
-                    {
-                        observation.Error = "Could not read achievement card: " + ex.Message;
-                    }
-                    if (!string.IsNullOrEmpty(observation.Error)) SaveEvidence(frame, bounds, observation);
-                    result.Add(observation);
-                    if (string.IsNullOrEmpty(observation.Error) && observation.FamilyId.HasValue && observation.MatchedId.HasValue)
-                        nextViewport[fingerprint] = CloneObservation(observation);
-                    var preview = RowPreview;
-                    if (preview != null)
-                    {
-                        try
-                        {
-                            using (var crop = frame.Clone(bounds, PixelFormat.Format24bppRgb)) preview(crop, observation);
-                        }
-                        catch (ThreadAbortException) { throw; }
-                        catch (Exception ex) { Logger.Warn(ex, "Could not update the achievement preview"); }
-                    }
-                }
+                    ReadRow(frame, pixels, geometry, bounds, category, page, nextViewport, result);
             }
             // Keep only the adjacent viewport. Unresolved cards are deliberately never cached.
             previousViewport = nextViewport;
             previousCategoryId = category.Id;
             return result;
+        }
+
+        private void ReadRow(Bitmap frame, Pixels pixels, Geometry geometry, Rectangle bounds,
+            AchievementCategory category, int page, Dictionary<string, AchievementObservation> nextViewport,
+            List<AchievementObservation> result)
+        {
+            string fingerprint = RowFingerprint(pixels, geometry, bounds);
+            AchievementObservation cached;
+            if (previousViewport.TryGetValue(fingerprint, out cached))
+            {
+                ReuseCachedRow(fingerprint, cached, page, bounds, nextViewport, result);
+                return;
+            }
+            ReadFreshRow(frame, pixels, geometry, bounds, category, page, fingerprint, nextViewport, result);
+        }
+
+        private void ReuseCachedRow(string fingerprint, AchievementObservation cached, int page, Rectangle bounds,
+            Dictionary<string, AchievementObservation> nextViewport, List<AchievementObservation> result)
+        {
+            // The returned observation and its ID list must not mutate the cached viewport.
+            var reused = CloneObservation(cached);
+            reused.Page = page;
+            reused.Top = bounds.Top;
+            result.Add(reused);
+            nextViewport[fingerprint] = CloneObservation(reused);
+            ++LastReusedRowCount;
+        }
+
+        private void ReadFreshRow(Bitmap frame, Pixels pixels, Geometry geometry, Rectangle bounds,
+            AchievementCategory category, int page, string fingerprint,
+            Dictionary<string, AchievementObservation> nextViewport, List<AchievementObservation> result)
+        {
+            var observation = new AchievementObservation
+            {
+                CategoryId = category.Id,
+                Page = page,
+                Top = bounds.Top,
+                CompletedIds = new List<int>()
+            };
+            ++LastOcrRowCount;
+            try
+            {
+                ReadCard(frame, pixels, geometry, bounds, category, observation);
+            }
+            catch (ThreadAbortException) { throw; }
+            catch (Exception ex)
+            {
+                observation.Error = "Could not read achievement card: " + ex.Message;
+            }
+            if (!string.IsNullOrEmpty(observation.Error)) SaveEvidence(frame, bounds, observation);
+            result.Add(observation);
+            if (string.IsNullOrEmpty(observation.Error) && observation.FamilyId.HasValue && observation.MatchedId.HasValue)
+                nextViewport[fingerprint] = CloneObservation(observation);
+            var preview = RowPreview;
+            if (preview != null)
+            {
+                try
+                {
+                    using (var crop = frame.Clone(bounds, PixelFormat.Format24bppRgb)) preview(crop, observation);
+                }
+                catch (ThreadAbortException) { throw; }
+                catch (Exception ex) { Logger.Warn(ex, "Could not update the achievement preview"); }
+            }
         }
 
         private static AchievementObservation CloneObservation(AchievementObservation observation)
@@ -174,7 +192,22 @@ namespace InventoryKamera
             Func<Color, int, int, bool> isInk)
         {
             var mask = new bool[Math.Max(0, bounds.Width * bounds.Height)];
-            int left = bounds.Width, top = bounds.Height, right = -1, bottom = -1;
+            int left, top, right, bottom;
+            MeasureGlyphMask(pixels, bounds, isInk, mask, out left, out top, out right, out bottom);
+            int width = right < left ? 0 : right - left + 1;
+            int height = bottom < top ? 0 : bottom - top + 1;
+            writer.Write(width);
+            writer.Write(height);
+            // Trim whitespace only. Do not resize, blur, or permit a differing glyph pixel.
+            // This accommodates a one-pixel scroll translation without losing internal spacing.
+            WriteTrimmedGlyphMask(writer, mask, bounds, left, top, right, bottom);
+        }
+
+        private static void MeasureGlyphMask(Pixels pixels, Rectangle bounds,
+            Func<Color, int, int, bool> isInk, bool[] mask,
+            out int left, out int top, out int right, out int bottom)
+        {
+            left = bounds.Width; top = bounds.Height; right = -1; bottom = -1;
             for (int y = 0; y < bounds.Height; ++y)
                 for (int x = 0; x < bounds.Width; ++x)
                 {
@@ -184,12 +217,11 @@ namespace InventoryKamera
                     left = Math.Min(left, x); top = Math.Min(top, y);
                     right = Math.Max(right, x); bottom = Math.Max(bottom, y);
                 }
-            int width = right < left ? 0 : right - left + 1;
-            int height = bottom < top ? 0 : bottom - top + 1;
-            writer.Write(width);
-            writer.Write(height);
-            // Trim whitespace only. Do not resize, blur, or permit a differing glyph pixel.
-            // This accommodates a one-pixel scroll translation without losing internal spacing.
+        }
+
+        private static void WriteTrimmedGlyphMask(BinaryWriter writer, bool[] mask, Rectangle bounds,
+            int left, int top, int right, int bottom)
+        {
             byte packed = 0;
             int bit = 0;
             for (int y = top; y <= bottom; ++y)
@@ -212,230 +244,274 @@ namespace InventoryKamera
             using (var pixels = new Pixels(frame))
             {
                 int top = geometry.Y(162), bottom = geometry.Y(1018);
-                var selectedBands = Bands(top, bottom, y =>
-                {
-                    int matches = 0, samples = 0;
-                    // This strip exists only on the wider selected tile. Long selected names
-                    // can occupy its right edge, but never this empty margin left of the icon.
-                    for (int x = geometry.X(55); x < geometry.X(60); ++x)
-                    {
-                        var c = pixels.Get(x, y);
-                        if (c.R > 215 && c.G > 205 && c.B > 180) ++matches;
-                        ++samples;
-                    }
-                    return samples > 0 && matches >= samples * .8;
-                }, geometry.Y(3), geometry.Y(65));
-                var colorBands = Bands(top, bottom, y =>
-                {
-                    int matches = 0, samples = 0;
-                    for (int x = geometry.X(65); x < geometry.X(71); ++x)
-                    {
-                        var c = pixels.Get(x, y);
-                        if (c.R < 95 && c.G < 110 && c.B < 125 && c.B - c.R >= 8) ++matches;
-                        ++samples;
-                    }
-                    return samples > 0 && matches >= samples * .8;
-                }, geometry.Y(1), geometry.Y(65));
-                // The sidebar tiles are translucent. A blue scene can make the
-                // gaps satisfy the same dark-color predicate as the tiles and
-                // join several cards into one band. The left card rule remains
-                // lighter than its adjacent interior, regardless of the scene.
-                var edgeBands = Bands(top, bottom, y =>
-                {
-                    int edge = 0, inside = 0, samples = 0;
-                    for (int x = geometry.X(65); x < geometry.X(67); ++x)
-                    {
-                        var border = pixels.Get(x, y);
-                        var fill = pixels.Get(x + Math.Max(1, geometry.X(6)), y);
-                        if (border.R >= 180 || fill.R >= 180) return false;
-                        edge += border.R + border.G + border.B;
-                        inside += fill.R + fill.G + fill.B;
-                        ++samples;
-                    }
-                    return samples > 0 && edge - inside >= samples * 24;
-                }, geometry.Y(2), geometry.Y(65));
-                var ordinaryBands = colorBands.Where(band => band.Height <= geometry.Y(112)).ToList();
-                foreach (var band in edgeBands.Where(band => band.Height <= geometry.Y(112)))
-                {
-                    // Keep a previously detected full card instead of adding
-                    // its inset border a second time. Hovered dark tiles still
-                    // use their color band; their highlight shifts the left rule.
-                    if (!ordinaryBands.Any(existing => Math.Min(existing.Bottom, band.Bottom) -
-                        Math.Max(existing.Top, band.Top) >= Math.Min(existing.Height, band.Height) * .7))
-                        ordinaryBands.Add(band);
-                }
-                var tiles = ordinaryBands.Concat(selectedBands).OrderBy(b => b.Top).ToList();
+                var selectedBands = Bands(top, bottom, y => SelectedTileStripMatches(pixels, geometry, y), geometry.Y(3), geometry.Y(65));
+                var colorBands = Bands(top, bottom, y => ColorTileStripMatches(pixels, geometry, y), geometry.Y(1), geometry.Y(65));
+                var edgeBands = Bands(top, bottom, y => TileEdgeContrastsWithInterior(pixels, geometry, y), geometry.Y(2), geometry.Y(65));
+                var tiles = MergeEdgeBandsIntoOrdinaryTiles(colorBands, edgeBands, geometry).Concat(selectedBands).OrderBy(b => b.Top).ToList();
                 foreach (var tile in tiles)
-                {
-                    // A sidebar tile touching the viewport edge may be clipped. Its title alone
-                    // is insufficient to choose a reliable click location.
-                    if (tile.Top <= top || tile.Bottom >= bottom) continue;
-                    bool isSelected = selectedBands.Any(b => b.Top == tile.Top && b.Bottom == tile.Bottom);
-                    var names = Bands(tile.Top + geometry.Y(6), tile.Bottom - geometry.Y(5), y =>
-                    {
-                        int count = 0;
-                        for (int x = geometry.X(124); x < geometry.X(isSelected ? 665 : 653); ++x)
-                        {
-                            var c = pixels.Get(x, y);
-                            bool ink = isSelected ? c.R < 130 && c.G < 135 && c.B < 140
-                                : c.R > 195 && c.G > 190 && c.B > 170 && c.R - c.G < 22;
-                            if (ink) ++count;
-                        }
-                        // A wrapped "(I)" has only 7-9 white pixels on most scanlines.
-                        // Requiring a dense row discarded the entire series suffix and
-                        // made its full-height, visible card ambiguous with (II)/(III).
-                        // Keep sparse glyph strokes; the existing minimum line height
-                        // rejects isolated highlights, and the color gate excludes gold
-                        // completion percentages for both selected and ordinary cards.
-                        return count >= Math.Max(2, geometry.X(3));
-                    }, geometry.Y(3), geometry.Y(12));
-                    if (names.Count == 0) continue;
-                    // Include every title line inside this actual tile; percentages are gold
-                    // and excluded by the ink predicate, even for a selected wrapped name.
-                    var name = Rectangle.FromLTRB(0, names[0].Top, 1, names[names.Count - 1].Bottom);
-                    var crop = geometry.Clip(Rectangle.FromLTRB(geometry.X(122), name.Top - geometry.Y(5),
-                        geometry.X(isSelected ? 665 : 655), name.Bottom + geometry.Y(5)));
-                    var mode = names.Count == 1 ? PageSegMode.SingleLine : PageSegMode.SingleBlock;
-                    var read = Read(frame, crop, mode);
-                    string text = Clean(read.Text);
-                    var category = catalog.MatchCategory(text);
-                    if (category == null)
-                    {
-                        // Retry the exact same title pixels. White unselected labels need
-                        // inversion; selected dark labels already have a light background.
-                        string retry = Clean(Read(frame, crop, mode, true, !isSelected).Text);
-                        category = catalog.MatchCategory(retry);
-                        if (category != null) text = retry;
-                        else Logger.Debug("Unmatched achievement category at {0}: raw '{1}', threshold '{2}'",
-                            tile.Top, text, retry);
-                    }
-                    if (names.Count > 1)
-                    {
-                        // A short, standalone series suffix is easily read as [1], or
-                        // (III) as (II), in a full-width multiline caption. Verify its
-                        // actual glyphs separately even when that caption already matched.
-                        var suffixLine = names[names.Count - 1];
-                        int suffixLeft = geometry.X(isSelected ? 665 : 653), suffixRight = -1;
-                        for (int y = suffixLine.Top; y < suffixLine.Bottom; ++y)
-                            for (int x = geometry.X(124); x < geometry.X(isSelected ? 665 : 653); ++x)
-                            {
-                                var c = pixels.Get(x, y);
-                                bool ink = isSelected ? c.R < 130 && c.G < 135 && c.B < 140
-                                    : c.R > 195 && c.G > 190 && c.B > 170 && c.R - c.G < 22;
-                                if (!ink) continue;
-                                suffixLeft = Math.Min(suffixLeft, x);
-                                suffixRight = Math.Max(suffixRight, x);
-                            }
-                        if (suffixRight >= suffixLeft && suffixRight - suffixLeft <= geometry.X(100))
-                        {
-                            var prefixCrop = geometry.Clip(Rectangle.FromLTRB(geometry.X(122),
-                                names[0].Top - geometry.Y(5), geometry.X(isSelected ? 665 : 655),
-                                Math.Min(suffixLine.Top - geometry.Y(2), names[names.Count - 2].Bottom + geometry.Y(3))));
-                            var prefixMode = names.Count == 2 ? PageSegMode.SingleLine : PageSegMode.SingleBlock;
-                            string prefix = Clean(Read(frame, prefixCrop, prefixMode).Text);
-                            // Exact prefix identity is required for repairing 1/l/| as I.
-                            // Do not choose a series from its position or a fuzzy prefix.
-                            var series = catalog.Categories.Select(candidate => new
-                            {
-                                Category = candidate,
-                                Suffix = Regex.Match(candidate.Name ?? "", @"\s*\(([IVXLCDM]+)\)\s*$", RegexOptions.None, RegexTimeouts.RegexTimeout)
-                            }).Where(candidate => candidate.Suffix.Success &&
-                                AchievementCatalog.Normalize(candidate.Category.Name.Substring(0, candidate.Suffix.Index)) ==
-                                AchievementCatalog.Normalize(prefix)).ToList();
-                            if (series.Count == 0)
-                            {
-                                string retryPrefix = Clean(Read(frame, prefixCrop, prefixMode, true, !isSelected).Text);
-                                series = catalog.Categories.Select(candidate => new
-                                {
-                                    Category = candidate,
-                                    Suffix = Regex.Match(candidate.Name ?? "", @"\s*\(([IVXLCDM]+)\)\s*$", RegexOptions.None, RegexTimeouts.RegexTimeout)
-                                }).Where(candidate => candidate.Suffix.Success &&
-                                    AchievementCatalog.Normalize(candidate.Category.Name.Substring(0, candidate.Suffix.Index)) ==
-                                    AchievementCatalog.Normalize(retryPrefix)).ToList();
-                                if (series.Count > 0) prefix = retryPrefix;
-                            }
-                            if (series.Count > 0)
-                            {
-                                string fullText = text;
-                                var suffixCrop = geometry.Clip(Rectangle.FromLTRB(suffixLeft - geometry.X(5),
-                                    suffixLine.Top - geometry.Y(3), suffixRight + 1 + geometry.X(5),
-                                    suffixLine.Bottom + geometry.Y(3)));
-                                string suffixRaw = Clean(Read(frame, suffixCrop, PageSegMode.SingleLine).Text);
-                                string suffixThreshold = Clean(Read(frame, suffixCrop, PageSegMode.SingleLine, true, !isSelected).Text);
-                                var columns = Bands(suffixLeft, suffixRight + 1, x =>
-                                {
-                                    int count = 0;
-                                    for (int y = suffixLine.Top; y < suffixLine.Bottom; ++y)
-                                        if (IsSidebarNameInk(pixels.Get(x, y), isSelected)) ++count;
-                                    return count >= Math.Max(1, geometry.Y(2));
-                                }, 0, Math.Max(1, geometry.X(2)));
-                                string middleRaw = "", middleThreshold = "", verifiedSuffix = "";
-                                int? straightICount = null;
-                                bool brackets = columns.Count >= 3 &&
-                                    IsSidebarBracket(pixels, columns[0], suffixLine, isSelected, true, geometry) &&
-                                    IsSidebarBracket(pixels, columns[columns.Count - 1], suffixLine, isSelected, false, geometry);
-                                if (brackets)
-                                {
-                                    // Parentheses can themselves become extra I strokes in
-                                    // OCR. Separate the curved outer glyphs from the numeral
-                                    // using empty columns, then read only the actual middle.
-                                    int middleLeft = Math.Max(columns[0].Bottom + 1,
-                                        columns[1].Top - geometry.X(2));
-                                    int middleRight = Math.Min(columns[columns.Count - 1].Top - 1,
-                                        columns[columns.Count - 2].Bottom + geometry.X(2));
-                                    var middleCrop = geometry.Clip(Rectangle.FromLTRB(middleLeft,
-                                        suffixLine.Top - geometry.Y(3), middleRight,
-                                        suffixLine.Bottom + geometry.Y(3)));
-                                    middleRaw = Clean(Read(frame, middleCrop, PageSegMode.SingleLine).Text);
-                                    middleThreshold = Clean(Read(frame, middleCrop, PageSegMode.SingleLine, true, !isSelected).Text);
-                                    using (var numeral = frame.Clone(middleCrop, PixelFormat.Format24bppRgb))
-                                        straightICount = ReadSidebarStraightICount(numeral, isSelected);
-                                    // OCR can collapse two or three complete I stems into
-                                    // one digit. Positive stem geometry, not unanimous OCR,
-                                    // preserves the distinction between I, II and III.
-                                    verifiedSuffix = ResolveSidebarRomanEvidence(true, brackets, straightICount,
-                                        series.Select(candidate => candidate.Suffix.Groups[1].Value),
-                                        middleRaw, middleThreshold, suffixThreshold, ExtractSidebarCaptionSuffix(fullText));
-                                }
-                                category = null;
-                                if (verifiedSuffix.Length > 0)
-                                {
-                                    var matching = series.Where(candidate => candidate.Suffix.Groups[1].Value == verifiedSuffix).ToList();
-                                    if (matching.Count == 1)
-                                    {
-                                        category = matching[0].Category;
-                                        text = prefix + " (" + verifiedSuffix + ")";
-                                    }
-                                }
-                                Logger.Debug("Achievement category suffix at {0}: caption '{1}', prefix '{2}', raw '{3}', threshold '{4}', glyph groups {5}, curved brackets {6}, numeral raw '{7}', numeral threshold '{8}', verified '{9}' (category {10}), qualified straight I count {11}",
-                                    tile.Top, fullText, prefix, suffixRaw, suffixThreshold, columns.Count, brackets,
-                                    middleRaw, middleThreshold, text,
-                                    category == null ? "unresolved" : category.Id.ToString(CultureInfo.InvariantCulture),
-                                    straightICount.HasValue ? straightICount.Value.ToString(CultureInfo.InvariantCulture) : "unqualified");
-                            }
-                            else if (category != null && Regex.IsMatch(category.Name ?? "", @"\s*\([IVXLCDM]+\)\s*$", RegexOptions.None, RegexTimeouts.RegexTimeout))
-                            {
-                                // A nominal whole-caption series match cannot override an
-                                // unverified independent prefix/suffix pair.
-                                Logger.Debug("Unverified achievement category series at {0}: caption '{1}', prefix '{2}'", tile.Top, text, prefix);
-                                category = null;
-                            }
-                        }
-                    }
-                    if (string.IsNullOrEmpty(text)) continue;
-                    result.Add(new AchievementCategoryEntryOnScreen
-                    {
-                        Category = category,
-                        RawText = text,
-                        Selected = isSelected,
-                        Bounds = geometry.Clip(Rectangle.FromLTRB(geometry.X(isSelected ? 52 : 62),
-                            tile.Top,
-                            geometry.X(isSelected ? 668 : 657),
-                            tile.Bottom))
-                    });
-                }
+                    ReadSidebarTile(frame, pixels, geometry, tile, top, bottom, selectedBands, result);
             }
             return result;
+        }
+
+        private static bool SelectedTileStripMatches(Pixels pixels, Geometry geometry, int y)
+        {
+            int matches = 0, samples = 0;
+            // This strip exists only on the wider selected tile. Long selected names
+            // can occupy its right edge, but never this empty margin left of the icon.
+            for (int x = geometry.X(55); x < geometry.X(60); ++x)
+            {
+                var c = pixels.Get(x, y);
+                if (c.R > 215 && c.G > 205 && c.B > 180) ++matches;
+                ++samples;
+            }
+            return samples > 0 && matches >= samples * .8;
+        }
+
+        private static bool ColorTileStripMatches(Pixels pixels, Geometry geometry, int y)
+        {
+            int matches = 0, samples = 0;
+            for (int x = geometry.X(65); x < geometry.X(71); ++x)
+            {
+                var c = pixels.Get(x, y);
+                if (c.R < 95 && c.G < 110 && c.B < 125 && c.B - c.R >= 8) ++matches;
+                ++samples;
+            }
+            return samples > 0 && matches >= samples * .8;
+        }
+
+        private static bool TileEdgeContrastsWithInterior(Pixels pixels, Geometry geometry, int y)
+        {
+            // The sidebar tiles are translucent. A blue scene can make the
+            // gaps satisfy the same dark-color predicate as the tiles and
+            // join several cards into one band. The left card rule remains
+            // lighter than its adjacent interior, regardless of the scene.
+            int edge = 0, inside = 0, samples = 0;
+            for (int x = geometry.X(65); x < geometry.X(67); ++x)
+            {
+                var border = pixels.Get(x, y);
+                var fill = pixels.Get(x + Math.Max(1, geometry.X(6)), y);
+                if (border.R >= 180 || fill.R >= 180) return false;
+                edge += border.R + border.G + border.B;
+                inside += fill.R + fill.G + fill.B;
+                ++samples;
+            }
+            return samples > 0 && edge - inside >= samples * 24;
+        }
+
+        private static List<Rectangle> MergeEdgeBandsIntoOrdinaryTiles(List<Rectangle> colorBands,
+            IEnumerable<Rectangle> edgeBands, Geometry geometry)
+        {
+            var ordinaryBands = colorBands.Where(band => band.Height <= geometry.Y(112)).ToList();
+            foreach (var band in edgeBands.Where(band => band.Height <= geometry.Y(112)))
+            {
+                // Keep a previously detected full card instead of adding
+                // its inset border a second time. Hovered dark tiles still
+                // use their color band; their highlight shifts the left rule.
+                if (!ordinaryBands.Any(existing => Math.Min(existing.Bottom, band.Bottom) -
+                    Math.Max(existing.Top, band.Top) >= Math.Min(existing.Height, band.Height) * .7))
+                    ordinaryBands.Add(band);
+            }
+            return ordinaryBands;
+        }
+
+        private void ReadSidebarTile(Bitmap frame, Pixels pixels, Geometry geometry, Rectangle tile,
+            int top, int bottom, List<Rectangle> selectedBands, List<AchievementCategoryEntryOnScreen> result)
+        {
+            // A sidebar tile touching the viewport edge may be clipped. Its title alone
+            // is insufficient to choose a reliable click location.
+            if (tile.Top <= top || tile.Bottom >= bottom) return;
+            bool isSelected = selectedBands.Any(b => b.Top == tile.Top && b.Bottom == tile.Bottom);
+            var names = Bands(tile.Top + geometry.Y(6), tile.Bottom - geometry.Y(5),
+                y => SidebarTitleScanlineHasInk(pixels, geometry, y, isSelected), geometry.Y(3), geometry.Y(12));
+            if (names.Count == 0) return;
+            // Include every title line inside this actual tile; percentages are gold
+            // and excluded by the ink predicate, even for a selected wrapped name.
+            var name = Rectangle.FromLTRB(0, names[0].Top, 1, names[names.Count - 1].Bottom);
+            var crop = geometry.Clip(Rectangle.FromLTRB(geometry.X(122), name.Top - geometry.Y(5),
+                geometry.X(isSelected ? 665 : 655), name.Bottom + geometry.Y(5)));
+            var mode = names.Count == 1 ? PageSegMode.SingleLine : PageSegMode.SingleBlock;
+            var read = Read(frame, crop, mode);
+            string text = Clean(read.Text);
+            var category = catalog.MatchCategory(text);
+            if (category == null)
+                category = RetrySidebarCategoryMatch(frame, geometry, crop, mode, tile, isSelected, ref text);
+            if (names.Count > 1)
+                category = VerifyMultilineSidebarSeries(frame, pixels, geometry, tile, names, isSelected, ref text, category);
+            if (string.IsNullOrEmpty(text)) return;
+            result.Add(new AchievementCategoryEntryOnScreen
+            {
+                Category = category,
+                RawText = text,
+                Selected = isSelected,
+                Bounds = geometry.Clip(Rectangle.FromLTRB(geometry.X(isSelected ? 52 : 62),
+                    tile.Top,
+                    geometry.X(isSelected ? 668 : 657),
+                    tile.Bottom))
+            });
+        }
+
+        private static bool SidebarTitleScanlineHasInk(Pixels pixels, Geometry geometry, int y, bool isSelected)
+        {
+            int count = 0;
+            for (int x = geometry.X(124); x < geometry.X(isSelected ? 665 : 653); ++x)
+            {
+                var c = pixels.Get(x, y);
+                bool ink = isSelected ? c.R < 130 && c.G < 135 && c.B < 140
+                    : c.R > 195 && c.G > 190 && c.B > 170 && c.R - c.G < 22;
+                if (ink) ++count;
+            }
+            // A wrapped "(I)" has only 7-9 white pixels on most scanlines.
+            // Requiring a dense row discarded the entire series suffix and
+            // made its full-height, visible card ambiguous with (II)/(III).
+            // Keep sparse glyph strokes; the existing minimum line height
+            // rejects isolated highlights, and the color gate excludes gold
+            // completion percentages for both selected and ordinary cards.
+            return count >= Math.Max(2, geometry.X(3));
+        }
+
+        private AchievementCategory RetrySidebarCategoryMatch(Bitmap frame, Geometry geometry,
+            Rectangle crop, PageSegMode mode, Rectangle tile, bool isSelected, ref string text)
+        {
+            // Retry the exact same title pixels. White unselected labels need
+            // inversion; selected dark labels already have a light background.
+            string retry = Clean(Read(frame, crop, mode, true, !isSelected).Text);
+            var category = catalog.MatchCategory(retry);
+            if (category != null)
+            {
+                text = retry;
+                return category;
+            }
+            Logger.Debug("Unmatched achievement category at {0}: raw '{1}', threshold '{2}'",
+                tile.Top, text, retry);
+            return null;
+        }
+
+        private AchievementCategory VerifyMultilineSidebarSeries(Bitmap frame, Pixels pixels, Geometry geometry,
+            Rectangle tile, List<Rectangle> names, bool isSelected, ref string text, AchievementCategory category)
+        {
+            // A short, standalone series suffix is easily read as [1], or
+            // (III) as (II), in a full-width multiline caption. Verify its
+            // actual glyphs separately even when that caption already matched.
+            var suffixLine = names[names.Count - 1];
+            int suffixLeft, suffixRight;
+            if (!MeasureSidebarSuffixExtent(pixels, geometry, suffixLine, isSelected, out suffixLeft, out suffixRight))
+                return category;
+            var prefixCrop = geometry.Clip(Rectangle.FromLTRB(geometry.X(122),
+                names[0].Top - geometry.Y(5), geometry.X(isSelected ? 665 : 655),
+                Math.Min(suffixLine.Top - geometry.Y(2), names[names.Count - 2].Bottom + geometry.Y(3))));
+            var prefixMode = names.Count == 2 ? PageSegMode.SingleLine : PageSegMode.SingleBlock;
+            string prefix = Clean(Read(frame, prefixCrop, prefixMode).Text);
+            var series = MatchSidebarSeries(prefix);
+            if (series.Count == 0)
+            {
+                string retryPrefix = Clean(Read(frame, prefixCrop, prefixMode, true, !isSelected).Text);
+                series = MatchSidebarSeries(retryPrefix);
+                if (series.Count > 0) prefix = retryPrefix;
+            }
+            if (series.Count > 0)
+                return ResolveSidebarSeriesNumeral(frame, pixels, geometry, tile, suffixLine,
+                    suffixLeft, suffixRight, isSelected, series, prefix, ref text, category);
+            if (category != null && Regex.IsMatch(category.Name ?? "", @"\s*\([IVXLCDM]+\)\s*$", RegexOptions.None, RegexTimeouts.RegexTimeout))
+            {
+                // A nominal whole-caption series match cannot override an
+                // unverified independent prefix/suffix pair.
+                Logger.Debug("Unverified achievement category series at {0}: caption '{1}', prefix '{2}'", tile.Top, text, prefix);
+                return null;
+            }
+            return category;
+        }
+
+        private static bool MeasureSidebarSuffixExtent(Pixels pixels, Geometry geometry, Rectangle suffixLine,
+            bool isSelected, out int suffixLeft, out int suffixRight)
+        {
+            suffixLeft = geometry.X(isSelected ? 665 : 653);
+            suffixRight = -1;
+            for (int y = suffixLine.Top; y < suffixLine.Bottom; ++y)
+                for (int x = geometry.X(124); x < geometry.X(isSelected ? 665 : 653); ++x)
+                {
+                    var c = pixels.Get(x, y);
+                    if (!IsSidebarNameInk(c, isSelected)) continue;
+                    suffixLeft = Math.Min(suffixLeft, x);
+                    suffixRight = Math.Max(suffixRight, x);
+                }
+            return suffixRight >= suffixLeft && suffixRight - suffixLeft <= geometry.X(100);
+        }
+
+        private static AchievementCategory ResolveSidebarSeriesNumeral(Bitmap frame, Pixels pixels, Geometry geometry,
+            Rectangle tile, Rectangle suffixLine, int suffixLeft, int suffixRight, bool isSelected,
+            List<SidebarSeriesCandidate> series, string prefix, ref string text, AchievementCategory category)
+        {
+            string fullText = text;
+            var suffixCrop = geometry.Clip(Rectangle.FromLTRB(suffixLeft - geometry.X(5),
+                suffixLine.Top - geometry.Y(3), suffixRight + 1 + geometry.X(5),
+                suffixLine.Bottom + geometry.Y(3)));
+            string suffixRaw = Clean(Read(frame, suffixCrop, PageSegMode.SingleLine).Text);
+            string suffixThreshold = Clean(Read(frame, suffixCrop, PageSegMode.SingleLine, true, !isSelected).Text);
+            var columns = Bands(suffixLeft, suffixRight + 1, x =>
+            {
+                int count = 0;
+                for (int y = suffixLine.Top; y < suffixLine.Bottom; ++y)
+                    if (IsSidebarNameInk(pixels.Get(x, y), isSelected)) ++count;
+                return count >= Math.Max(1, geometry.Y(2));
+            }, 0, Math.Max(1, geometry.X(2)));
+            string middleRaw = "", middleThreshold = "", verifiedSuffix = "";
+            int? straightICount = null;
+            bool brackets = columns.Count >= 3 &&
+                IsSidebarBracket(pixels, columns[0], suffixLine, isSelected, true, geometry) &&
+                IsSidebarBracket(pixels, columns[columns.Count - 1], suffixLine, isSelected, false, geometry);
+            if (brackets)
+            {
+                // Parentheses can themselves become extra I strokes in
+                // OCR. Separate the curved outer glyphs from the numeral
+                // using empty columns, then read only the actual middle.
+                int middleLeft = Math.Max(columns[0].Bottom + 1,
+                    columns[1].Top - geometry.X(2));
+                int middleRight = Math.Min(columns[columns.Count - 1].Top - 1,
+                    columns[columns.Count - 2].Bottom + geometry.X(2));
+                var middleCrop = geometry.Clip(Rectangle.FromLTRB(middleLeft,
+                    suffixLine.Top - geometry.Y(3), middleRight,
+                    suffixLine.Bottom + geometry.Y(3)));
+                middleRaw = Clean(Read(frame, middleCrop, PageSegMode.SingleLine).Text);
+                middleThreshold = Clean(Read(frame, middleCrop, PageSegMode.SingleLine, true, !isSelected).Text);
+                using (var numeral = frame.Clone(middleCrop, PixelFormat.Format24bppRgb))
+                    straightICount = ReadSidebarStraightICount(numeral, isSelected);
+                // OCR can collapse two or three complete I stems into
+                // one digit. Positive stem geometry, not unanimous OCR,
+                // preserves the distinction between I, II and III.
+                verifiedSuffix = ResolveSidebarRomanEvidence(true, brackets, straightICount,
+                    series.Select(candidate => candidate.Suffix.Groups[1].Value),
+                    middleRaw, middleThreshold, suffixThreshold, ExtractSidebarCaptionSuffix(fullText));
+            }
+            category = null;
+            if (verifiedSuffix.Length > 0)
+            {
+                var matching = series.Where(candidate => candidate.Suffix.Groups[1].Value == verifiedSuffix).ToList();
+                if (matching.Count == 1)
+                {
+                    category = matching[0].Category;
+                    text = prefix + " (" + verifiedSuffix + ")";
+                }
+            }
+            Logger.Debug("Achievement category suffix at {0}: caption '{1}', prefix '{2}', raw '{3}', threshold '{4}', glyph groups {5}, curved brackets {6}, numeral raw '{7}', numeral threshold '{8}', verified '{9}' (category {10}), qualified straight I count {11}",
+                tile.Top, fullText, prefix, suffixRaw, suffixThreshold, columns.Count, brackets,
+                middleRaw, middleThreshold, text,
+                category == null ? "unresolved" : category.Id.ToString(CultureInfo.InvariantCulture),
+                straightICount.HasValue ? straightICount.Value.ToString(CultureInfo.InvariantCulture) : "unqualified");
+            return category;
+        }
+
+        private List<SidebarSeriesCandidate> MatchSidebarSeries(string prefix)
+        {
+            // Exact prefix identity is required for repairing 1/l/| as I.
+            // Do not choose a series from its position or a fuzzy prefix.
+            return catalog.Categories.Select(candidate => new SidebarSeriesCandidate
+            {
+                Category = candidate,
+                Suffix = Regex.Match(candidate.Name ?? "", @"\s*\(([IVXLCDM]+)\)\s*$", RegexOptions.None, RegexTimeouts.RegexTimeout)
+            }).Where(candidate => candidate.Suffix.Success &&
+                AchievementCatalog.Normalize(candidate.Category.Name.Substring(0, candidate.Suffix.Index)) ==
+                AchievementCatalog.Normalize(prefix)).ToList();
         }
 
         private static bool IsSidebarNameInk(Color color, bool selected)
@@ -500,30 +576,9 @@ namespace InventoryKamera
                 int firstTop = -1, firstBottom = -1;
                 foreach (var column in columns)
                 {
-                    int top = numeralCrop.Height, bottom = -1, longestSpine = 0;
-                    for (int x = column.Top; x < column.Bottom; ++x)
-                    {
-                        int run = 0;
-                        for (int y = 0; y < numeralCrop.Height; ++y)
-                        {
-                            if (IsSidebarNameInk(pixels.Get(x, y), selected))
-                            {
-                                top = Math.Min(top, y);
-                                bottom = Math.Max(bottom, y);
-                                longestSpine = Math.Max(longestSpine, ++run);
-                            }
-                            else run = 0;
-                        }
-                    }
-                    int height = bottom - top + 1;
-                    // Count a glyph only if it has a narrow, nearly full-height fixed
-                    // vertical spine. Counting disconnected components alone would
-                    // confuse diagonal V/X strokes or punctuation with I stems.
-                    if (height < Math.Max(8, (int)Math.Round(numeralCrop.Height * .5)) ||
-                        column.Height > height * .45 || longestSpine < height * .85) return null;
-                    int alignmentTolerance = Math.Max(2, (int)Math.Round(height * .12));
-                    if (firstTop >= 0 && (Math.Abs(top - firstTop) > alignmentTolerance ||
-                        Math.Abs(bottom - firstBottom) > alignmentTolerance)) return null;
+                    int top, bottom, longestSpine;
+                    MeasureStraightIColumn(pixels, column, numeralCrop.Height, selected, out top, out bottom, out longestSpine);
+                    if (!IsValidStraightIColumn(column, numeralCrop.Height, top, bottom, longestSpine, firstTop, firstBottom)) return null;
                     firstTop = top;
                     firstBottom = bottom;
                 }
@@ -531,20 +586,45 @@ namespace InventoryKamera
             }
         }
 
+        private static void MeasureStraightIColumn(Pixels pixels, Rectangle column, int cropHeight,
+            bool selected, out int top, out int bottom, out int longestSpine)
+        {
+            top = cropHeight; bottom = -1; longestSpine = 0;
+            for (int x = column.Top; x < column.Bottom; ++x)
+            {
+                int run = 0;
+                for (int y = 0; y < cropHeight; ++y)
+                {
+                    if (IsSidebarNameInk(pixels.Get(x, y), selected))
+                    {
+                        top = Math.Min(top, y);
+                        bottom = Math.Max(bottom, y);
+                        longestSpine = Math.Max(longestSpine, ++run);
+                    }
+                    else run = 0;
+                }
+            }
+        }
+
+        private static bool IsValidStraightIColumn(Rectangle column, int cropHeight, int top, int bottom,
+            int longestSpine, int firstTop, int firstBottom)
+        {
+            int height = bottom - top + 1;
+            // Count a glyph only if it has a narrow, nearly full-height fixed
+            // vertical spine. Counting disconnected components alone would
+            // confuse diagonal V/X strokes or punctuation with I stems.
+            if (height < Math.Max(8, (int)Math.Round(cropHeight * .5)) ||
+                column.Height > height * .45 || longestSpine < height * .85) return false;
+            int alignmentTolerance = Math.Max(2, (int)Math.Round(height * .12));
+            if (firstTop >= 0 && (Math.Abs(top - firstTop) > alignmentTolerance ||
+                Math.Abs(bottom - firstBottom) > alignmentTolerance)) return false;
+            return true;
+        }
+
         private static bool IsSidebarBracket(Pixels pixels, Rectangle columns, Rectangle line,
             bool selected, bool opening, Geometry geometry)
         {
-            var edges = new List<int>();
-            for (int y = line.Top; y < line.Bottom; ++y)
-            {
-                int edge = opening ? int.MaxValue : int.MinValue;
-                for (int x = columns.Top; x < columns.Bottom; ++x)
-                {
-                    if (!IsSidebarNameInk(pixels.Get(x, y), selected)) continue;
-                    edge = opening ? Math.Min(edge, x) : Math.Max(edge, x);
-                }
-                if (edge != int.MaxValue && edge != int.MinValue) edges.Add(edge);
-            }
+            var edges = CollectSidebarBracketEdges(pixels, columns, line, selected, opening);
             if (edges.Count < Math.Max(8, geometry.Y(10))) return false;
             int third = edges.Count / 3;
             double ends = edges.Take(third).Concat(edges.Skip(edges.Count - third)).Average();
@@ -552,6 +632,29 @@ namespace InventoryKamera
             // Both parentheses curve away from their end positions at mid-height.
             // An I stem/serif has the opposite shape and cannot be stripped here.
             return (opening ? ends - middle : middle - ends) >= Math.Max(1, geometry.X(1));
+        }
+
+        private static List<int> CollectSidebarBracketEdges(Pixels pixels, Rectangle columns, Rectangle line,
+            bool selected, bool opening)
+        {
+            var edges = new List<int>();
+            for (int y = line.Top; y < line.Bottom; ++y)
+            {
+                int edge = SidebarBracketRowEdge(pixels, columns, y, selected, opening);
+                if (edge != int.MaxValue && edge != int.MinValue) edges.Add(edge);
+            }
+            return edges;
+        }
+
+        private static int SidebarBracketRowEdge(Pixels pixels, Rectangle columns, int y, bool selected, bool opening)
+        {
+            int edge = opening ? int.MaxValue : int.MinValue;
+            for (int x = columns.Top; x < columns.Bottom; ++x)
+            {
+                if (!IsSidebarNameInk(pixels.Get(x, y), selected)) continue;
+                edge = opening ? Math.Min(edge, x) : Math.Max(edge, x);
+            }
+            return edge;
         }
 
         public static int? ReadCompletedTotal(Bitmap frame)
@@ -649,23 +752,26 @@ namespace InventoryKamera
                 if (height < geometry.Y(75) || height > geometry.Y(155)) continue;
                 // The progress card has a long orange/gray bar. Ordinary title/description
                 // glyphs, cream backgrounds and card borders cannot fill this horizontal span.
-                var bars = Bands(rules[i].Top + geometry.Y(20), rules[i + 1].Bottom - geometry.Y(15), y =>
-                {
-                    int matches = 0, samples = 0;
-                    for (int x = geometry.X(870); x < geometry.X(1555); x += Math.Max(1, geometry.X(3)))
-                    {
-                        var c = pixels.Get(x, y);
-                        int difference = Math.Max(c.R, Math.Max(c.G, c.B)) - Math.Min(c.R, Math.Min(c.G, c.B));
-                        bool orange = c.R >= 200 && c.G >= 140 && c.G <= 215 && c.B <= 140;
-                        bool grey = c.R >= 60 && c.R <= 180 && difference <= 22;
-                        if (orange || grey) ++matches;
-                        ++samples;
-                    }
-                    return samples > 0 && matches >= samples * .85;
-                }, 0, Math.Max(1, geometry.Y(2)));
+                var bars = Bands(rules[i].Top + geometry.Y(20), rules[i + 1].Bottom - geometry.Y(15),
+                    y => ProgressHeaderScanlineMatches(pixels, geometry, y), 0, Math.Max(1, geometry.Y(2)));
                 if (bars.Count > 0) return rules[i + 1].Bottom;
             }
             return 0;
+        }
+
+        private static bool ProgressHeaderScanlineMatches(Pixels pixels, Geometry geometry, int y)
+        {
+            int matches = 0, samples = 0;
+            for (int x = geometry.X(870); x < geometry.X(1555); x += Math.Max(1, geometry.X(3)))
+            {
+                var c = pixels.Get(x, y);
+                int difference = Math.Max(c.R, Math.Max(c.G, c.B)) - Math.Min(c.R, Math.Min(c.G, c.B));
+                bool orange = c.R >= 200 && c.G >= 140 && c.G <= 215 && c.B <= 140;
+                bool grey = c.R >= 60 && c.R <= 180 && difference <= 22;
+                if (orange || grey) ++matches;
+                ++samples;
+            }
+            return samples > 0 && matches >= samples * .85;
         }
 
         private static List<Rectangle> FindRows(Pixels pixels, Geometry geometry)
@@ -766,6 +872,40 @@ namespace InventoryKamera
         private static void ReadState(Bitmap frame, Pixels pixels, Geometry geometry, Rectangle bounds,
             AchievementObservation observation)
         {
+            string completionDate = ReadCompletionDate(frame, pixels, geometry, bounds);
+            if (completionDate != null) observation.CompletionDate = completionDate;
+            var bands = Bands(bounds.Top + geometry.Y(20), bounds.Bottom - geometry.Y(34),
+                y => StateColumnScanlineHasInk(pixels, geometry, y), geometry.Y(2), geometry.Y(8));
+            var readings = new List<string>();
+            foreach (var band in bands)
+            {
+                var region = geometry.Clip(Rectangle.FromLTRB(geometry.X(1680), band.Top - geometry.Y(4),
+                    geometry.X(1807), band.Bottom + geometry.Y(4)));
+                readings.Add(Clean(Read(frame, region, PageSegMode.SingleLine).Text));
+                readings.Add(Clean(Read(frame, region, PageSegMode.SingleLine, true).Text));
+            }
+            string state = string.Join(" ", readings);
+            bool hasProgress = TryReadStateEvidence(observation, state);
+            if (!observation.CompletedText && !observation.Claimable && !hasProgress)
+            {
+                state = RereadStateColumn(frame, geometry, bounds, readings, observation, state);
+                TryReadStateEvidence(observation, state);
+                Logger.Debug("Achievement state column reread: category={0}, page={1}, top={2}, title='{3}', completed={4}, claimable={5}, progress='{6}', date='{7}', raw='{8}'",
+                    observation.CategoryId, observation.Page, bounds.Top, observation.Title, observation.CompletedText,
+                    observation.Claimable, observation.Progress, observation.CompletionDate, state);
+            }
+            if (observation.CompletedText && !Regex.IsMatch(state, @"\bcompleted\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout))
+                Logger.Debug("Achievement completion stamp repaired lowercase l/i OCR: category={0}, page={1}, top={2}, title='{3}', validDate='{4}', raw='{5}'; tier/star and progress validation still required",
+                    observation.CategoryId, observation.Page, bounds.Top, observation.Title, observation.CompletionDate, state);
+            if (!observation.CompletedText && !observation.Claimable && string.IsNullOrEmpty(observation.Progress))
+            {
+                Logger.Warn("Achievement completion evidence unreadable: category={0}, page={1}, top={2}, title='{3}', date='{4}', stateBands={5}, raw='{6}'",
+                    observation.CategoryId, observation.Page, bounds.Top, observation.Title, observation.CompletionDate, bands.Count, state);
+            }
+        }
+
+        private static string ReadCompletionDate(Bitmap frame, Pixels pixels, Geometry geometry, Rectangle bounds)
+        {
             var dateBounds = geometry.Clip(Rectangle.FromLTRB(geometry.X(1680), bounds.Bottom - geometry.Y(35),
                 geometry.X(1806), bounds.Bottom - geometry.Y(3)));
             // Thresholding destroys the thin hyphens in some dates; preserve the original pixels.
@@ -782,24 +922,20 @@ namespace InventoryKamera
             DateTime parsedDate;
             if (date.Success && DateTime.TryParseExact(date.Value.Replace('/', '-').Replace('.', '-'),
                 "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out parsedDate))
-                observation.CompletionDate = parsedDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                return parsedDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            return null;
+        }
 
-            var bands = Bands(bounds.Top + geometry.Y(20), bounds.Bottom - geometry.Y(34), y =>
-            {
-                int count = 0;
-                for (int x = geometry.X(1680); x < geometry.X(1807); ++x)
-                    if (IsTanText(pixels.Get(x, y))) ++count;
-                return count >= Math.Max(5, geometry.X(7));
-            }, geometry.Y(2), geometry.Y(8));
-            var readings = new List<string>();
-            foreach (var band in bands)
-            {
-                var region = geometry.Clip(Rectangle.FromLTRB(geometry.X(1680), band.Top - geometry.Y(4),
-                    geometry.X(1807), band.Bottom + geometry.Y(4)));
-                readings.Add(Clean(Read(frame, region, PageSegMode.SingleLine).Text));
-                readings.Add(Clean(Read(frame, region, PageSegMode.SingleLine, true).Text));
-            }
-            string state = string.Join(" ", readings);
+        private static bool StateColumnScanlineHasInk(Pixels pixels, Geometry geometry, int y)
+        {
+            int count = 0;
+            for (int x = geometry.X(1680); x < geometry.X(1807); ++x)
+                if (IsTanText(pixels.Get(x, y))) ++count;
+            return count >= Math.Max(5, geometry.X(7));
+        }
+
+        private static bool TryReadStateEvidence(AchievementObservation observation, string state)
+        {
             observation.CompletedText = HasCompletedStampText(state, observation.CompletionDate);
             observation.Claimable = Regex.IsMatch(state, @"\bclaim\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
             var progress = Regex.Match(state, @"\b(\d+)\s*/\s*(\d+)\b", RegexOptions.None, RegexTimeouts.RegexTimeout);
@@ -807,44 +943,31 @@ namespace InventoryKamera
             var total = Regex.Match(state, @"\btotal\s*:\s*(\d[\d,]*)", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
             int value;
             if (total.Success && int.TryParse(total.Groups[1].Value.Replace(",", ""), out value)) observation.Total = value;
-            if (!observation.CompletedText && !observation.Claimable && !progress.Success)
+            return progress.Success;
+        }
+
+        private static string RereadStateColumn(Bitmap frame, Geometry geometry, Rectangle bounds,
+            List<string> readings, AchievementObservation observation, string state)
+        {
+            // Sparse stamp strokes can split the Completed word into narrow
+            // bands. Re-read the entire state column before rejecting it,
+            // retaining both completion and unfinished-progress evidence.
+            var stateBounds = geometry.Clip(Rectangle.FromLTRB(geometry.X(1668),
+                bounds.Top + geometry.Y(20), geometry.X(1810), bounds.Bottom - geometry.Y(12)));
+            readings.Add(Clean(Read(frame, stateBounds, PageSegMode.SingleBlock).Text));
+            state = string.Join(" ", readings);
+            bool recognized = HasCompletedStampText(state, observation.CompletionDate)
+                || Regex.IsMatch(state, @"\bclaim\b|\b\d+\s*/\s*\d+\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
+            if (!recognized)
             {
-                // Sparse stamp strokes can split the Completed word into narrow
-                // bands. Re-read the entire state column before rejecting it,
-                // retaining both completion and unfinished-progress evidence.
-                var stateBounds = geometry.Clip(Rectangle.FromLTRB(geometry.X(1668),
-                    bounds.Top + geometry.Y(20), geometry.X(1810), bounds.Bottom - geometry.Y(12)));
-                readings.Add(Clean(Read(frame, stateBounds, PageSegMode.SingleBlock).Text));
+                // Preserve the full label's ascenders/descenders and leave
+                // the separate date line outside this thresholded retry.
+                var labelBounds = geometry.Clip(Rectangle.FromLTRB(geometry.X(1668),
+                    bounds.Top + geometry.Y(20), geometry.X(1810), bounds.Bottom - geometry.Y(34)));
+                readings.Add(Clean(Read(frame, labelBounds, PageSegMode.SingleBlock, true).Text));
                 state = string.Join(" ", readings);
-                bool recognized = HasCompletedStampText(state, observation.CompletionDate)
-                    || Regex.IsMatch(state, @"\bclaim\b|\b\d+\s*/\s*\d+\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
-                if (!recognized)
-                {
-                    // Preserve the full label's ascenders/descenders and leave
-                    // the separate date line outside this thresholded retry.
-                    var labelBounds = geometry.Clip(Rectangle.FromLTRB(geometry.X(1668),
-                        bounds.Top + geometry.Y(20), geometry.X(1810), bounds.Bottom - geometry.Y(34)));
-                    readings.Add(Clean(Read(frame, labelBounds, PageSegMode.SingleBlock, true).Text));
-                    state = string.Join(" ", readings);
-                }
-                observation.CompletedText = HasCompletedStampText(state, observation.CompletionDate);
-                observation.Claimable = Regex.IsMatch(state, @"\bclaim\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
-                progress = Regex.Match(state, @"\b(\d+)\s*/\s*(\d+)\b", RegexOptions.None, RegexTimeouts.RegexTimeout);
-                if (progress.Success) observation.Progress = progress.Groups[1].Value + "/" + progress.Groups[2].Value;
-                total = Regex.Match(state, @"\btotal\s*:\s*(\d[\d,]*)", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
-                if (total.Success && int.TryParse(total.Groups[1].Value.Replace(",", ""), out value)) observation.Total = value;
-                Logger.Debug("Achievement state column reread: category={0}, page={1}, top={2}, title='{3}', completed={4}, claimable={5}, progress='{6}', date='{7}', raw='{8}'",
-                    observation.CategoryId, observation.Page, bounds.Top, observation.Title, observation.CompletedText,
-                    observation.Claimable, observation.Progress, observation.CompletionDate, state);
             }
-            if (observation.CompletedText && !Regex.IsMatch(state, @"\bcompleted\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout))
-                Logger.Debug("Achievement completion stamp repaired lowercase l/i OCR: category={0}, page={1}, top={2}, title='{3}', validDate='{4}', raw='{5}'; tier/star and progress validation still required",
-                    observation.CategoryId, observation.Page, bounds.Top, observation.Title, observation.CompletionDate, state);
-            if (!observation.CompletedText && !observation.Claimable && string.IsNullOrEmpty(observation.Progress))
-            {
-                Logger.Warn("Achievement completion evidence unreadable: category={0}, page={1}, top={2}, title='{3}', date='{4}', stateBands={5}, raw='{6}'",
-                    observation.CategoryId, observation.Page, bounds.Top, observation.Title, observation.CompletionDate, bands.Count, state);
-            }
+            return state;
         }
 
         private static bool HasCompletedStampText(string text, string validDate)
@@ -918,30 +1041,43 @@ namespace InventoryKamera
             for (int index = 0; index < mask.Length; ++index)
             {
                 if (!mask[index]) continue;
-                mask[index] = false;
-                queue.Enqueue(index);
-                int minX = region.Width, maxX = 0, minY = region.Height, maxY = 0;
-                while (queue.Count > 0)
-                {
-                    int pixel = queue.Dequeue(), x = pixel % region.Width, y = pixel / region.Width;
-                    minX = Math.Min(minX, x); maxX = Math.Max(maxX, x);
-                    minY = Math.Min(minY, y); maxY = Math.Max(maxY, y);
-                    for (int dy = -1; dy <= 1; ++dy)
-                        for (int dx = -1; dx <= 1; ++dx)
-                        {
-                            int nx = x + dx, ny = y + dy;
-                            if (nx < 0 || ny < 0 || nx >= region.Width || ny >= region.Height) continue;
-                            int neighbour = ny * region.Width + nx;
-                            if (!mask[neighbour]) continue;
-                            mask[neighbour] = false;
-                            queue.Enqueue(neighbour);
-                        }
-                }
+                int minX, maxX, minY, maxY;
+                MeasureStarComponent(mask, region.Width, region.Height, queue, index, out minX, out maxX, out minY, out maxY);
                 int width = maxX - minX + 1, height = maxY - minY + 1;
                 if (width >= geometry.X(13) && width <= geometry.X(22)
                     && height >= geometry.Y(13) && height <= geometry.Y(22)) ++stars;
             }
             return stars;
+        }
+
+        private static void MeasureStarComponent(bool[] mask, int regionWidth, int regionHeight,
+            Queue<int> queue, int seed, out int minX, out int maxX, out int minY, out int maxY)
+        {
+            minX = regionWidth; maxX = 0; minY = regionHeight; maxY = 0;
+            mask[seed] = false;
+            queue.Enqueue(seed);
+            while (queue.Count > 0)
+            {
+                int pixel = queue.Dequeue(), x = pixel % regionWidth, y = pixel / regionWidth;
+                minX = Math.Min(minX, x); maxX = Math.Max(maxX, x);
+                minY = Math.Min(minY, y); maxY = Math.Max(maxY, y);
+                EnqueueStarNeighbours(mask, regionWidth, regionHeight, queue, x, y);
+            }
+        }
+
+        private static void EnqueueStarNeighbours(bool[] mask, int regionWidth, int regionHeight,
+            Queue<int> queue, int x, int y)
+        {
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx)
+                {
+                    int nx = x + dx, ny = y + dy;
+                    if (nx < 0 || ny < 0 || nx >= regionWidth || ny >= regionHeight) continue;
+                    int neighbour = ny * regionWidth + nx;
+                    if (!mask[neighbour]) continue;
+                    mask[neighbour] = false;
+                    queue.Enqueue(neighbour);
+                }
         }
 
         private static OcrRead Read(Bitmap frame, Rectangle bounds, PageSegMode mode,
@@ -1080,6 +1216,12 @@ namespace InventoryKamera
             internal readonly string Text;
             internal readonly double Confidence;
             internal OcrRead(string text, double confidence) { Text = text; Confidence = confidence; }
+        }
+
+        private sealed class SidebarSeriesCandidate
+        {
+            internal AchievementCategory Category;
+            internal Match Suffix;
         }
 
         private sealed class Geometry
