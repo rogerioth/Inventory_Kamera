@@ -80,6 +80,8 @@ namespace InventoryKamera
 			"Wanderer"
 		};
 
+		private static readonly object EnginesLock = new object();
+
 		internal static ConcurrentBag<TesseractEngine> engines;
 
 		internal static Dictionary<string, string> Weapons, DevItems, Materials, Elements;
@@ -330,7 +332,7 @@ namespace InventoryKamera
 		{
 
 			if (engines is null) engines = new ConcurrentBag<TesseractEngine>();
-			lock (engines)
+			lock (EnginesLock)
 			{
 				while (!engines.IsEmpty)
 				{

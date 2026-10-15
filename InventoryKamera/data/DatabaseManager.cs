@@ -47,6 +47,8 @@ namespace InventoryKamera
         private const string ArtifactMetadataJson = "artifacts.metadata.json";
         private const int ArtifactGeneratorRevision = 1;
         private static readonly object ArtifactUpdateGate = new object();
+        private static readonly object MappingsLock = new object();
+        private static readonly object JsonFileLock = new object();
         private const string CharactersJson = "characters.json";
         private const string TravelerMetadataJson = "traveler.metadata.json";
         private const int TravelerGeneratorRevision = 1;
@@ -561,7 +563,7 @@ namespace InventoryKamera
 
         private void LoadMappings()
         {
-            lock (Mappings)
+            lock (MappingsLock)
             {
                 if (!Mappings.Any())
                 {
@@ -1106,7 +1108,7 @@ namespace InventoryKamera
 
         private string LoadJsonFromFile(string fileName)
         {
-            lock (this)
+            lock (JsonFileLock)
             {
                 try
                 {
@@ -1126,7 +1128,7 @@ namespace InventoryKamera
 
         private bool SaveJsonToFile(string json, string fileName)
         {
-            lock (this)
+            lock (JsonFileLock)
             {
                 string path = ListsDir + fileName;
                 string tempPath = path + ".tmp";
