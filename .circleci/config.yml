@@ -1,0 +1,27 @@
+version: 2.1
+
+jobs:
+  windows-build-and-offline-checks:
+    machine:
+      image: windows-server-2022-gui:current
+      shell: powershell.exe -ExecutionPolicy Bypass
+    resource_class: windows.medium
+    steps:
+      - checkout
+      - run:
+          name: Build Debug configurations and run offline checks
+          no_output_timeout: 10m
+          command: .\tests\run-ci.ps1
+      - run:
+          name: Analyze trusted master and pull requests with Sonar
+          no_output_timeout: 10m
+          command: .\tests\run-sonar-analysis.ps1
+
+workflows:
+  build-and-test:
+    # OAuth integration: enable "Only build pull requests" in Project Settings
+    # to build PR branches and the default master branch. No branch whitelist,
+    # so contributor PRs can use any branch name. Tags are not enabled here.
+    jobs:
+      - windows-build-and-offline-checks:
+          name: Windows build and offline checks

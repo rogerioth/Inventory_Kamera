@@ -29,6 +29,14 @@ The first run of the built app generates `inventorylists/` by pulling game data 
 [animegamedata2](https://gitlab.com/Dimbreath/animegamedata2) — an internet connection is required
 and the first text-map download is tens of megabytes.
 
+## Continuous integration
+
+Run `.\tests\run-ci.ps1` from the repository root to rebuild Debug `AnyCPU` and
+`x64` sequentially and run the four default offline harnesses. This builds the
+application project without the installer and sends no input to the game.
+See [Continuous integration](continuous-integration.md) for service configuration,
+the 27 grouped checks, local-only replays, and Sonar analysis limits.
+
 ## Running a scan while debugging
 
 The scanner needs a live Genshin Impact window. Practical setup:
