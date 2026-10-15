@@ -42,9 +42,10 @@ jobs:
             exit 1
           fi
           git fetch --no-tags origin master
-          git rev-list --first-parent origin/master > "$RUNNER_TEMP/master-history.txt"
-          git show "$RELEASE_COMMIT:release-version.json" > "$RUNNER_TEMP/release-version.json"
-          version=$(node ./scripts/release-version.cjs "$RELEASE_COMMIT" "$RUNNER_TEMP/master-history.txt" "$RUNNER_TEMP/release-version.json")
+          mkdir -p artifacts/release-policy
+          git rev-list --first-parent origin/master > artifacts/release-policy/master-history.txt
+          git show "$RELEASE_COMMIT:release-version.json" > artifacts/release-policy/release-version.json
+          version=$(node ./scripts/release-version.cjs "$RELEASE_COMMIT")
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "commit=$RELEASE_COMMIT" >> "$GITHUB_OUTPUT"
       - name: Wait for the exact master build and quality gate
