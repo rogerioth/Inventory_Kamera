@@ -380,14 +380,22 @@ namespace InventoryKamera
             FallThrough, NextAttempt, StopUnselected
         }
 
+        /// <summary>Scroll-search bookkeeping carried across the bounded sidebar selection attempts.</summary>
+        private sealed class SidebarSearchState
+        {
+            internal string Last;
+            internal int Stationary;
+            internal int UnreadWithinRange;
+            internal int PreviousDirection;
+            internal bool LocalNudgeUsed;
+            internal List<AchievementCategoryEntryOnScreen> BeforeNudge;
+            internal Rectangle NudgeBounds = Rectangle.Empty;
+            internal int NudgeNotches;
+        }
+
         internal bool SelectCategory(AchievementCategory category)
         {
-            string last = null;
-            int stationary = 0, unreadWithinRange = 0, previousDirection = 0;
-            bool localNudgeUsed = false;
-            List<AchievementCategoryEntryOnScreen> beforeNudge = null;
-            Rectangle nudgeBounds = Rectangle.Empty;
-            int nudgeNotches = 0;
+            var search = new SidebarSearchState();
             LastSelectionFailureKind = AchievementSelectionFailureKind.SearchLimit;
             lastSelectionFailure = "Sidebar search exceeded its bounded attempt limit.";
             Logger.Info("Selecting achievement category {0} '{1}' (order {2})", category.Id, category.Name, category.Order);
@@ -402,13 +410,13 @@ namespace InventoryKamera
                         return false;
                     }
                     var entries = ReadSidebar(frame, "select", category.Id, attempt + 1);
-                    if (beforeNudge != null)
+                    if (search.BeforeNudge != null)
                     {
-                        if (!VerifySidebarNudge(frame, category, entries, beforeNudge, nudgeNotches, nudgeBounds))
+                        if (!VerifySidebarNudge(frame, category, entries, search.BeforeNudge, search.NudgeNotches, search.NudgeBounds))
                         {
                             return false;
                         }
-                        beforeNudge = null;
+                        search.BeforeNudge = null;
                     }
                     var entry = FindFullSidebarEntry(entries, category, frame);
                     bool? resolved = ResolveVisibleEntry(category, entry, frame);
@@ -418,13 +426,11 @@ namespace InventoryKamera
                     }
                     direction = SidebarScrollDirection(category, entries);
                     string signature = SidebarSignature(frame, entries);
-                    stationary = NextStationaryCount(signature, last, stationary);
-                    last = signature;
+                    search.Stationary = NextStationaryCount(signature, search.Last, search.Stationary);
+                    search.Last = signature;
                     if (direction == 0)
                     {
-                        var outcome = HandleUnreadableWithinRange(frame, category, entries,
-                            ref unreadWithinRange, ref localNudgeUsed, ref beforeNudge,
-                            ref nudgeBounds, ref nudgeNotches, ref stationary, ref previousDirection, ref last);
+                        var outcome = HandleUnreadableWithinRange(frame, category, entries, search);
                         if (outcome == SidebarStepOutcome.NextAttempt)
                         {
                             continue;
@@ -434,18 +440,17 @@ namespace InventoryKamera
                             return false;
                         }
                     }
-                    else if (HandleScrolledDirection(frame, category, entries, ref direction, stationary,
-                        ref unreadWithinRange) == SidebarStepOutcome.StopUnselected)
+                    else if (HandleScrolledDirection(frame, category, entries, ref direction, search) == SidebarStepOutcome.StopUnselected)
                     {
                         return false;
                     }
-                    if (direction != 0 && previousDirection != 0 && direction != previousDirection)
+                    if (direction != 0 && search.PreviousDirection != 0 && direction != search.PreviousDirection)
                     {
-                        stationary = ResetStationaryOnReversal(category, previousDirection, direction);
+                        search.Stationary = ResetStationaryOnReversal(category, search.PreviousDirection, direction);
                     }
                     step = SidebarScrollStep(entries, category);
                 }
-                ScrollForSidebarSearch(category, direction, step, ref previousDirection);
+                ScrollForSidebarSearch(category, direction, step, search);
             }
             lastSelectionFailure = "Sidebar search exceeded its bounded attempt limit.";
             LastSelectionFailureKind = AchievementSelectionFailureKind.SearchLimit;
@@ -498,27 +503,25 @@ namespace InventoryKamera
         }
 
         private SidebarStepOutcome HandleUnreadableWithinRange(Bitmap frame, AchievementCategory category,
-            List<AchievementCategoryEntryOnScreen> entries, ref int unreadWithinRange, ref bool localNudgeUsed,
-            ref List<AchievementCategoryEntryOnScreen> beforeNudge, ref Rectangle nudgeBounds,
-            ref int nudgeNotches, ref int stationary, ref int previousDirection, ref string last)
+            List<AchievementCategoryEntryOnScreen> entries, SidebarSearchState search)
         {
             // Re-read a missing label inside the current known range before
             // moving away from a category that may already be visible.
-            if (++unreadWithinRange < 3) return SidebarStepOutcome.FallThrough;
+            if (++search.UnreadWithinRange < 3) return SidebarStepOutcome.FallThrough;
             Rectangle candidateBounds = Rectangle.Empty;
-            int nudge = !localNudgeUsed
+            int nudge = !search.LocalNudgeUsed
                 ? SidebarUnreadableNudge(category, entries, frame.Height, out candidateBounds)
                 : 0;
             if (nudge != 0 && !(nudge < 0 ? SidebarAtTop(frame) : SidebarAtBottom(frame)))
             {
                 // Context supplies a safe position change, never a guessed
                 // category identity or click. Reacquire after verified motion.
-                beforeNudge = entries;
-                nudgeBounds = candidateBounds;
-                nudgeNotches = nudge;
-                localNudgeUsed = true;
-                unreadWithinRange = stationary = previousDirection = 0;
-                last = null;
+                search.BeforeNudge = entries;
+                search.NudgeBounds = candidateBounds;
+                search.NudgeNotches = nudge;
+                search.LocalNudgeUsed = true;
+                search.UnreadWithinRange = search.Stationary = search.PreviousDirection = 0;
+                search.Last = null;
                 SaveNavigationFrame(frame, CategoryEvidencePrefix + category.Id + "_before_local_nudge");
                 Logger.Info("Achievement category {0} label unreadable after three captures; nudging sidebar {1} notches around full tile {2}",
                     category.Id, nudge, candidateBounds);
@@ -534,18 +537,17 @@ namespace InventoryKamera
         }
 
         private SidebarStepOutcome HandleScrolledDirection(Bitmap frame, AchievementCategory category,
-            List<AchievementCategoryEntryOnScreen> entries, ref int direction, int stationary,
-            ref int unreadWithinRange)
+            List<AchievementCategoryEntryOnScreen> entries, ref int direction, SidebarSearchState search)
         {
-            unreadWithinRange = 0;
+            search.UnreadWithinRange = 0;
             bool atEnd = direction < 0 ? SidebarAtTop(frame) : SidebarAtBottom(frame);
-            if (atEnd || stationary >= 2)
+            if (atEnd || search.Stationary >= 2)
             {
                 string sidebarEnd = direction < 0 ? "top." : "bottom.";
                 lastSelectionFailure = atEnd
                     ? "The requested category was not recognized at the verified sidebar " + sidebarEnd
                     : "The sidebar did not move after two wheel requests.";
-                if (atEnd && stationary < 2)
+                if (atEnd && search.Stationary < 2)
                 {
                     direction = 0;
                     return SidebarStepOutcome.FallThrough;
@@ -570,14 +572,14 @@ namespace InventoryKamera
             return known.Count > 0 && known.Min() <= 3 ? 4 : 12;
         }
 
-        private void ScrollForSidebarSearch(AchievementCategory category, int direction, int step, ref int previousDirection)
+        private void ScrollForSidebarSearch(AchievementCategory category, int direction, int step, SidebarSearchState search)
         {
             if (direction == 0)
             {
                 Pause(350);
                 return;
             }
-            previousDirection = direction;
+            search.PreviousDirection = direction;
             ScrollSidebar(direction * step, CategoryEvidencePrefix + category.Id + "_search");
         }
 
@@ -636,13 +638,9 @@ namespace InventoryKamera
                 }
                 if (recognitionAttempt < 2) Pause(300);
             }
-            if (entry == null)
-            {
-                lastSelectionFailure = "The category tile could not be reacquired after clicking.";
-                LastSelectionFailureKind = AchievementSelectionFailureKind.LabelUnreadable;
-                return false;
-            }
-            return true;
+            lastSelectionFailure = "The category tile could not be reacquired after clicking.";
+            LastSelectionFailureKind = AchievementSelectionFailureKind.LabelUnreadable;
+            return false;
         }
 
         private bool ConfirmCategoryClick(AchievementCategory category, int clickAttempt)
@@ -712,15 +710,21 @@ namespace InventoryKamera
             Advance, RetryPage, Done
         }
 
+        /// <summary>Scroll coverage bookkeeping carried across the pages of one category scan.</summary>
+        private sealed class CategoryWalkState
+        {
+            internal List<AchievementObservation> Previous;
+            internal string PreviousSignature;
+            internal int Stationary;
+            internal int Step = 28;
+        }
+
         private void ScanCategory(AchievementScanResult result, AchievementCategoryScan coverage,
             AchievementCategory category, AchievementScanAccumulator accumulator)
         {
             // Reset only the right-hand list, independently of sidebar scrolling.
             ResetAchievementList();
-            List<AchievementObservation> previous = null;
-            string previousSignature = null;
-            int stationary = 0;
-            int step = 28;
+            var walk = new CategoryWalkState();
             // While-loop form of the former `for (page = 1; page <= 1000; page++)`:
             // the retry path below (`continue`) re-reads the same page number,
             // exactly like the previous `page--; continue;` plus loop increment.
@@ -731,12 +735,11 @@ namespace InventoryKamera
                 CategoryScanStep outcome;
                 using (var frame = Capture())
                 {
-                    outcome = ReadCategoryPage(result, coverage, category, accumulator, frame, page,
-                        ref previous, ref previousSignature, ref stationary, ref step);
+                    outcome = ReadCategoryPage(result, coverage, category, accumulator, frame, page, walk);
                 }
                 if (outcome == CategoryScanStep.Done) return;
                 if (outcome == CategoryScanStep.RetryPage) continue;
-                navigation.Scroll(false, step);
+                navigation.Scroll(false, walk.Step);
                 Pause(400);
                 page++;
             }
@@ -745,7 +748,7 @@ namespace InventoryKamera
 
         private CategoryScanStep ReadCategoryPage(AchievementScanResult result, AchievementCategoryScan coverage,
             AchievementCategory category, AchievementScanAccumulator accumulator, Bitmap frame, int page,
-            ref List<AchievementObservation> previous, ref string previousSignature, ref int stationary, ref int step)
+            CategoryWalkState walk)
         {
             if (!AchievementRecognizer.IsDetailScreen(frame))
                 throw new InvalidOperationException("The achievement list closed or changed during scanning.");
@@ -757,46 +760,46 @@ namespace InventoryKamera
                 SaveFrame(frame, category.Id, page);
                 return CategoryScanStep.Done;
             }
-            if (previous != null && signature != previousSignature && !RowsOverlap(previous, rows))
-                return UndoLostOverlapStep(coverage, frame, category, page, ref step);
+            if (walk.Previous != null && signature != walk.PreviousSignature && !RowsOverlap(walk.Previous, rows))
+                return UndoLostOverlapStep(coverage, frame, category, page, walk);
             accumulator.AddPage(category, page, rows);
             coverage.Pages = page;
             Progress?.Invoke(result, category, page);
             Logger.Debug("Achievement page {0}: OCR {1}, reused {2}, wheel notches {3}",
-                page, recognizer.LastOcrRowCount, recognizer.LastReusedRowCount, step);
+                page, recognizer.LastOcrRowCount, recognizer.LastReusedRowCount, walk.Step);
             if (Properties.Settings.Default.LogScreenshots || rows.Any(x => !string.IsNullOrEmpty(x.Error)))
                 SaveFrame(frame, category.Id, page);
-            stationary = previousSignature == signature ? stationary + 1 : 0;
-            if (ReachedCategoryBottom(coverage, frame, stationary)) return CategoryScanStep.Done;
-            if (previous != null && !ScrollbarAtBottom(frame))
-                step = AdjustScrollStep(step, previous, rows,
+            walk.Stationary = walk.PreviousSignature == signature ? walk.Stationary + 1 : 0;
+            if (ReachedCategoryBottom(coverage, frame, walk.Stationary)) return CategoryScanStep.Done;
+            if (walk.Previous != null && !ScrollbarAtBottom(frame))
+                walk.Step = AdjustScrollStep(walk.Step, walk.Previous, rows,
                     (int)(963.0 / 1080 * frame.Height) - AchievementRecognizer.GetAchievementListTop(frame));
-            previous = rows;
-            previousSignature = signature;
+            walk.Previous = rows;
+            walk.PreviousSignature = signature;
             return CategoryScanStep.Advance;
         }
 
         private CategoryScanStep UndoLostOverlapStep(AchievementCategoryScan coverage, Bitmap frame,
-            AchievementCategory category, int page, ref int step)
+            AchievementCategory category, int page, CategoryWalkState walk)
         {
             // Undo a step that would leave a gap, then retry with a smaller step.
-            navigation.Scroll(false, -step);
+            navigation.Scroll(false, -walk.Step);
             Pause(400);
-            if (step == 1)
+            if (walk.Step == 1)
             {
                 coverage.Issues.Add("Scrolling lost row overlap; scan coverage cannot be verified.");
                 SaveFrame(frame, category.Id, page);
                 return CategoryScanStep.Done;
             }
-            step = Math.Max(1, step / 2);
-            navigation.Scroll(false, step);
+            walk.Step = Math.Max(1, walk.Step / 2);
+            navigation.Scroll(false, walk.Step);
             Pause(400);
             // Retry the same page number: the step change above undoes
             // the gap-creating scroll, so this page is read again.
             return CategoryScanStep.RetryPage;
         }
 
-        private bool ReachedCategoryBottom(AchievementCategoryScan coverage, Bitmap frame, int stationary)
+        private static bool ReachedCategoryBottom(AchievementCategoryScan coverage, Bitmap frame, int stationary)
         {
             if (stationary >= 2 || stationary >= 1 && ScrollbarAtBottom(frame))
             {
