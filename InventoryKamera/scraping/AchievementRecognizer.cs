@@ -338,7 +338,7 @@ namespace InventoryKamera
                             var series = catalog.Categories.Select(candidate => new
                             {
                                 Category = candidate,
-                                Suffix = Regex.Match(candidate.Name ?? "", @"\s*\(([IVXLCDM]+)\)\s*$")
+                                Suffix = Regex.Match(candidate.Name ?? "", @"\s*\(([IVXLCDM]+)\)\s*$", RegexOptions.None, RegexTimeouts.RegexTimeout)
                             }).Where(candidate => candidate.Suffix.Success &&
                                 AchievementCatalog.Normalize(candidate.Category.Name.Substring(0, candidate.Suffix.Index)) ==
                                 AchievementCatalog.Normalize(prefix)).ToList();
@@ -348,7 +348,7 @@ namespace InventoryKamera
                                 series = catalog.Categories.Select(candidate => new
                                 {
                                     Category = candidate,
-                                    Suffix = Regex.Match(candidate.Name ?? "", @"\s*\(([IVXLCDM]+)\)\s*$")
+                                    Suffix = Regex.Match(candidate.Name ?? "", @"\s*\(([IVXLCDM]+)\)\s*$", RegexOptions.None, RegexTimeouts.RegexTimeout)
                                 }).Where(candidate => candidate.Suffix.Success &&
                                     AchievementCatalog.Normalize(candidate.Category.Name.Substring(0, candidate.Suffix.Index)) ==
                                     AchievementCatalog.Normalize(retryPrefix)).ToList();
@@ -413,7 +413,7 @@ namespace InventoryKamera
                                     category == null ? "unresolved" : category.Id.ToString(CultureInfo.InvariantCulture),
                                     straightICount.HasValue ? straightICount.Value.ToString(CultureInfo.InvariantCulture) : "unqualified");
                             }
-                            else if (category != null && Regex.IsMatch(category.Name ?? "", @"\s*\([IVXLCDM]+\)\s*$"))
+                            else if (category != null && Regex.IsMatch(category.Name ?? "", @"\s*\([IVXLCDM]+\)\s*$", RegexOptions.None, RegexTimeouts.RegexTimeout))
                             {
                                 // A nominal whole-caption series match cannot override an
                                 // unverified independent prefix/suffix pair.
@@ -446,16 +446,16 @@ namespace InventoryKamera
 
         private static string NormalizeSidebarRoman(string text)
         {
-            string glyphs = Regex.Replace(text ?? "", @"\s+", "");
+            string glyphs = Regex.Replace(text ?? "", @"\s+", "", RegexOptions.None, RegexTimeouts.RegexTimeout);
             // Only an independently isolated numeral with an exact canonical prefix
             // reaches this repair. Do not force arbitrary OCR with a whitelist.
-            return Regex.IsMatch(glyphs, @"^[IVXivx1l|!]+$")
+            return Regex.IsMatch(glyphs, @"^[IVXivx1l|!]+$", RegexOptions.None, RegexTimeouts.RegexTimeout)
                 ? glyphs.Replace('1', 'I').Replace('l', 'I').Replace('|', 'I').Replace('!', 'I').ToUpperInvariant() : "";
         }
 
         private static string ExtractSidebarCaptionSuffix(string caption)
         {
-            var suffix = Regex.Match(caption ?? "", @"[\(\[\{]\s*([IVXivx1l|!]+)\s*[\)\]\}]\s*$");
+            var suffix = Regex.Match(caption ?? "", @"[\(\[\{]\s*([IVXivx1l|!]+)\s*[\)\]\}]\s*$", RegexOptions.None, RegexTimeouts.RegexTimeout);
             return suffix.Success ? suffix.Groups[1].Value : "";
         }
 
@@ -479,7 +479,7 @@ namespace InventoryKamera
             string raw = observed(rawNumeral), threshold = observed(thresholdNumeral);
             // V/X and mixed Roman numerals retain strict agreement. A failed straight
             // I qualification cannot be bypassed by two identical I-only OCR reads.
-            return raw.Length > 0 && raw == threshold && !Regex.IsMatch(raw, @"^I+$") &&
+            return raw.Length > 0 && raw == threshold && !Regex.IsMatch(raw, @"^I+$", RegexOptions.None, RegexTimeouts.RegexTimeout) &&
                 available.Count(value => value == raw) == 1 ? raw : "";
         }
 
@@ -559,7 +559,7 @@ namespace InventoryKamera
             if (frame == null) throw new ArgumentNullException(nameof(frame));
             var geometry = new Geometry(frame);
             var read = Read(frame, geometry.Rect(1390, 25, 1785, 68), PageSegMode.SingleLine);
-            var match = Regex.Match(read.Text ?? "", @"completed\s*:\s*(\d[\d,]*)", RegexOptions.IgnoreCase);
+            var match = Regex.Match(read.Text ?? "", @"completed\s*:\s*(\d[\d,]*)", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
             int total;
             return match.Success && int.TryParse(match.Groups[1].Value.Replace(",", ""), out total)
                 ? (int?)total : null;
@@ -778,7 +778,7 @@ namespace InventoryKamera
                 dateHasInk = count >= Math.Max(5, geometry.X(7));
             }
             var dateRead = dateHasInk ? Read(frame, dateBounds, PageSegMode.SingleLine) : new OcrRead("", 0);
-            var date = Regex.Match(dateRead.Text ?? "", @"\b(20\d{2})[-./](\d{2})[-./](\d{2})\b");
+            var date = Regex.Match(dateRead.Text ?? "", @"\b(20\d{2})[-./](\d{2})[-./](\d{2})\b", RegexOptions.None, RegexTimeouts.RegexTimeout);
             DateTime parsedDate;
             if (date.Success && DateTime.TryParseExact(date.Value.Replace('/', '-').Replace('.', '-'),
                 "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out parsedDate))
@@ -801,10 +801,10 @@ namespace InventoryKamera
             }
             string state = string.Join(" ", readings);
             observation.CompletedText = HasCompletedStampText(state, observation.CompletionDate);
-            observation.Claimable = Regex.IsMatch(state, @"\bclaim\b", RegexOptions.IgnoreCase);
-            var progress = Regex.Match(state, @"\b(\d+)\s*/\s*(\d+)\b");
+            observation.Claimable = Regex.IsMatch(state, @"\bclaim\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
+            var progress = Regex.Match(state, @"\b(\d+)\s*/\s*(\d+)\b", RegexOptions.None, RegexTimeouts.RegexTimeout);
             if (progress.Success) observation.Progress = progress.Groups[1].Value + "/" + progress.Groups[2].Value;
-            var total = Regex.Match(state, @"\btotal\s*:\s*(\d[\d,]*)", RegexOptions.IgnoreCase);
+            var total = Regex.Match(state, @"\btotal\s*:\s*(\d[\d,]*)", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
             int value;
             if (total.Success && int.TryParse(total.Groups[1].Value.Replace(",", ""), out value)) observation.Total = value;
             if (!observation.CompletedText && !observation.Claimable && !progress.Success)
@@ -817,7 +817,7 @@ namespace InventoryKamera
                 readings.Add(Clean(Read(frame, stateBounds, PageSegMode.SingleBlock).Text));
                 state = string.Join(" ", readings);
                 bool recognized = HasCompletedStampText(state, observation.CompletionDate)
-                    || Regex.IsMatch(state, @"\bclaim\b|\b\d+\s*/\s*\d+\b", RegexOptions.IgnoreCase);
+                    || Regex.IsMatch(state, @"\bclaim\b|\b\d+\s*/\s*\d+\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
                 if (!recognized)
                 {
                     // Preserve the full label's ascenders/descenders and leave
@@ -828,16 +828,16 @@ namespace InventoryKamera
                     state = string.Join(" ", readings);
                 }
                 observation.CompletedText = HasCompletedStampText(state, observation.CompletionDate);
-                observation.Claimable = Regex.IsMatch(state, @"\bclaim\b", RegexOptions.IgnoreCase);
-                progress = Regex.Match(state, @"\b(\d+)\s*/\s*(\d+)\b");
+                observation.Claimable = Regex.IsMatch(state, @"\bclaim\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
+                progress = Regex.Match(state, @"\b(\d+)\s*/\s*(\d+)\b", RegexOptions.None, RegexTimeouts.RegexTimeout);
                 if (progress.Success) observation.Progress = progress.Groups[1].Value + "/" + progress.Groups[2].Value;
-                total = Regex.Match(state, @"\btotal\s*:\s*(\d[\d,]*)", RegexOptions.IgnoreCase);
+                total = Regex.Match(state, @"\btotal\s*:\s*(\d[\d,]*)", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
                 if (total.Success && int.TryParse(total.Groups[1].Value.Replace(",", ""), out value)) observation.Total = value;
                 Logger.Debug("Achievement state column reread: category={0}, page={1}, top={2}, title='{3}', completed={4}, claimable={5}, progress='{6}', date='{7}', raw='{8}'",
                     observation.CategoryId, observation.Page, bounds.Top, observation.Title, observation.CompletedText,
                     observation.Claimable, observation.Progress, observation.CompletionDate, state);
             }
-            if (observation.CompletedText && !Regex.IsMatch(state, @"\bcompleted\b", RegexOptions.IgnoreCase))
+            if (observation.CompletedText && !Regex.IsMatch(state, @"\bcompleted\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout))
                 Logger.Debug("Achievement completion stamp repaired lowercase l/i OCR: category={0}, page={1}, top={2}, title='{3}', validDate='{4}', raw='{5}'; tier/star and progress validation still required",
                     observation.CategoryId, observation.Page, bounds.Top, observation.Title, observation.CompletionDate, state);
             if (!observation.CompletedText && !observation.Claimable && string.IsNullOrEmpty(observation.Progress))
@@ -849,12 +849,12 @@ namespace InventoryKamera
 
         private static bool HasCompletedStampText(string text, string validDate)
         {
-            if (Regex.IsMatch(text ?? "", @"\bcompleted\b", RegexOptions.IgnoreCase)) return true;
+            if (Regex.IsMatch(text ?? "", @"\bcompleted\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout)) return true;
             // The narrow lowercase l in this stamp is sometimes read as i/1.
             // Repair that one glyph only alongside a separately validated date;
             // Reconcile still requires matching filled stars and rejects unfinished progress.
             return !string.IsNullOrEmpty(validDate)
-                && Regex.IsMatch(text ?? "", @"\bcomp[i1]eted\b", RegexOptions.IgnoreCase);
+                && Regex.IsMatch(text ?? "", @"\bcomp[i1]eted\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
         }
 
         internal static void Reconcile(AchievementObservation observation, AchievementFamily family,
@@ -870,7 +870,7 @@ namespace InventoryKamera
                 return;
             }
             bool hasProgress = !string.IsNullOrEmpty(observation.Progress);
-            var progress = Regex.Match(observation.Progress ?? "", @"^(\d+)/(\d+)$");
+            var progress = Regex.Match(observation.Progress ?? "", @"^(\d+)/(\d+)$", RegexOptions.None, RegexTimeouts.RegexTimeout);
             long numerator, denominator;
             if (currentComplete && progress.Success
                 && long.TryParse(progress.Groups[1].Value, out numerator)
@@ -1058,7 +1058,7 @@ namespace InventoryKamera
         }
 
         private static bool IsCream(Color c) { return c.R > 225 && c.G > 218 && c.B > 200; }
-        private static string Clean(string value) { return Regex.Replace(value ?? "", @"\s+", " ").Trim(); }
+        private static string Clean(string value) { return Regex.Replace(value ?? "", @"\s+", " ", RegexOptions.None, RegexTimeouts.RegexTimeout).Trim(); }
 
         private static void SaveEvidence(Bitmap frame, Rectangle bounds, AchievementObservation observation)
         {

@@ -90,7 +90,7 @@ namespace InventoryKamera
                 {
                     string detail = ReadText(frame, geometry.TopRect(20, 130, 480, 260));
                     evidence.Add($"detail-panel x={panelEdge.Value}, title='{detail}'");
-                    if (Regex.IsMatch(detail, @"\bconstellation\s*(?:lv|level)\b", RegexOptions.IgnoreCase))
+                    if (Regex.IsMatch(detail, @"\bconstellation\s*(?:lv|level)\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout))
                         return Finish(result, CharacterScreenState.ConstellationDetails, evidence);
 
                     // A talent level on the left is combined with the separate
@@ -408,8 +408,8 @@ namespace InventoryKamera
 
         internal static bool HasTalentDetailTabs(string text)
         {
-            return Regex.IsMatch(text ?? string.Empty, @"\btalent\s+info\b", RegexOptions.IgnoreCase)
-                && Regex.IsMatch(text ?? string.Empty, @"\bskill\s+attributes?\b", RegexOptions.IgnoreCase);
+            return Regex.IsMatch(text ?? string.Empty, @"\btalent\s+info\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout)
+                && Regex.IsMatch(text ?? string.Empty, @"\bskill\s+attributes?\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
         }
 
         private static bool ReadTalentDetailTabs(Bitmap frame, Geometry geometry, List<string> evidence)
@@ -433,10 +433,10 @@ namespace InventoryKamera
             Rectangle region = geometry.BottomRect(1500, 115, 330, 85);
             string text = ReadText(frame, region);
             evidence.Add("talent demo control='" + text + "'");
-            if (Regex.IsMatch(text, @"\btalent\s+demo\b", RegexOptions.IgnoreCase)) return true;
+            if (Regex.IsMatch(text, @"\btalent\s+demo\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout)) return true;
             text = ReadRawText(frame, region);
             evidence.Add("talent demo control raw='" + text + "'");
-            return Regex.IsMatch(text, @"\btalent\s+demo\b", RegexOptions.IgnoreCase);
+            return Regex.IsMatch(text, @"\btalent\s+demo\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
         }
 
         private static bool HasUniqueSelectedTalentsMarker(Bitmap frame, Geometry geometry)
@@ -449,7 +449,7 @@ namespace InventoryKamera
         private static bool HasConstellationDetailLabel(string text)
         {
             return Regex.IsMatch(text ?? string.Empty, @"\bconstellation\s*(?:lv|level)\s*[.:]?\s*\d{1,2}\b",
-                RegexOptions.IgnoreCase);
+                RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
         }
 
         private static int CountExactSidebarLabels(string text)
@@ -460,7 +460,7 @@ namespace InventoryKamera
 
         private static bool HasExactLabel(string text, string label)
         {
-            return Regex.IsMatch(text ?? string.Empty, @"(?<![a-z])" + label + @"(?![a-z])", RegexOptions.IgnoreCase);
+            return Regex.IsMatch(text ?? string.Empty, @"(?<![a-z])" + label + @"(?![a-z])", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout);
         }
 
         private static bool HasTolerantCharacterSidebar(string text)
@@ -545,12 +545,12 @@ namespace InventoryKamera
 
         private static int CountLevelLabels(string text)
         {
-            return Regex.Matches(text ?? string.Empty, @"\blv\s*[.:]?\s*\d{1,2}\b", RegexOptions.IgnoreCase).Count;
+            return Regex.Matches(text ?? string.Empty, @"\blv\s*[.:]?\s*\d{1,2}\b", RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout).Count;
         }
 
         private static string Normalize(string text)
         {
-            return Regex.Replace(text ?? string.Empty, @"[^a-z]", string.Empty, RegexOptions.IgnoreCase).ToLowerInvariant();
+            return Regex.Replace(text ?? string.Empty, @"[^a-z]", string.Empty, RegexOptions.IgnoreCase, RegexTimeouts.RegexTimeout).ToLowerInvariant();
         }
 
         private static CharacterScreenRecognition Finish(CharacterScreenRecognition result,
@@ -575,7 +575,7 @@ namespace InventoryKamera
 
         private static bool HasHealthFraction(string text)
         {
-            Match match = Regex.Match(text ?? string.Empty, @"(?<!\d)(\d{1,7})\s*/\s*(\d{1,7})(?!\d)");
+            Match match = Regex.Match(text ?? string.Empty, @"(?<!\d)(\d{1,7})\s*/\s*(\d{1,7})(?!\d)", RegexOptions.None, RegexTimeouts.RegexTimeout);
             int current, maximum;
             return match.Success && int.TryParse(match.Groups[1].Value, out current) &&
                 int.TryParse(match.Groups[2].Value, out maximum) && maximum > 0 && current <= maximum;
@@ -671,7 +671,7 @@ namespace InventoryKamera
                             Math.Max(1, geometry.ScaleY(24)));
                         string text = ReadKeyText(frame, keyRegion, true);
                         int number;
-                        if (Regex.IsMatch(text, @"^[1-4]$") && int.TryParse(text, out number)) keys.Add(number);
+                        if (Regex.IsMatch(text, @"^[1-4]$", RegexOptions.None, RegexTimeouts.RegexTimeout) && int.TryParse(text, out number)) keys.Add(number);
                     }
                     start = -1;
                 }

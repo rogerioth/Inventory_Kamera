@@ -140,7 +140,7 @@ namespace InventoryKamera
                 foreach (var title in feed.Descendants(atomNamespace + "entry")
                     .Select(entry => entry.Element(atomNamespace + "title")?.Value))
                 {
-                    var match = Regex.Match(title ?? string.Empty, pattern);
+                    var match = Regex.Match(title ?? string.Empty, pattern, RegexOptions.None, RegexTimeouts.RegexTimeout);
                     if (match.Success)
                     {
                         var v = match.Groups[1].Value;
@@ -538,7 +538,7 @@ namespace InventoryKamera
         private static string TravelerUpgradeType(string description, int autoId, int skillId, int burstId,
             string autoName, string skillName, string burstName)
         {
-            var links = Regex.Matches(description, @"\{LINK#S(\d+)\}").Cast<Match>().Select(x => int.Parse(x.Groups[1].Value)).Distinct().ToList();
+            var links = Regex.Matches(description, @"\{LINK#S(\d+)\}", RegexOptions.None, RegexTimeouts.RegexTimeout).Cast<Match>().Select(x => int.Parse(x.Groups[1].Value)).Distinct().ToList();
             var matches = new List<string>();
             if (links.Count > 0)
             {
@@ -687,7 +687,7 @@ namespace InventoryKamera
                     try
                     {
                         string PascalCase = CultureInfo.GetCultureInfo("en").TextInfo.ToTitleCase(name);
-                        string nameGOOD = Regex.Replace(PascalCase, @"[\W]", string.Empty);
+                        string nameGOOD = Regex.Replace(PascalCase, @"[\W]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
                         string nameKey = nameGOOD.ToLower();
                         int characterID = (int)character["id"];
 
@@ -984,7 +984,7 @@ namespace InventoryKamera
                         {
                             var name = Mappings[weapon["nameTextMapHash"].ToString()];
                             string PascalCase = CultureInfo.GetCultureInfo("en").TextInfo.ToTitleCase(name); // Dull Blade
-                            string nameGOOD = Regex.Replace(PascalCase, @"[\W]", string.Empty);              // DullBlade
+                            string nameGOOD = Regex.Replace(PascalCase, @"[\W]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);              // DullBlade
                             string nameKey = nameGOOD.ToLower();                                             // dullblade
 
                             // An added weapon is new data; the inverted check used to
@@ -1045,7 +1045,7 @@ namespace InventoryKamera
                     if (Mappings.TryGetValue(jToken.ToString(), out var name))
                     {
                         var PascalCase = CultureInfo.GetCultureInfo("en").TextInfo.ToTitleCase(name);
-                        var nameGood = Regex.Replace(PascalCase, @"[\W]", string.Empty);
+                        var nameGood = Regex.Replace(PascalCase, @"[\W]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
                         var nameKey = nameGood.ToLower();
 
                         if (data.TryAdd(nameKey, nameGood) && status != UpdateStatus.Fail) status = UpdateStatus.Success;
@@ -1163,16 +1163,16 @@ namespace InventoryKamera
 
         private static string ConvertToGOOD(string text)
         {
-            foreach (Match match in Regex.Matches(text, @"&#\d*;"))
+            foreach (Match match in Regex.Matches(text, @"&#\d*;", RegexOptions.None, RegexTimeouts.RegexTimeout))
             {
-                if (int.TryParse(Regex.Replace(match.Value, @"\D", string.Empty), out int dec))
+                if (int.TryParse(Regex.Replace(match.Value, @"\D", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout), out int dec))
                     text = text.Replace(match.Value, Char.ToString(Convert.ToChar(dec)));
 
                 else
                     Logger.Warn("Failed to parse decimal value {0} from string {1}", match.Value, text);
             }
             var pascal = CultureInfo.GetCultureInfo("en-US").TextInfo.ToTitleCase(text);
-            return Regex.Replace(pascal, @"[\W]", string.Empty);
+            return Regex.Replace(pascal, @"[\W]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
         }
     }
 

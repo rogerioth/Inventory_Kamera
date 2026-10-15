@@ -713,10 +713,10 @@ namespace InventoryKamera
 			if (text != "")
 			{
 				// Only keep a-Z and 0-9
-				text = Regex.Replace(text, @"[\W_]", string.Empty).ToLower();
+				text = Regex.Replace(text, @"[\W_]", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout).ToLower();
 
 				// Only keep text up until first space
-				text = Regex.Replace(text, @"\s+\w*", string.Empty);
+				text = Regex.Replace(text, @"\s+\w*", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
 
 			}
 			else
@@ -805,7 +805,7 @@ namespace InventoryKamera
             // pre-slash field must end in a whole element line; preceding name
             // lines are retained, rather than searching arbitrary words for an element.
             var fields = (text ?? "").Split('/').Select(value => value.Trim()).ToList();
-            while (fields.Count > 0 && !Regex.IsMatch(fields[0], @"[\p{L}\p{N}]")) fields.RemoveAt(0);
+            while (fields.Count > 0 && !Regex.IsMatch(fields[0], @"[\p{L}\p{N}]", RegexOptions.None, RegexTimeouts.RegexTimeout)) fields.RemoveAt(0);
             if (fields.Count != 2) return false;
             // Long names wrap above and below the element/slash line. Tesseract
             // therefore emits "Yumemizuki\nAnemo / Mizuki". The element must
@@ -814,7 +814,7 @@ namespace InventoryKamera
             var beforeSlash = fields[0].Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
                 .Select(value => value.Trim()).Where(value => value.Length > 0).ToList();
             if (beforeSlash.Count == 0) return false;
-            string observedElement = Regex.Replace(beforeSlash[beforeSlash.Count - 1], @"[^\p{L}]", "").ToLowerInvariant();
+            string observedElement = Regex.Replace(beforeSlash[beforeSlash.Count - 1], @"[^\p{L}]", "", RegexOptions.None, RegexTimeouts.RegexTimeout).ToLowerInvariant();
             if (!GenshinProcesor.Elements.TryGetValue(observedElement, out element)) return false;
             rawName = (string.Join(" ", beforeSlash.Take(beforeSlash.Count - 1)) + " " + fields[1]).FoldToOcrName();
             name = MatchCharacterHeaderName(rawName, element, nameClipped);
@@ -1120,7 +1120,7 @@ namespace InventoryKamera
 				string text = GenshinProcesor.AnalyzeText(n).Trim();
 				Logger.Debug("Scanned character level as {0}", text);
 
-				text = Regex.Replace(text, @"(?![0-9/]).", string.Empty);
+				text = Regex.Replace(text, @"(?![0-9/]).", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
 				Logger.Debug("Filtered scanned text to {0}", text);
 				if (text.Contains("/"))
 				{
@@ -1168,9 +1168,9 @@ namespace InventoryKamera
 
 			string text = GenshinProcesor.AnalyzeText(bm);
 			text = text.Trim();
-			text = Regex.Replace(text, @"(?![0-9\s/]).", string.Empty);
+			text = Regex.Replace(text, @"(?![0-9\s/]).", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout);
 
-			if (Regex.IsMatch(text, "/"))
+			if (Regex.IsMatch(text, "/", RegexOptions.None, RegexTimeouts.RegexTimeout))
 			{
 				string[] temp = text.Split('/');
 				experience = Convert.ToInt32(temp[0]);
@@ -1306,7 +1306,7 @@ namespace InventoryKamera
 					lastTalentText = GenshinProcesor.AnalyzeText(n, Tesseract.PageSegMode.SingleBlock).Trim();
 					var text = lastTalentText.Split('\n').ToList();
 
-					if (int.TryParse(Regex.Replace(text.Last(), @"\D", string.Empty), out int level))
+					if (int.TryParse(Regex.Replace(text.Last(), @"\D", string.Empty, RegexOptions.None, RegexTimeouts.RegexTimeout), out int level))
 					{
 						if (level >= 1 && level <= 15)
 						{

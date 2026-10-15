@@ -19,8 +19,8 @@ namespace InventoryKamera
         public const string CatalogUrl = "https://raw.githubusercontent.com/MadeBaruna/paimon-moe/main/src/data/achievement/en.json";
         private static readonly object LoadLock = new object();
         private static AchievementCatalog current;
-        private static readonly Regex Markup = new Regex("<[^>]+>", RegexOptions.Compiled);
-        private static readonly Regex Numbers = new Regex(@"\b\d+(?:\.\d+)?\b", RegexOptions.Compiled);
+        private static readonly Regex Markup = new Regex("<[^>]+>", RegexOptions.Compiled, RegexTimeouts.RegexTimeout);
+        private static readonly Regex Numbers = new Regex(@"\b\d+(?:\.\d+)?\b", RegexOptions.Compiled, RegexTimeouts.RegexTimeout);
 
         public List<AchievementCategory> Categories { get; private set; } = new List<AchievementCategory>();
         public string SourceUrl { get; private set; } = CatalogUrl;
@@ -261,8 +261,8 @@ namespace InventoryKamera
             if (!reward.HasValue || description.Length < 24) return null;
             // Tesseract can duplicate the round glyph as "0O", or read O as 0 inside a word.
             // Preserve real title numbers, including goals and Roman-numeral tier suffixes.
-            string repairedTitle = Regex.Replace(title, @"0o|o0", "o");
-            repairedTitle = Regex.Replace(repairedTitle, @"(?<=[a-z])0|0(?=[a-z])", "o");
+            string repairedTitle = Regex.Replace(title, @"0o|o0", "o", RegexOptions.None, RegexTimeouts.RegexTimeout);
+            repairedTitle = Regex.Replace(repairedTitle, @"(?<=[a-z])0|0(?=[a-z])", "o", RegexOptions.None, RegexTimeouts.RegexTimeout);
             if (repairedTitle == title) return null;
             var candidates = new List<Candidate>();
             foreach (var family in category.Families)
