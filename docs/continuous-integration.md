@@ -44,11 +44,11 @@ open-source allowance applies to Linux builds. Monitor the remaining allowance
 in the service rather than assuming public Windows builds are unlimited.
 See [CircleCI pricing](https://circleci.com/pricing/).
 
-**Only build pull requests** is enabled for the OAuth project, with the intended
-trigger policy of PR branches plus default `master`. **Free and Open Source**
-was already enabled. Fork PR builds and **Auto-cancel redundant workflows** are
-selected settings whose behavior still needs follow-up verification. These
-service settings are separate from the committed YAML.
+The OAuth project's settings enable **Only build pull requests**, **Build forked
+pull requests**, and **Auto-cancel redundant workflows**. The default `master`
+branch still builds. **Free and Open Source** is enabled, and **Pass secrets to
+builds from forked pull requests** remains disabled. These service settings were
+verified in the project UI; they are separate from the committed YAML.
 See CircleCI's [open-source settings](https://circleci.com/docs/guides/integration/oss/)
 and [redundant-workflow cancellation](https://circleci.com/docs/guides/orchestrate/skip-build/).
 
@@ -70,6 +70,8 @@ The analysis step being added after the baseline checks runs
 upload results. This is the C# analysis path described in Sonar's
 [scanner documentation](https://docs.sonarsource.com/sonarqube-cloud/analyzing-source-code/scanners/sonarscanner-for-dotnet/using).
 No CircleCI Sonar orb is used, and automatic analysis must remain off.
+The tool manifest pins SonarScanner for .NET to version **11.3.0**. The script
+checks the PR repository, branch, and head commit before uploading an analysis.
 
 `SONAR_TOKEN` belongs in the CircleCI project's secret environment settings.
 Sharing it with fork builds stays disabled. Without that token, including on
@@ -80,8 +82,17 @@ The harness results are **not coverage measurements**. No coverage report is
 currently generated or imported; coverage must not be inferred from the 27
 checks or filled with invented values.
 
-The first uploaded analysis, actual quality-gate conditions, and PR status still
-need verification. After successful `master` and PR analyses, confirm the exact
-Sonar check name and fork-PR behavior before adding it as a required repository
-check. The CircleCI status above is already observed; a Sonar gate pass is not.
+The project is assigned **Inventory Kamera - new code**, a project-specific copy
+of Sonar way. Its new-code conditions require reliability, security, and
+maintainability ratings of A, 100% security-hotspot review, and at most 3%
+duplication. Its inherited 80% coverage condition remains in place pending an
+explicit decision about the initial policy without coverage reports. The
+organization's default gate is unchanged.
+
+The first uploaded analysis and PR gate result still need verification. Establish
+a `master` baseline before relying on PR comparisons. After successful `master`
+and PR analyses, confirm the exact Sonar check name and fork-PR behavior before
+adding a separate required Sonar check. The verified CircleCI status is required
+by the repository ruleset, including an up-to-date branch; a Sonar gate pass has
+not yet been established.
 See [Repository review policy](repository-governance.md) for protection setup.

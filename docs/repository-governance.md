@@ -29,6 +29,18 @@ approval, dismisses stale approvals, and lists only @rogerioth for pull-request
 bypass. CODEOWNERS must be present on the PR's base branch before its ownership
 requirements can take effect. Keep the definition and live settings in sync.
 
+## Required CI status
+
+The ruleset also requires `ci/circleci: Windows build and offline checks` and an
+up-to-date PR branch. This status was verified on the hosted Windows build before
+being required. The job builds both Debug targets, runs the offline checks, and
+waits for the Sonar quality gate when analysis credentials are available.
+
+Fork builds receive no Sonar token and explicitly skip the analysis step. A
+successful fork build establishes its build/check result, not a Sonar gate pass.
+See [Continuous integration](continuous-integration.md) for the analysis setup
+and limitations. The maintainer's existing PR-only bypass remains available.
+
 See GitHub's documentation on
 [code-owner enforcement](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)
 and [ruleset bypass permissions](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository#granting-bypass-permissions-for-your-branch-or-tag-ruleset).
