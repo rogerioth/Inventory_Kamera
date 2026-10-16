@@ -67,6 +67,12 @@ namespace InventoryKamera
 			internal string LastInspectedIdentity;
 			internal string First;
 			internal int? RosterTotal;
+
+			// True when RosterTotal is the best observed count rather than a
+			// wrap-verified cycle, e.g. the counting traversal was interrupted
+			// or its starting checkpoint drifted. Still far more useful as the
+			// pill's denominator than "?".
+			internal bool RosterTotalIsProvisional;
 		}
 
 		public static void ScanCharacters(List<Character> Characters)
@@ -85,14 +91,16 @@ namespace InventoryKamera
 			UserInterface.ReportScanProgress(ScanPhase.Characters, 0, null, "Counting roster", totalIsProvisional: true);
 			try
 			{
-				context.RosterTotal = CountOwnedCharacters(out string rosterStart);
+				context.RosterTotal = CountOwnedCharacters(out string rosterStart, out bool provisional);
+				context.RosterTotalIsProvisional = provisional;
 				context.First = rosterStart;
 			}
 			finally
 			{
 				// An interrupted count must not leave its partial denominator in the pill.
 				UserInterface.ReportScanProgress(ScanPhase.Characters, 0, context.RosterTotal,
-					context.RosterTotal.HasValue ? "Scanning roster" : "Scanning roster (total unavailable)");
+					context.RosterTotal.HasValue ? "Scanning roster" : "Scanning roster (total unavailable)",
+					totalIsProvisional: context.RosterTotalIsProvisional);
 			}
 		}
 
@@ -115,7 +123,8 @@ namespace InventoryKamera
 				// detail read failed. Count inspected slots rather than only valid exports.
 				string readableIdentity = string.IsNullOrWhiteSpace(character.NameGOOD) ? "Unreadable character" : character.NameGOOD;
 				string scanDetail = omittedAfterNavigationFailure ? "Partial: skipped " + currentIdentity : readableIdentity;
-				UserInterface.ReportScanProgress(ScanPhase.Characters, ++context.Viewed, context.RosterTotal, scanDetail);
+				UserInterface.ReportScanProgress(ScanPhase.Characters, ++context.Viewed, context.RosterTotal, scanDetail,
+					totalIsProvisional: context.RosterTotalIsProvisional);
 				context.LastInspectedIdentity = currentIdentity;
 				CharacterNavigation.ConfirmRosterProgress(currentIdentity);
 				AdvanceCharacterWithRecovery(currentIdentity);
@@ -229,12 +238,14 @@ namespace InventoryKamera
 				Logger.Warn("Character roster cycle verified with partial data: inspected={0}, recorded={1}, skipped={2}: {3}",
 					context.Viewed, context.Characters.Count, LastSkippedCount, string.Join(", ", skippedIdentities));
 				UserInterface.ReportScanProgress(ScanPhase.Characters, context.Viewed, context.RosterTotal,
-					"Partial roster: " + LastSkippedCount + " characters skipped");
+					"Partial roster: " + LastSkippedCount + " characters skipped",
+					totalIsProvisional: context.RosterTotalIsProvisional);
 			}
 			else
 			{
 				Logger.Warn("Character roster scan ended without a verified cycle: inspected={0}, recorded={1}, total={2}", context.Viewed, context.Characters.Count, context.RosterTotal?.ToString() ?? "unknown");
-				UserInterface.ReportScanProgress(ScanPhase.Characters, context.Viewed, context.RosterTotal, "Roster cycle could not be verified");
+				UserInterface.ReportScanProgress(ScanPhase.Characters, context.Viewed, context.RosterTotal, "Roster cycle could not be verified",
+					totalIsProvisional: context.RosterTotalIsProvisional);
 			}
 		}
 
@@ -295,11 +306,14 @@ namespace InventoryKamera
 			return positionKnown;
 		}
 
-		private static int? CountOwnedCharacters(out string startingName)
+		private static int? CountOwnedCharacters(out string startingName, out bool totalIsProvisional)
 		{
 			// This is a traversal guard, never a progress denominator or a catalog count.
 			const int maxRosterPositions = 256;
-			int? total = CountRosterBestEffort(
+			int? total;
+			totalIsProvisional = false;
+			int observedCount = 0;
+			int? verified = CountRosterBestEffort(
 				() => SelectAttributesAfterDetails("prepare optional roster count"),
 				ReadRosterIdentity, Navigation.SelectNextCharacter,
 				identity => RestoreRosterPosition(identity, ReadRosterIdentity, Navigation.SelectNextCharacter,
@@ -314,10 +328,32 @@ namespace InventoryKamera
 					SelectAttributesAfterDetails("recover initial roster checkpoint Attributes");
 					return true;
 				}, maxRosterPositions, out startingName,
-				count => UserInterface.ReportScanProgress(ScanPhase.Characters, 0, count, "Counting roster", totalIsProvisional: true));
-			if (total.HasValue) Logger.Info("Verified owned character roster cycle: {0} characters", total.Value);
-			else Logger.Info("Optional roster total unavailable; scanning from verified initial checkpoint {0} without a denominator",
-				startingName ?? "header not yet readable");
+				count =>
+				{
+					observedCount = count;
+					UserInterface.ReportScanProgress(ScanPhase.Characters, 0, count, "Counting roster", totalIsProvisional: true);
+				});
+			if (verified.HasValue)
+			{
+				total = verified;
+				Logger.Info("Verified owned character roster cycle: {0} characters", verified.Value);
+			}
+			else if (observedCount >= 2)
+			{
+				// The cycle could not be verified (starting checkpoint drift,
+				// interruption, duplicate/unreadable label), but the traversal did
+				// observe this many distinct names. Keep it as a provisional
+				// denominator instead of degrading the pill to "?".
+				total = observedCount;
+				totalIsProvisional = true;
+				Logger.Warn("Roster cycle could not be verified; using the best observed count {0} as a provisional total", observedCount);
+			}
+			else
+			{
+				total = null;
+				Logger.Info("Optional roster total unavailable; scanning from verified initial checkpoint {0} without a denominator",
+					startingName ?? "header not yet readable");
+			}
 			return total;
 		}
 

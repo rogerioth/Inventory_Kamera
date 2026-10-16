@@ -39,7 +39,8 @@ namespace InventoryKamera
         {
             get
             {
-                if (TotalIsProvisional) return 0;
+                // A provisional total (best observed roster count) still fills the
+                // bar; it is clamped at 100 in case the denominator under-counts.
                 if (Total.HasValue && Total.Value > 0) return (int)Math.Min(100, 100L * Current / Total.Value);
                 if (Finished && Total == 0) return 100;
                 return 0;

@@ -74,16 +74,18 @@ namespace InventoryKamera
         {
             int acceptedCharacters;
             int.TryParse(CharactersScanned_Label.Text, out acceptedCharacters);
-            string rosterTotalNote = characterTotal.HasValue
-                ? "The total counts owned characters, not the character catalog.\n"
-                : "? means the owned roster total could not be verified or has not been read yet.\n";
+            string rosterTotalNote = !characterTotal.HasValue
+                ? "? means the owned roster total could not be verified or has not been read yet.\n"
+                : characterTotalIsProvisional
+                    ? "The total is the best observed count from roster counting; the wrap check could not fully verify it, so it may be approximate.\n"
+                    : "The total counts owned characters, not the character catalog.\n";
             string coverageNote = characterCoverageComplete
                 ? "Roster coverage verified with no omitted characters."
                 : "Roster coverage is not yet fully verified; unreadable or skipped characters leave partial export data.";
             return characterTotalIsProvisional
                 ? "Characters: " + CharactersScanned_Label.Text + " accepted for export / " + (characterTotal?.ToString() ?? "?") +
-                    " owned characters found so far.\nCounting the roster; the total grows as unique characters are found.\n" +
-                    "The final total is confirmed after a full cycle and restoration of the starting character. Full character scanning follows."
+                    " owned characters observed while counting the roster.\n" +
+                    "The total is approximate (the roster cycle could not be verified); full character scanning follows."
                 : "Characters: " + CharactersScanned_Label.Text + " valid, unique characters accepted for export / " +
                 (characterTotal?.ToString() ?? "?") + " owned characters in a verified roster cycle.\n" +
                 "Inspected: " + characterInspected + "; inspected but not exported: " + Math.Max(0, characterInspected - acceptedCharacters) + ".\n" +
