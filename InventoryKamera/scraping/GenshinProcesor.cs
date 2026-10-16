@@ -101,12 +101,21 @@ namespace InventoryKamera
 		// ready before this builds the element lookup.
 		internal static readonly Dictionary<string, string> Elements = BuildElements();
 
-		private static Dictionary<string, string> BuildElements()
+		// The explicit static constructor keeps OCR engine creation and lookup-table
+		// loading in their startup order. Field initializers above run first (so the
+		// pure BuildElements() can build the element lookup), then this body runs.
+		// Inline-initializing engines/data is not safe: BuildElements used to run
+		// before tesseractNativeLibraries (declared below) was initialized, crashing
+		// the type initializer with a NullReferenceException on startup.
+		static GenshinProcesor()
 		{
 			InitEngines();
-
 			ReloadData();
+			Logger.Info("Scraper initialized");
+		}
 
+		private static Dictionary<string, string> BuildElements()
+		{
 			var built = new Dictionary<string, string>();
 			foreach (var element in elements)
 			{
@@ -114,7 +123,6 @@ namespace InventoryKamera
 				built.Add(element, char.ToUpper(element[0]) + element.Substring(1));
 			}
 
-			Logger.Info("Scraper initialized");
 			return built;
 		}
 
