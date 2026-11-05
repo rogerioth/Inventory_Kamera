@@ -873,7 +873,7 @@ namespace InventoryKamera
                 GetConstellationNameFromId(context.CharacterId, context.Constellations, context.Mappings)
             });
 
-            value.Add("ConstellationOrder", BuildConstellationOrder(context.Talents, name, skill, context.Mappings));
+            value.Add("ConstellationOrder", BuildConstellationOrder(context.Talents, name, skill, context.Mappings, context.Skills));
 
             value.Add("Element", new JArray(GetElementFromID(context.CharacterId, context.Constellations, context.Mappings)));
 
@@ -882,7 +882,7 @@ namespace InventoryKamera
         }
 
         private static JArray BuildConstellationOrder(List<JObject> talents, string name, string skill,
-            ConcurrentDictionary<string, string> mappings)
+            ConcurrentDictionary<string, string> mappings, List<JObject> skills)
         {
             var constellationOrder = new JArray();
 
@@ -890,16 +890,30 @@ namespace InventoryKamera
             // so we'll check for it. C3 and C5 can also level the normal attack for
             // characters such as Freminet, Sethos, Arlecchino or Neuvillette.
             // Ported from taiwenlee/Inventory_Kamera (MIT): 191fa8f2
-            constellationOrder.Add(ConstellationUpgradeType(talents, name, 2, skill, mappings));
-            constellationOrder.Add(ConstellationUpgradeType(talents, name, 4, skill, mappings));
+            constellationOrder.Add(ConstellationUpgradeType(talents, name, 2, skill, mappings, skills));
+            constellationOrder.Add(ConstellationUpgradeType(talents, name, 4, skill, mappings, skills));
             return constellationOrder;
         }
 
         private static string ConstellationUpgradeType(List<JObject> talents, string name, int tierIndex, string skill,
-            ConcurrentDictionary<string, string> mappings)
+            ConcurrentDictionary<string, string> mappings, List<JObject> skills)
         {
             string description = talents.Where(entry => entry["icon"]?.ToString().Contains(name) == true).ElementAt(tierIndex)["descTextMapHash"].ToString();
             description = mappings[description].ToString();
+
+            // Prefer resolving the constellation's referenced talent through its
+            // {LINK#S<id>} join: the description text alone misclassifies characters
+            // whose kit renames its own talents (e.g. Sandrone's C3 levels her
+            // normal attack "Formule Phenomenale: Self-Evident Proposition" without
+            // ever saying "Normal Attack"). The referenced skill row's icon prefix
+            // is authoritative: Skill_A_ = normal attack, Skill_S_ = elemental
+            // skill, Skill_E_ = elemental burst.
+            var linkedType = ClassifyLinkedUpgrade(description, skills);
+            if (linkedType != null)
+            {
+                return linkedType;
+            }
+
             if (description.Contains("Normal Attack"))
             {
                 return TalentAuto;
@@ -912,6 +926,25 @@ namespace InventoryKamera
             {
                 return TalentBurst;
             }
+        }
+
+        private static string ClassifyLinkedUpgrade(string description, List<JObject> skills)
+        {
+            var links = Regex.Matches(description, @"\{LINK#S(\d+)\}", RegexOptions.None, RegexTimeouts.RegexTimeout)
+                .Cast<Match>().Select(x => int.Parse(x.Groups[1].Value)).Distinct().ToList();
+            var classifications = new HashSet<string>();
+            foreach (int link in links)
+            {
+                var referenced = skills.FirstOrDefault(entry => (int)entry["id"] == link);
+                if (referenced == null) continue;
+
+                string icon = referenced["skillIcon"]?.ToString() ?? string.Empty;
+                if (icon.StartsWith("Skill_A_", StringComparison.Ordinal)) classifications.Add(TalentAuto);
+                else if (icon.StartsWith("Skill_S_", StringComparison.Ordinal)) classifications.Add(TalentSkill);
+                else if (icon.StartsWith("Skill_E_", StringComparison.Ordinal)) classifications.Add(TalentBurst);
+            }
+
+            return classifications.Count == 1 ? classifications.First() : null;
         }
 
         private static WeaponType ParseWeaponType(string weaponArchetype, string name)
