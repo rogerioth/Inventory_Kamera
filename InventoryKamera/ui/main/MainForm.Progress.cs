@@ -74,11 +74,19 @@ namespace InventoryKamera
         {
             int acceptedCharacters;
             int.TryParse(CharactersScanned_Label.Text, out acceptedCharacters);
-            string rosterTotalNote = !characterTotal.HasValue
-                ? "? means the owned roster total could not be verified or has not been read yet.\n"
-                : characterTotalIsProvisional
-                    ? "The total is the best observed count from roster counting; the wrap check could not fully verify it, so it may be approximate.\n"
-                    : "The total counts owned characters, not the character catalog.\n";
+            string rosterTotalNote;
+            if (!characterTotal.HasValue)
+            {
+                rosterTotalNote = "? means the owned roster total could not be verified or has not been read yet.\n";
+            }
+            else if (characterTotalIsProvisional)
+            {
+                rosterTotalNote = "The total is the best observed count from roster counting; the wrap check could not fully verify it, so it may be approximate.\n";
+            }
+            else
+            {
+                rosterTotalNote = "The total counts owned characters, not the character catalog.\n";
+            }
             string coverageNote = characterCoverageComplete
                 ? "Roster coverage verified with no omitted characters."
                 : "Roster coverage is not yet fully verified; unreadable or skipped characters leave partial export data.";
